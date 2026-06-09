@@ -10,6 +10,10 @@ export function CreateProjectFromDialog() {
   return window['go']['main']['App']['CreateProjectFromDialog']();
 }
 
+export function CreateTerminal(arg1, arg2, arg3) {
+  return window['go']['main']['App']['CreateTerminal'](arg1, arg2, arg3);
+}
+
 export function GetShellStatus(arg1) {
   return window['go']['main']['App']['GetShellStatus'](arg1);
 }
@@ -24,6 +28,10 @@ export function ResizeTerminal(arg1, arg2, arg3) {
 
 export function SelectProject(arg1) {
   return window['go']['main']['App']['SelectProject'](arg1);
+}
+
+export function SelectTerminal(arg1) {
+  return window['go']['main']['App']['SelectTerminal'](arg1);
 }
 
 export function SendTerminalInput(arg1, arg2) {

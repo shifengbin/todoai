@@ -6,37 +6,42 @@ import { TerminalSessionManager } from './terminalManager'
 import { createXtermSession } from './xtermFactory'
 import {
   CreateProjectFromDialog,
+  CreateTerminal,
   ListProjects,
   ResizeTerminal,
   SelectProject,
+  SelectTerminal,
   SendTerminalInput,
   StartShell
 } from '../wailsjs/go/main/App'
 import { ClipboardGetText, ClipboardSetText, EventsOff, EventsOn } from '../wailsjs/runtime/runtime'
 
 const projects = ref([])
+const terminals = ref([])
 const activeProjectId = ref('')
+const activeTerminalId = ref('')
 const shellStatuses = reactive({})
 const terminalContainers = new Map()
 const errorMessage = ref('')
 const terminalMenu = reactive({
   visible: false,
-  projectId: '',
+  terminalId: '',
   x: 0,
   y: 0
 })
 const terminalManager = new TerminalSessionManager({
   createSession: createXtermSession,
-  sendInput: (projectId, data) => SendTerminalInput(projectId, data),
-  resizeTerminal: (projectId, cols, rows) => {
-    if (shellStatuses[projectId] === 'running') {
-      ResizeTerminal(projectId, cols, rows)
+  sendInput: (terminalId, data) => SendTerminalInput(terminalId, data),
+  resizeTerminal: (terminalId, cols, rows) => {
+    if (terminalState(terminalId) === 'running') {
+      ResizeTerminal(terminalId, cols, rows)
     }
   },
   clipboard: {
     readText: ClipboardGetText,
     writeText: ClipboardSetText
   },
+  onCommandState: handleTerminalCommandState,
   onError: showError
 })
 
@@ -44,12 +49,20 @@ const activeProject = computed(() => {
   return projects.value.find((project) => project.id === activeProjectId.value) || null
 })
 
+const activeTerminal = computed(() => {
+  return terminals.value.find((terminal) => terminal.id === activeTerminalId.value) || null
+})
+
+const activeTerminalState = computed(() => {
+  return activeTerminal.value ? terminalState(activeTerminal.value.id) : ''
+})
+
 onMounted(async () => {
   EventsOn('terminal-output', (event) => {
-    terminalManager.write(event.projectId, event.data)
+    terminalManager.write(event.terminalId, event.data)
   })
   EventsOn('terminal-status', (status) => {
-    shellStatuses[status.projectId] = status.state
+    updateTerminalState(status.terminalId, status.state)
   })
   window.addEventListener('resize', fitActiveTerminal)
   window.addEventListener('click', closeTerminalMenu)
@@ -57,7 +70,9 @@ onMounted(async () => {
   try {
     applyState(await ListProjects())
     if (activeProject.value?.available) {
-      await activateProject(activeProject.value.id)
+      await selectProject(activeProject.value.id)
+    } else {
+      await activateActiveTerminal()
     }
   } catch (error) {
     showError(error)
@@ -72,8 +87,22 @@ onBeforeUnmount(() => {
 })
 
 function applyState(state) {
+  const previousTerminals = new Map(terminals.value.map((terminal) => [terminal.id, terminal]))
   projects.value = state?.projects || []
+  terminals.value = (state?.terminals || []).map((terminal) => ({
+    ...terminal,
+    currentCommand:
+      terminal.state === 'running'
+        ? terminal.currentCommand || previousTerminals.get(terminal.id)?.currentCommand || ''
+        : ''
+  }))
   activeProjectId.value = state?.activeProjectId || ''
+  activeTerminalId.value = state?.activeTerminalId || ''
+  for (const terminal of terminals.value) {
+    if (terminal.state) {
+      shellStatuses[terminal.id] = terminal.state
+    }
+  }
   closeTerminalMenu()
 }
 
@@ -81,7 +110,7 @@ async function createProject() {
   try {
     applyState(await CreateProjectFromDialog())
     if (activeProject.value?.available) {
-      await activateProject(activeProject.value.id)
+      await selectProject(activeProject.value.id)
     }
   } catch (error) {
     showError(error)
@@ -91,49 +120,77 @@ async function createProject() {
 async function selectProject(projectId) {
   try {
     applyState(await SelectProject(projectId))
-    if (activeProject.value?.available) {
-      await activateProject(projectId)
-    }
+    await activateActiveTerminal()
   } catch (error) {
     showError(error)
   }
 }
 
-async function activateProject(projectId) {
+async function selectTerminal(terminalId) {
+  try {
+    applyState(await SelectTerminal(terminalId))
+    await activateActiveTerminal()
+  } catch (error) {
+    showError(error)
+  }
+}
+
+async function createTerminal(projectId) {
+  try {
+    const size = terminalManager.size() || { cols: 80, rows: 24 }
+    applyState(await CreateTerminal(projectId, size.cols || 80, size.rows || 24))
+    await activateActiveTerminal()
+  } catch (error) {
+    showError(error)
+  }
+}
+
+async function activateActiveTerminal() {
   await nextTick()
-  const container = terminalContainers.get(projectId)
+  const terminal = activeTerminal.value
+  if (!terminal) {
+    return
+  }
+  const container = terminalContainers.get(terminal.id)
   if (!container) {
     return
   }
 
-  const session = terminalManager.activate(projectId, container)
-  const status = await StartShell(projectId, session.terminal.cols || 80, session.terminal.rows || 24)
-  shellStatuses[projectId] = status.state
+  terminalManager.activate(terminal.id, container)
   terminalManager.fitActive()
 }
 
 async function restartActiveShell() {
-  if (activeProject.value?.available) {
-    await activateProject(activeProject.value.id)
-  }
-}
-
-function setTerminalContainer(projectId, element) {
-  if (element) {
-    terminalContainers.set(projectId, element)
-    if (projectId === activeProjectId.value) {
-      nextTick(() => activateProject(projectId))
-    }
-  } else {
-    terminalContainers.delete(projectId)
-  }
-}
-
-function openTerminalMenu(projectId, event) {
-  if (projectId !== activeProjectId.value) {
+  const terminal = activeTerminal.value
+  if (!terminal || !activeProject.value?.available) {
     return
   }
-  terminalMenu.projectId = projectId
+  const size = terminalManager.size(terminal.id) || { cols: 80, rows: 24 }
+  try {
+    const status = await StartShell(terminal.id, size.cols || 80, size.rows || 24)
+    updateTerminalState(status.terminalId, status.state)
+    await activateActiveTerminal()
+  } catch (error) {
+    showError(error)
+  }
+}
+
+function setTerminalContainer(terminalId, element) {
+  if (element) {
+    terminalContainers.set(terminalId, element)
+    if (terminalId === activeTerminalId.value) {
+      nextTick(() => activateActiveTerminal())
+    }
+  } else {
+    terminalContainers.delete(terminalId)
+  }
+}
+
+function openTerminalMenu(terminalId, event) {
+  if (terminalId !== activeTerminalId.value) {
+    return
+  }
+  terminalMenu.terminalId = terminalId
   terminalMenu.x = event.clientX
   terminalMenu.y = event.clientY
   terminalMenu.visible = true
@@ -141,27 +198,62 @@ function openTerminalMenu(projectId, event) {
 
 function closeTerminalMenu() {
   terminalMenu.visible = false
-  terminalMenu.projectId = ''
+  terminalMenu.terminalId = ''
 }
 
 async function copyFromTerminalMenu() {
-  const projectId = terminalMenu.projectId
-  await terminalManager.copySelection(projectId)
+  const terminalId = terminalMenu.terminalId
+  await terminalManager.copySelection(terminalId)
   closeTerminalMenu()
 }
 
 async function pasteFromTerminalMenu() {
-  const projectId = terminalMenu.projectId
-  await terminalManager.paste(projectId)
+  const terminalId = terminalMenu.terminalId
+  await terminalManager.paste(terminalId)
   closeTerminalMenu()
 }
 
-function hasTerminalSelection(projectId) {
-  return terminalManager.hasSelection(projectId)
+function hasTerminalSelection(terminalId) {
+  return terminalManager.hasSelection(terminalId)
 }
 
 function fitActiveTerminal() {
   terminalManager.fitActive()
+}
+
+function terminalState(terminalId) {
+  return shellStatuses[terminalId] || terminals.value.find((terminal) => terminal.id === terminalId)?.state || ''
+}
+
+function updateTerminalState(terminalId, state) {
+  if (!terminalId) {
+    return
+  }
+  shellStatuses[terminalId] = state
+  const terminal = terminals.value.find((candidate) => candidate.id === terminalId)
+  if (terminal) {
+    terminal.state = state
+    if (state !== 'running') {
+      terminal.currentCommand = ''
+    }
+  }
+}
+
+function handleTerminalCommandState(terminalId, event) {
+  const terminal = terminals.value.find((candidate) => candidate.id === terminalId)
+  if (!terminal) {
+    return
+  }
+  if (event.type === 'command-start') {
+    terminal.currentCommand = sanitizeCommandLabel(event.command)
+  }
+  if (event.type === 'command-end') {
+    terminal.currentCommand = ''
+  }
+}
+
+function sanitizeCommandLabel(command) {
+  return (command || '').replace(/\s+/g, ' ').trim().slice(0, 120)
 }
 
 function showError(error) {
@@ -173,9 +265,13 @@ function showError(error) {
   <main class="app-shell">
     <ProjectSidebar
       :projects="projects"
+      :terminals="terminals"
       :active-project-id="activeProjectId"
+      :active-terminal-id="activeTerminalId"
       @create-project="createProject"
       @select-project="selectProject"
+      @create-terminal="createTerminal"
+      @select-terminal="selectTerminal"
     />
 
     <section class="workspace">
@@ -186,7 +282,7 @@ function showError(error) {
         </div>
         <div v-else class="project-heading muted">No project selected</div>
         <button
-          v-if="activeProject && shellStatuses[activeProject.id] === 'exited'"
+          v-if="activeProject && activeTerminalState === 'exited'"
           type="button"
           class="toolbar-button"
           title="Restart shell"
@@ -199,13 +295,13 @@ function showError(error) {
 
       <div class="terminal-surface">
         <div
-          v-for="project in projects"
-          :key="project.id"
+          v-for="terminal in terminals"
+          :key="terminal.id"
           class="terminal-pane"
-          :class="{ active: project.id === activeProjectId }"
-          :data-testid="`terminal-pane-${project.id}`"
-          :ref="(element) => setTerminalContainer(project.id, element)"
-          @contextmenu.prevent="openTerminalMenu(project.id, $event)"
+          :class="{ active: terminal.id === activeTerminalId }"
+          :data-testid="`terminal-pane-${terminal.id}`"
+          :ref="(element) => setTerminalContainer(terminal.id, element)"
+          @contextmenu.prevent="openTerminalMenu(terminal.id, $event)"
         />
 
         <div
@@ -218,7 +314,7 @@ function showError(error) {
           <button
             type="button"
             data-testid="terminal-menu-copy"
-            :disabled="!hasTerminalSelection(terminalMenu.projectId)"
+            :disabled="!hasTerminalSelection(terminalMenu.terminalId)"
             @click="copyFromTerminalMenu"
           >
             Copy
@@ -230,9 +326,8 @@ function showError(error) {
 
         <div v-if="!activeProject" class="state-layer">Select a project</div>
         <div v-else-if="!activeProject.available" class="state-layer warning">Project path unavailable</div>
-        <div v-else-if="shellStatuses[activeProject.id] === 'exited'" class="state-layer warning">
-          Shell exited
-        </div>
+        <div v-else-if="!activeTerminal" class="state-layer">Select a terminal</div>
+        <div v-else-if="activeTerminalState === 'exited'" class="state-layer warning">Shell exited</div>
       </div>
 
       <footer v-if="errorMessage" class="error-bar">{{ errorMessage }}</footer>

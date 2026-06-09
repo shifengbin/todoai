@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { TerminalSessionManager } from './terminalManager'
 
 describe('TerminalSessionManager', () => {
-  it('preserves one terminal instance per project while routing inactive output', () => {
+  it('preserves one xterm instance per terminal while routing inactive output', () => {
     const factory = createFakeTerminalFactory()
     const manager = new TerminalSessionManager({
       createSession: factory.createSession,
@@ -12,19 +12,19 @@ describe('TerminalSessionManager', () => {
     const containerA = document.createElement('div')
     const containerB = document.createElement('div')
 
-    manager.activate('project-a', containerA)
-    manager.write('project-a', 'first')
-    manager.activate('project-b', containerB)
-    manager.write('project-a', 'background')
-    manager.activate('project-a', containerA)
+    manager.activate('terminal-a', containerA)
+    manager.write('terminal-a', 'first')
+    manager.activate('terminal-b', containerB)
+    manager.write('terminal-a', 'background')
+    manager.activate('terminal-a', containerA)
 
-    expect(factory.createdFor).toEqual(['project-a', 'project-b'])
-    expect(factory.sessions.get('project-a').terminal.openedIn).toBe(containerA)
-    expect(factory.sessions.get('project-a').terminal.writes).toEqual(['first', 'background'])
-    expect(factory.sessions.get('project-a').terminal.openCount).toBe(1)
+    expect(factory.createdFor).toEqual(['terminal-a', 'terminal-b'])
+    expect(factory.sessions.get('terminal-a').terminal.openedIn).toBe(containerA)
+    expect(factory.sessions.get('terminal-a').terminal.writes).toEqual(['first', 'background'])
+    expect(factory.sessions.get('terminal-a').terminal.openCount).toBe(1)
   })
 
-  it('routes terminal input with the project id that owns the terminal', () => {
+  it('routes terminal input with the terminal id that owns the xterm instance', () => {
     const sendInput = vi.fn()
     const factory = createFakeTerminalFactory()
     const manager = new TerminalSessionManager({
@@ -33,10 +33,10 @@ describe('TerminalSessionManager', () => {
       resizeTerminal: vi.fn()
     })
 
-    manager.activate('project-b', document.createElement('div'))
-    factory.sessions.get('project-b').terminal.emitData('pwd\n')
+    manager.activate('terminal-b', document.createElement('div'))
+    factory.sessions.get('terminal-b').terminal.emitData('pwd\n')
 
-    expect(sendInput).toHaveBeenCalledWith('project-b', 'pwd\n')
+    expect(sendInput).toHaveBeenCalledWith('terminal-b', 'pwd\n')
   })
 
   it('copies selected terminal text through the clipboard writer', async () => {
@@ -49,10 +49,10 @@ describe('TerminalSessionManager', () => {
       clipboard: { writeText }
     })
 
-    manager.activate('project-a', document.createElement('div'))
-    factory.sessions.get('project-a').terminal.selection = 'git status'
+    manager.activate('terminal-a', document.createElement('div'))
+    factory.sessions.get('terminal-a').terminal.selection = 'git status'
 
-    await manager.copySelection('project-a')
+    await manager.copySelection('terminal-a')
 
     expect(writeText).toHaveBeenCalledWith('git status')
   })
@@ -67,11 +67,11 @@ describe('TerminalSessionManager', () => {
       clipboard: { readText: vi.fn().mockResolvedValue('npm test\n') }
     })
 
-    manager.activate('project-b', document.createElement('div'))
+    manager.activate('terminal-b', document.createElement('div'))
 
-    await manager.paste('project-b')
+    await manager.paste('terminal-b')
 
-    expect(sendInput).toHaveBeenCalledWith('project-b', 'npm test\n')
+    expect(sendInput).toHaveBeenCalledWith('terminal-b', 'npm test\n')
   })
 
   it('ignores empty clipboard text when pasting', async () => {
@@ -84,9 +84,9 @@ describe('TerminalSessionManager', () => {
       clipboard: { readText: vi.fn().mockResolvedValue('') }
     })
 
-    manager.activate('project-b', document.createElement('div'))
+    manager.activate('terminal-b', document.createElement('div'))
 
-    await manager.paste('project-b')
+    await manager.paste('terminal-b')
 
     expect(sendInput).not.toHaveBeenCalled()
   })
@@ -103,10 +103,10 @@ describe('TerminalSessionManager', () => {
       onError
     })
 
-    manager.activate('project-a', document.createElement('div'))
-    factory.sessions.get('project-a').terminal.selection = 'selected'
+    manager.activate('terminal-a', document.createElement('div'))
+    factory.sessions.get('terminal-a').terminal.selection = 'selected'
 
-    await manager.copySelection('project-a')
+    await manager.copySelection('terminal-a')
 
     expect(onError).toHaveBeenCalledWith(error)
   })
@@ -120,12 +120,31 @@ describe('TerminalSessionManager', () => {
       resizeTerminal
     })
 
-    manager.activate('project-a', document.createElement('div'))
+    manager.activate('terminal-a', document.createElement('div'))
     manager.fitActive()
 
-    const session = factory.sessions.get('project-a')
+    const session = factory.sessions.get('terminal-a')
     expect(session.fitAddon.fit).toHaveBeenCalledTimes(2)
-    expect(resizeTerminal).toHaveBeenLastCalledWith('project-a', 100, 32)
+    expect(resizeTerminal).toHaveBeenLastCalledWith('terminal-a', 100, 32)
+  })
+
+  it('forwards command-state events with the terminal id', () => {
+    const onCommandState = vi.fn()
+    const factory = createFakeTerminalFactory()
+    const manager = new TerminalSessionManager({
+      createSession: factory.createSession,
+      sendInput: vi.fn(),
+      resizeTerminal: vi.fn(),
+      onCommandState
+    })
+
+    manager.activate('terminal-a', document.createElement('div'))
+    factory.sessions.get('terminal-a').emitCommandState({ type: 'command-start', command: 'npm test' })
+
+    expect(onCommandState).toHaveBeenCalledWith('terminal-a', {
+      type: 'command-start',
+      command: 'npm test'
+    })
   })
 })
 
@@ -136,8 +155,8 @@ function createFakeTerminalFactory() {
   return {
     sessions,
     createdFor,
-    createSession(projectId, onData) {
-      createdFor.push(projectId)
+    createSession(terminalId, onData, onShortcut, onCommandState) {
+      createdFor.push(terminalId)
       const terminal = {
         cols: 100,
         rows: 32,
@@ -168,8 +187,14 @@ function createFakeTerminalFactory() {
       const fitAddon = {
         fit: vi.fn()
       }
-      const session = { terminal, fitAddon }
-      sessions.set(projectId, session)
+      const session = {
+        terminal,
+        fitAddon,
+        emitCommandState(event) {
+          onCommandState(event)
+        }
+      }
+      sessions.set(terminalId, session)
       return session
     }
   }

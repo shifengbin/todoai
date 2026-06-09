@@ -1,61 +1,72 @@
 export class TerminalSessionManager {
-  constructor({ createSession, sendInput, resizeTerminal, clipboard = {}, onError = () => {} }) {
+  constructor({
+    createSession,
+    sendInput,
+    resizeTerminal,
+    clipboard = {},
+    onError = () => {},
+    onCommandState = () => {}
+  }) {
     this.createSession = createSession
     this.sendInput = sendInput
     this.resizeTerminal = resizeTerminal
     this.clipboard = clipboard
     this.onError = onError
+    this.onCommandState = onCommandState
     this.sessions = new Map()
-    this.activeProjectId = null
+    this.activeTerminalId = null
   }
 
-  ensure(projectId) {
-    if (!this.sessions.has(projectId)) {
+  ensure(terminalId) {
+    if (!this.sessions.has(terminalId)) {
       const session = this.createSession(
-        projectId,
+        terminalId,
         (data) => {
-          this.sendInput(projectId, data)
+          this.sendInput(terminalId, data)
         },
         (action) => {
-          this.handleShortcut(projectId, action)
+          this.handleShortcut(terminalId, action)
+        },
+        (event) => {
+          this.onCommandState(terminalId, event)
         }
       )
       session.opened = false
-      this.sessions.set(projectId, session)
+      this.sessions.set(terminalId, session)
     }
-    return this.sessions.get(projectId)
+    return this.sessions.get(terminalId)
   }
 
-  activate(projectId, container) {
-    if (!projectId || !container) {
+  activate(terminalId, container) {
+    if (!terminalId || !container) {
       return null
     }
 
-    const session = this.ensure(projectId)
-    this.activeProjectId = projectId
+    const session = this.ensure(terminalId)
+    this.activeTerminalId = terminalId
     if (!session.opened) {
       session.terminal.open(container)
       session.opened = true
     }
-    this.fit(projectId, false)
+    this.fit(terminalId, false)
     return session
   }
 
-  write(projectId, data) {
-    const session = this.sessions.get(projectId)
+  write(terminalId, data) {
+    const session = this.sessions.get(terminalId)
     if (session) {
       session.terminal.write(data)
     }
   }
 
-  hasSelection(projectId) {
-    const session = this.sessions.get(projectId)
+  hasSelection(terminalId) {
+    const session = this.sessions.get(terminalId)
     return Boolean(session?.terminal.hasSelection?.())
   }
 
-  async copySelection(projectId) {
+  async copySelection(terminalId) {
     return this.withClipboardError(async () => {
-      const session = this.sessions.get(projectId)
+      const session = this.sessions.get(terminalId)
       if (!session?.terminal.hasSelection?.()) {
         return false
       }
@@ -70,24 +81,24 @@ export class TerminalSessionManager {
     })
   }
 
-  async paste(projectId) {
+  async paste(terminalId) {
     return this.withClipboardError(async () => {
       const text = (await this.clipboard.readText?.()) || ''
       if (!text) {
         return false
       }
 
-      this.sendInput(projectId, text)
+      this.sendInput(terminalId, text)
       return true
     })
   }
 
-  handleShortcut(projectId, action) {
+  handleShortcut(terminalId, action) {
     if (action === 'copy') {
-      void this.copySelection(projectId)
+      void this.copySelection(terminalId)
     }
     if (action === 'paste') {
-      void this.paste(projectId)
+      void this.paste(terminalId)
     }
   }
 
@@ -101,20 +112,31 @@ export class TerminalSessionManager {
   }
 
   fitActive() {
-    if (this.activeProjectId) {
-      this.fit(this.activeProjectId, true)
+    if (this.activeTerminalId) {
+      this.fit(this.activeTerminalId, true)
     }
   }
 
-  fit(projectId, reportResize = true) {
-    const session = this.sessions.get(projectId)
+  fit(terminalId, reportResize = true) {
+    const session = this.sessions.get(terminalId)
     if (!session) {
       return
     }
 
     session.fitAddon.fit()
     if (reportResize && this.resizeTerminal) {
-      this.resizeTerminal(projectId, session.terminal.cols, session.terminal.rows)
+      this.resizeTerminal(terminalId, session.terminal.cols, session.terminal.rows)
+    }
+  }
+
+  size(terminalId = this.activeTerminalId) {
+    const session = this.sessions.get(terminalId)
+    if (!session) {
+      return null
+    }
+    return {
+      cols: session.terminal.cols,
+      rows: session.terminal.rows
     }
   }
 }

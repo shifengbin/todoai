@@ -19,13 +19,17 @@ func NewApp() *App {
 }
 
 func NewAppWithConfig(configPath string) *App {
+	return NewAppWithConfigAndShellStarter(configPath, NewPtyProcess)
+}
+
+func NewAppWithConfigAndShellStarter(configPath string, starter ShellStarter, shellOpts ...ShellSessionManagerOption) *App {
 	app := &App{
 		projects: NewProjectManager(configPath),
 	}
-	app.shells = NewShellSessionManager(NewPtyProcess, ShellSessionCallbacks{
+	app.shells = NewShellSessionManager(starter, ShellSessionCallbacks{
 		OnOutput: app.emitTerminalOutput,
 		OnStatus: app.emitShellStatus,
-	})
+	}, shellOpts...)
 	return app
 }
 
@@ -38,7 +42,11 @@ func (a *App) shutdown(ctx context.Context) {
 }
 
 func (a *App) ListProjects() (ProjectState, error) {
-	return a.projects.Load()
+	state, err := a.projects.Load()
+	if err != nil {
+		return ProjectState{}, err
+	}
+	return a.withShellState(state), nil
 }
 
 func (a *App) CreateProjectFromDialog() (ProjectState, error) {
@@ -49,13 +57,13 @@ func (a *App) CreateProjectFromDialog() (ProjectState, error) {
 		return ProjectState{}, err
 	}
 	if path == "" {
-		return a.projects.Load()
+		return a.ListProjects()
 	}
 	_, _, err = a.projects.AddProjectPath(path)
 	if err != nil {
 		return ProjectState{}, err
 	}
-	return a.projects.Load()
+	return a.ListProjects()
 }
 
 func (a *App) AddProjectFromPath(path string) (ProjectState, error) {
@@ -63,31 +71,64 @@ func (a *App) AddProjectFromPath(path string) (ProjectState, error) {
 	if err != nil {
 		return ProjectState{}, err
 	}
-	return a.projects.Load()
+	return a.ListProjects()
 }
 
 func (a *App) SelectProject(projectID string) (ProjectState, error) {
-	return a.projects.SelectProject(projectID)
-}
-
-func (a *App) StartShell(projectID string, cols int, rows int) (ShellStatus, error) {
-	project, err := a.projects.GetProject(projectID)
+	state, err := a.projects.SelectProject(projectID)
 	if err != nil {
-		return ShellStatus{}, err
+		return ProjectState{}, err
 	}
-	return a.shells.EnsureSession(project, normalizeTerminalSize(cols, rows))
+	project, ok := projectByID(state.Projects, projectID)
+	if ok && project.Available {
+		if _, err := a.shells.EnsureProjectTerminal(project, TerminalSize{Cols: 80, Rows: 24}); err != nil {
+			return ProjectState{}, err
+		}
+	}
+	return a.withShellState(state), nil
 }
 
-func (a *App) SendTerminalInput(projectID string, data string) error {
-	return a.shells.WriteInput(projectID, data)
+func (a *App) CreateTerminal(projectID string, cols int, rows int) (ProjectState, error) {
+	state, err := a.projects.SelectProject(projectID)
+	if err != nil {
+		return ProjectState{}, err
+	}
+	project, ok := projectByID(state.Projects, projectID)
+	if !ok {
+		return ProjectState{}, os.ErrNotExist
+	}
+	if _, err := a.shells.CreateTerminal(project, normalizeTerminalSize(cols, rows)); err != nil {
+		return ProjectState{}, err
+	}
+	return a.withShellState(state), nil
 }
 
-func (a *App) ResizeTerminal(projectID string, cols int, rows int) error {
-	return a.shells.Resize(projectID, normalizeTerminalSize(cols, rows))
+func (a *App) SelectTerminal(terminalID string) (ProjectState, error) {
+	terminal, err := a.shells.SelectTerminal(terminalID)
+	if err != nil {
+		return ProjectState{}, err
+	}
+	state, err := a.projects.SelectProject(terminal.ProjectID)
+	if err != nil {
+		return ProjectState{}, err
+	}
+	return a.withShellState(state), nil
 }
 
-func (a *App) GetShellStatus(projectID string) ShellStatus {
-	return a.shells.Status(projectID)
+func (a *App) StartShell(terminalID string, cols int, rows int) (ShellStatus, error) {
+	return a.shells.StartTerminal(terminalID, normalizeTerminalSize(cols, rows))
+}
+
+func (a *App) SendTerminalInput(terminalID string, data string) error {
+	return a.shells.WriteInput(terminalID, data)
+}
+
+func (a *App) ResizeTerminal(terminalID string, cols int, rows int) error {
+	return a.shells.Resize(terminalID, normalizeTerminalSize(cols, rows))
+}
+
+func (a *App) GetShellStatus(terminalID string) ShellStatus {
+	return a.shells.Status(terminalID)
 }
 
 func (a *App) emitTerminalOutput(event TerminalOutputEvent) {
@@ -118,4 +159,19 @@ func normalizeTerminalSize(cols int, rows int) TerminalSize {
 		rows = 24
 	}
 	return TerminalSize{Cols: cols, Rows: rows}
+}
+
+func (a *App) withShellState(state ProjectState) ProjectState {
+	state.Terminals = a.shells.Terminals()
+	state.ActiveTerminalID = a.shells.ActiveTerminalID(state.ActiveProjectID)
+	return state
+}
+
+func projectByID(projects []Project, projectID string) (Project, bool) {
+	for _, project := range projects {
+		if project.ID == projectID {
+			return project, true
+		}
+	}
+	return Project{}, false
 }

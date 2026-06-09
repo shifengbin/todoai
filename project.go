@@ -23,9 +23,11 @@ type Project struct {
 }
 
 type ProjectState struct {
-	Version         int       `json:"version"`
-	Projects        []Project `json:"projects"`
-	ActiveProjectID string    `json:"activeProjectId"`
+	Version          int               `json:"version"`
+	Projects         []Project         `json:"projects"`
+	ActiveProjectID  string            `json:"activeProjectId"`
+	Terminals        []ProjectTerminal `json:"terminals,omitempty"`
+	ActiveTerminalID string            `json:"activeTerminalId,omitempty"`
 }
 
 type ProjectManager struct {

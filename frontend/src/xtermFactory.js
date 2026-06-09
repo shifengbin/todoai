@@ -2,7 +2,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 
-export function createXtermSession(projectId, onData, onShortcut) {
+export function createXtermSession(terminalId, onData, onShortcut, onCommandState) {
   const terminal = new Terminal({
     cursorBlink: true,
     fontFamily: '"Cascadia Mono", "JetBrains Mono", "SFMono-Regular", monospace',
@@ -35,6 +35,14 @@ export function createXtermSession(projectId, onData, onShortcut) {
   const fitAddon = new FitAddon()
   terminal.loadAddon(fitAddon)
   terminal.onData(onData)
+  terminal.parser?.registerOscHandler?.(777, (data) => {
+    const event = parseCommandStateOsc(data)
+    if (!event) {
+      return false
+    }
+    onCommandState?.(event)
+    return true
+  })
   terminal.attachCustomKeyEventHandler((event) => {
     if (event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey) {
       const key = event.key.toLowerCase()
@@ -50,4 +58,37 @@ export function createXtermSession(projectId, onData, onShortcut) {
     return true
   })
   return { terminal, fitAddon }
+}
+
+function parseCommandStateOsc(data) {
+  const parts = data.split(';')
+  if (parts[0] !== 'tui-helper') {
+    return null
+  }
+  if (parts[1] === 'command-end') {
+    return { type: 'command-end' }
+  }
+  if (parts[1] === 'command-start' && parts[2]) {
+    return {
+      type: 'command-start',
+      command: decodeBase64(parts[2])
+    }
+  }
+  return null
+}
+
+function decodeBase64(value) {
+  try {
+    if (typeof atob === 'function') {
+      const binary = atob(value)
+      if (typeof TextDecoder === 'function') {
+        const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0))
+        return new TextDecoder().decode(bytes)
+      }
+      return binary
+    }
+  } catch {
+    return ''
+  }
+  return ''
 }

@@ -3,34 +3,52 @@ package main
 import (
 	"errors"
 	"io"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 )
 
-func TestShellSessionManagerStartsShellInProjectDirectoryAndReusesSession(t *testing.T) {
+func TestShellSessionManagerCreatesDefaultTerminalInProjectDirectoryAndReusesIt(t *testing.T) {
 	starter := newFakeShellStarter()
 	manager := NewShellSessionManager(
 		starter.Start,
 		ShellSessionCallbacks{},
 		WithShellPathResolver(func() string { return "/custom/shell" }),
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-1")),
 	)
 
 	project := Project{ID: "project-a", Path: t.TempDir(), Available: true}
 
-	status, err := manager.EnsureSession(project, TerminalSize{Cols: 80, Rows: 24})
+	terminal, err := manager.EnsureProjectTerminal(project, TerminalSize{Cols: 80, Rows: 24})
 	if err != nil {
-		t.Fatalf("EnsureSession() error = %v", err)
+		t.Fatalf("EnsureProjectTerminal() error = %v", err)
 	}
-	if status.State != ShellStateRunning {
-		t.Fatalf("State = %q, want %q", status.State, ShellStateRunning)
+	if terminal.ID != "terminal-1" {
+		t.Fatalf("Terminal ID = %q, want terminal-1", terminal.ID)
+	}
+	if terminal.ProjectID != "project-a" {
+		t.Fatalf("ProjectID = %q, want project-a", terminal.ProjectID)
+	}
+	if terminal.State != ShellStateRunning {
+		t.Fatalf("State = %q, want %q", terminal.State, ShellStateRunning)
+	}
+	if terminal.ShellName != "shell" {
+		t.Fatalf("ShellName = %q, want shell", terminal.ShellName)
 	}
 
-	if _, err := manager.EnsureSession(project, TerminalSize{Cols: 120, Rows: 30}); err != nil {
-		t.Fatalf("second EnsureSession() error = %v", err)
+	second, err := manager.EnsureProjectTerminal(project, TerminalSize{Cols: 120, Rows: 30})
+	if err != nil {
+		t.Fatalf("second EnsureProjectTerminal() error = %v", err)
+	}
+	if second.ID != terminal.ID {
+		t.Fatalf("second terminal ID = %q, want %q", second.ID, terminal.ID)
 	}
 	if len(starter.requests) != 1 {
 		t.Fatalf("start count = %d, want 1", len(starter.requests))
+	}
+	if starter.requests[0].TerminalID != "terminal-1" {
+		t.Fatalf("TerminalID = %q, want terminal-1", starter.requests[0].TerminalID)
 	}
 	if starter.requests[0].ProjectID != "project-a" {
 		t.Fatalf("ProjectID = %q, want project-a", starter.requests[0].ProjectID)
@@ -46,23 +64,64 @@ func TestShellSessionManagerStartsShellInProjectDirectoryAndReusesSession(t *tes
 	}
 }
 
-func TestShellSessionManagerRoutesInputAndResizeByProjectID(t *testing.T) {
+func TestShellSessionManagerCreatesMultipleTerminalsForSameProject(t *testing.T) {
 	starter := newFakeShellStarter()
-	manager := NewShellSessionManager(starter.Start, ShellSessionCallbacks{})
-	projectA := Project{ID: "project-a", Path: t.TempDir(), Available: true}
-	projectB := Project{ID: "project-b", Path: t.TempDir(), Available: true}
+	manager := NewShellSessionManager(
+		starter.Start,
+		ShellSessionCallbacks{},
+		WithShellPathResolver(func() string { return "/bin/zsh" }),
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-a", "terminal-b")),
+	)
+	project := Project{ID: "project-a", Path: t.TempDir(), Available: true}
 
-	if _, err := manager.EnsureSession(projectA, TerminalSize{Cols: 80, Rows: 24}); err != nil {
-		t.Fatalf("EnsureSession(projectA) error = %v", err)
+	terminalA, err := manager.CreateTerminal(project, TerminalSize{Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatalf("CreateTerminal(A) error = %v", err)
 	}
-	if _, err := manager.EnsureSession(projectB, TerminalSize{Cols: 80, Rows: 24}); err != nil {
-		t.Fatalf("EnsureSession(projectB) error = %v", err)
+	terminalB, err := manager.CreateTerminal(project, TerminalSize{Cols: 100, Rows: 32})
+	if err != nil {
+		t.Fatalf("CreateTerminal(B) error = %v", err)
 	}
 
-	if err := manager.WriteInput("project-b", "pwd\n"); err != nil {
+	if terminalA.ID == terminalB.ID {
+		t.Fatalf("terminal IDs should be distinct, both were %q", terminalA.ID)
+	}
+	if terminalA.ProjectID != "project-a" || terminalB.ProjectID != "project-a" {
+		t.Fatalf("ProjectIDs = %q, %q; want both project-a", terminalA.ProjectID, terminalB.ProjectID)
+	}
+	if len(starter.requests) != 2 {
+		t.Fatalf("start count = %d, want 2", len(starter.requests))
+	}
+	if starter.requests[0].TerminalID != "terminal-a" || starter.requests[1].TerminalID != "terminal-b" {
+		t.Fatalf("TerminalIDs = %q, %q; want terminal-a, terminal-b", starter.requests[0].TerminalID, starter.requests[1].TerminalID)
+	}
+	if starter.requests[0].WorkingDir != project.Path || starter.requests[1].WorkingDir != project.Path {
+		t.Fatalf("shells should start in project path %q", project.Path)
+	}
+}
+
+func TestShellSessionManagerRoutesInputAndResizeByTerminalID(t *testing.T) {
+	starter := newFakeShellStarter()
+	manager := NewShellSessionManager(
+		starter.Start,
+		ShellSessionCallbacks{},
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-a", "terminal-b")),
+	)
+	project := Project{ID: "project-a", Path: t.TempDir(), Available: true}
+
+	terminalA, err := manager.CreateTerminal(project, TerminalSize{Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatalf("CreateTerminal(A) error = %v", err)
+	}
+	terminalB, err := manager.CreateTerminal(project, TerminalSize{Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatalf("CreateTerminal(B) error = %v", err)
+	}
+
+	if err := manager.WriteInput(terminalB.ID, "pwd\n"); err != nil {
 		t.Fatalf("WriteInput() error = %v", err)
 	}
-	if err := manager.Resize("project-b", TerminalSize{Cols: 100, Rows: 32}); err != nil {
+	if err := manager.Resize(terminalB.ID, TerminalSize{Cols: 100, Rows: 32}); err != nil {
 		t.Fatalf("Resize() error = %v", err)
 	}
 
@@ -75,6 +134,9 @@ func TestShellSessionManagerRoutesInputAndResizeByProjectID(t *testing.T) {
 	if got := starter.processes[1].sizes[len(starter.processes[1].sizes)-1]; got != (TerminalSize{Cols: 100, Rows: 32}) {
 		t.Fatalf("project B size = %#v, want 100x32", got)
 	}
+	if terminalA.ID == terminalB.ID {
+		t.Fatal("test setup created duplicate terminal IDs")
+	}
 }
 
 func TestShellSessionManagerStartsShellWithEmbeddedTerminalEnvironment(t *testing.T) {
@@ -82,11 +144,15 @@ func TestShellSessionManagerStartsShellWithEmbeddedTerminalEnvironment(t *testin
 	t.Setenv("COLORTERM", "")
 
 	starter := newFakeShellStarter()
-	manager := NewShellSessionManager(starter.Start, ShellSessionCallbacks{})
+	manager := NewShellSessionManager(
+		starter.Start,
+		ShellSessionCallbacks{},
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-1")),
+	)
 	project := Project{ID: "project-a", Path: t.TempDir(), Available: true}
 
-	if _, err := manager.EnsureSession(project, TerminalSize{Cols: 80, Rows: 24}); err != nil {
-		t.Fatalf("EnsureSession() error = %v", err)
+	if _, err := manager.CreateTerminal(project, TerminalSize{Cols: 80, Rows: 24}); err != nil {
+		t.Fatalf("CreateTerminal() error = %v", err)
 	}
 
 	if got := envValue(starter.requests[0].Env, "TERM"); got != "xterm-256color" {
@@ -97,16 +163,24 @@ func TestShellSessionManagerStartsShellWithEmbeddedTerminalEnvironment(t *testin
 	}
 }
 
-func TestShellSessionManagerSerializesConcurrentStartsForSameProject(t *testing.T) {
+func TestShellSessionManagerSerializesConcurrentStartsForSameTerminal(t *testing.T) {
 	starter := newBlockingShellStarter()
-	manager := NewShellSessionManager(starter.Start, ShellSessionCallbacks{})
+	manager := NewShellSessionManager(
+		starter.Start,
+		ShellSessionCallbacks{},
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-1")),
+	)
 	project := Project{ID: "project-a", Path: t.TempDir(), Available: true}
+	terminal, err := manager.RegisterTerminal(project)
+	if err != nil {
+		t.Fatalf("RegisterTerminal() error = %v", err)
+	}
 
 	var wg sync.WaitGroup
 	errors := make(chan error, 2)
 	start := func() {
 		defer wg.Done()
-		_, err := manager.EnsureSession(project, TerminalSize{Cols: 80, Rows: 24})
+		_, err := manager.StartTerminal(terminal.ID, TerminalSize{Cols: 80, Rows: 24})
 		errors <- err
 	}
 
@@ -146,18 +220,22 @@ func TestShellSessionManagerSerializesConcurrentStartsForSameProject(t *testing.
 	}
 }
 
-func TestShellSessionManagerEmitsOutputWithProjectID(t *testing.T) {
+func TestShellSessionManagerEmitsOutputWithProjectAndTerminalID(t *testing.T) {
 	starter := newFakeShellStarter()
 	outputs := make(chan TerminalOutputEvent, 1)
-	manager := NewShellSessionManager(starter.Start, ShellSessionCallbacks{
-		OnOutput: func(event TerminalOutputEvent) {
-			outputs <- event
+	manager := NewShellSessionManager(
+		starter.Start,
+		ShellSessionCallbacks{
+			OnOutput: func(event TerminalOutputEvent) {
+				outputs <- event
+			},
 		},
-	})
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-1")),
+	)
 	project := Project{ID: "project-a", Path: t.TempDir(), Available: true}
 
-	if _, err := manager.EnsureSession(project, TerminalSize{Cols: 80, Rows: 24}); err != nil {
-		t.Fatalf("EnsureSession() error = %v", err)
+	if _, err := manager.CreateTerminal(project, TerminalSize{Cols: 80, Rows: 24}); err != nil {
+		t.Fatalf("CreateTerminal() error = %v", err)
 	}
 	starter.processes[0].emit("hello")
 
@@ -165,6 +243,9 @@ func TestShellSessionManagerEmitsOutputWithProjectID(t *testing.T) {
 	case event := <-outputs:
 		if event.ProjectID != "project-a" {
 			t.Fatalf("ProjectID = %q, want project-a", event.ProjectID)
+		}
+		if event.TerminalID != "terminal-1" {
+			t.Fatalf("TerminalID = %q, want terminal-1", event.TerminalID)
 		}
 		if event.Data != "hello" {
 			t.Fatalf("Data = %q, want hello", event.Data)
@@ -174,18 +255,22 @@ func TestShellSessionManagerEmitsOutputWithProjectID(t *testing.T) {
 	}
 }
 
-func TestShellSessionManagerEmitsExitedStatus(t *testing.T) {
+func TestShellSessionManagerEmitsExitedStatusWithProjectAndTerminalID(t *testing.T) {
 	starter := newFakeShellStarter()
 	statuses := make(chan ShellStatus, 1)
-	manager := NewShellSessionManager(starter.Start, ShellSessionCallbacks{
-		OnStatus: func(status ShellStatus) {
-			statuses <- status
+	manager := NewShellSessionManager(
+		starter.Start,
+		ShellSessionCallbacks{
+			OnStatus: func(status ShellStatus) {
+				statuses <- status
+			},
 		},
-	})
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-1")),
+	)
 	project := Project{ID: "project-a", Path: t.TempDir(), Available: true}
 
-	if _, err := manager.EnsureSession(project, TerminalSize{Cols: 80, Rows: 24}); err != nil {
-		t.Fatalf("EnsureSession() error = %v", err)
+	if _, err := manager.CreateTerminal(project, TerminalSize{Cols: 80, Rows: 24}); err != nil {
+		t.Fatalf("CreateTerminal() error = %v", err)
 	}
 	starter.processes[0].exit(errors.New("shell exited"))
 
@@ -194,11 +279,109 @@ func TestShellSessionManagerEmitsExitedStatus(t *testing.T) {
 		if status.ProjectID != "project-a" {
 			t.Fatalf("ProjectID = %q, want project-a", status.ProjectID)
 		}
+		if status.TerminalID != "terminal-1" {
+			t.Fatalf("TerminalID = %q, want terminal-1", status.TerminalID)
+		}
 		if status.State != ShellStateExited {
 			t.Fatalf("State = %q, want %q", status.State, ShellStateExited)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for shell status event")
+	}
+}
+
+func TestShellSessionManagerRestartsExitedTerminalWithSameID(t *testing.T) {
+	starter := newFakeShellStarter()
+	manager := NewShellSessionManager(
+		starter.Start,
+		ShellSessionCallbacks{},
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-1")),
+	)
+	project := Project{ID: "project-a", Path: t.TempDir(), Available: true}
+
+	terminal, err := manager.CreateTerminal(project, TerminalSize{Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatalf("CreateTerminal() error = %v", err)
+	}
+	starter.processes[0].exit(errors.New("shell exited"))
+	eventually(t, func() bool {
+		return manager.Status(terminal.ID).State == ShellStateExited
+	})
+
+	status, err := manager.StartTerminal(terminal.ID, TerminalSize{Cols: 120, Rows: 30})
+	if err != nil {
+		t.Fatalf("StartTerminal() error = %v", err)
+	}
+
+	if status.TerminalID != "terminal-1" {
+		t.Fatalf("TerminalID = %q, want terminal-1", status.TerminalID)
+	}
+	if status.State != ShellStateRunning {
+		t.Fatalf("State = %q, want running", status.State)
+	}
+	if len(starter.requests) != 2 {
+		t.Fatalf("start count = %d, want 2", len(starter.requests))
+	}
+	if starter.requests[1].TerminalID != "terminal-1" {
+		t.Fatalf("restart TerminalID = %q, want terminal-1", starter.requests[1].TerminalID)
+	}
+}
+
+func TestShellSessionManagerStartsSupportedShellsWithCommandLabelIntegration(t *testing.T) {
+	starter := newFakeShellStarter()
+	manager := NewShellSessionManager(
+		starter.Start,
+		ShellSessionCallbacks{},
+		WithShellPathResolver(func() string { return "/bin/zsh" }),
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-1")),
+	)
+	project := Project{ID: "project-a", Path: t.TempDir(), Available: true}
+
+	terminal, err := manager.CreateTerminal(project, TerminalSize{Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatalf("CreateTerminal() error = %v", err)
+	}
+
+	request := starter.requests[0]
+	if terminal.ShellName != "zsh" {
+		t.Fatalf("ShellName = %q, want zsh", terminal.ShellName)
+	}
+	if len(request.ShellArgs) == 0 {
+		t.Fatal("ShellArgs is empty, want shell integration startup args")
+	}
+	if envValue(request.Env, "ZDOTDIR") == "" {
+		t.Fatal("ZDOTDIR is empty, want zsh integration env")
+	}
+}
+
+func TestBashIntegrationSkipsPromptCommandWhileIdle(t *testing.T) {
+	script := bashIntegrationScript()
+
+	if !strings.Contains(script, "__tui_helper_in_prompt") {
+		t.Fatal("bash integration should guard DEBUG trap while PROMPT_COMMAND runs")
+	}
+}
+
+func TestShellSessionManagerFallsBackToShellNameWithoutIntegrationForUnsupportedShells(t *testing.T) {
+	starter := newFakeShellStarter()
+	manager := NewShellSessionManager(
+		starter.Start,
+		ShellSessionCallbacks{},
+		WithShellPathResolver(func() string { return "/opt/custom/fish" }),
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-1")),
+	)
+	project := Project{ID: "project-a", Path: t.TempDir(), Available: true}
+
+	terminal, err := manager.CreateTerminal(project, TerminalSize{Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatalf("CreateTerminal() error = %v", err)
+	}
+
+	if terminal.ShellName != "fish" {
+		t.Fatalf("ShellName = %q, want fish", terminal.ShellName)
+	}
+	if len(starter.requests[0].ShellArgs) != 0 {
+		t.Fatalf("ShellArgs = %#v, want no integration args", starter.requests[0].ShellArgs)
 	}
 }
 
@@ -316,4 +499,16 @@ func envValue(env []string, key string) string {
 		}
 	}
 	return ""
+}
+
+func eventually(t *testing.T, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("condition was not met before timeout")
 }

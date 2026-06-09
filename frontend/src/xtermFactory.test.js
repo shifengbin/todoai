@@ -20,6 +20,16 @@ vi.mock('@xterm/xterm', () => {
       attachCustomKeyEventHandler(handler) {
         this.keyHandler = handler
       }
+
+      get parser() {
+        return {
+          registerOscHandler: (ident, handler) => {
+            this.oscHandlers ||= new Map()
+            this.oscHandlers.set(ident, handler)
+            return { dispose() {} }
+          }
+        }
+      }
     }
   }
 })
@@ -67,6 +77,22 @@ describe('createXtermSession', () => {
 
     expect(result).toBe(true)
     expect(onShortcut).not.toHaveBeenCalled()
+  })
+
+  it('emits command state from app-specific OSC messages', () => {
+    const onCommandState = vi.fn()
+
+    createXtermSession('terminal-a', vi.fn(), vi.fn(), onCommandState)
+    terminalMock.lastTerminal.oscHandlers.get(777)('tui-helper;command-start;bnBtIHRlc3Q=')
+    terminalMock.lastTerminal.oscHandlers.get(777)('tui-helper;command-end')
+
+    expect(onCommandState).toHaveBeenNthCalledWith(1, {
+      type: 'command-start',
+      command: 'npm test'
+    })
+    expect(onCommandState).toHaveBeenNthCalledWith(2, {
+      type: 'command-end'
+    })
   })
 })
 

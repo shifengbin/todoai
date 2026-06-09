@@ -5,10 +5,14 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/creack/pty"
+	"github.com/google/uuid"
 )
 
 const (
@@ -22,21 +26,39 @@ type TerminalSize struct {
 }
 
 type ShellStartRequest struct {
+	TerminalID string
 	ProjectID  string
 	WorkingDir string
 	ShellPath  string
+	ShellArgs  []string
+	ShellName  string
 	Size       TerminalSize
 	Env        []string
 }
 
 type ShellStatus struct {
-	ProjectID string `json:"projectId"`
-	State     string `json:"state"`
+	ProjectID  string `json:"projectId"`
+	TerminalID string `json:"terminalId"`
+	State      string `json:"state"`
 }
 
 type TerminalOutputEvent struct {
-	ProjectID string `json:"projectId"`
-	Data      string `json:"data"`
+	ProjectID  string `json:"projectId"`
+	TerminalID string `json:"terminalId"`
+	Data       string `json:"data"`
+}
+
+type ProjectTerminal struct {
+	ID             string `json:"id"`
+	ProjectID      string `json:"projectId"`
+	ShellName      string `json:"shellName"`
+	CurrentCommand string `json:"currentCommand"`
+	State          string `json:"state"`
+	CreatedAt      string `json:"createdAt"`
+	LastSelectedAt string `json:"lastSelectedAt"`
+
+	projectPath string
+	shellPath   string
 }
 
 type PtyProcess interface {
@@ -61,14 +83,21 @@ type ShellSessionManager struct {
 	starter           ShellStarter
 	callbacks         ShellSessionCallbacks
 	shellPathResolver func() string
+	newID             func() string
+	now               func() time.Time
 	sessions          map[string]*ShellSession
+	terminals         map[string]*ProjectTerminal
+	activeByProject   map[string]string
 }
 
 type ShellSession struct {
-	projectID string
-	process   PtyProcess
-	size      TerminalSize
-	state     string
+	terminalID  string
+	projectID   string
+	process     PtyProcess
+	size        TerminalSize
+	state       string
+	cleanup     func()
+	cleanupOnce sync.Once
 }
 
 func NewShellSessionManager(starter ShellStarter, callbacks ShellSessionCallbacks, opts ...ShellSessionManagerOption) *ShellSessionManager {
@@ -76,7 +105,11 @@ func NewShellSessionManager(starter ShellStarter, callbacks ShellSessionCallback
 		starter:           starter,
 		callbacks:         callbacks,
 		shellPathResolver: DefaultShellPath,
+		newID:             uuid.NewString,
+		now:               time.Now,
 		sessions:          map[string]*ShellSession{},
+		terminals:         map[string]*ProjectTerminal{},
+		activeByProject:   map[string]string{},
 	}
 	for _, opt := range opts {
 		opt(manager)
@@ -90,49 +123,215 @@ func WithShellPathResolver(resolve func() string) ShellSessionManagerOption {
 	}
 }
 
+func WithShellTerminalIDGenerator(newID func() string) ShellSessionManagerOption {
+	return func(manager *ShellSessionManager) {
+		manager.newID = newID
+	}
+}
+
+func WithShellClock(now func() time.Time) ShellSessionManagerOption {
+	return func(manager *ShellSessionManager) {
+		manager.now = now
+	}
+}
+
 func (manager *ShellSessionManager) EnsureSession(project Project, size TerminalSize) (ShellStatus, error) {
+	terminal, err := manager.EnsureProjectTerminal(project, size)
+	if err != nil {
+		return ShellStatus{}, err
+	}
+	return ShellStatus{ProjectID: terminal.ProjectID, TerminalID: terminal.ID, State: terminal.State}, nil
+}
+
+func (manager *ShellSessionManager) RegisterTerminal(project Project) (ProjectTerminal, error) {
 	if !project.Available {
-		return ShellStatus{}, errors.New("project path is unavailable")
+		return ProjectTerminal{}, errors.New("project path is unavailable")
 	}
 
 	manager.mu.Lock()
-	if session, ok := manager.sessions[project.ID]; ok && session.state == ShellStateRunning {
-		status := ShellStatus{ProjectID: project.ID, State: session.state}
+	defer manager.mu.Unlock()
+
+	return manager.registerTerminalLocked(project), nil
+}
+
+func (manager *ShellSessionManager) EnsureProjectTerminal(project Project, size TerminalSize) (ProjectTerminal, error) {
+	if !project.Available {
+		return ProjectTerminal{}, errors.New("project path is unavailable")
+	}
+
+	manager.mu.Lock()
+	if terminalID := manager.activeByProject[project.ID]; terminalID != "" {
+		if terminal, ok := manager.terminals[terminalID]; ok {
+			manager.touchTerminalLocked(terminal)
+			result := *terminal
+			manager.mu.Unlock()
+			return result, nil
+		}
+	}
+	for _, terminal := range manager.terminals {
+		if terminal.ProjectID == project.ID {
+			manager.touchTerminalLocked(terminal)
+			result := *terminal
+			manager.mu.Unlock()
+			return result, nil
+		}
+	}
+	terminal := manager.registerTerminalLocked(project)
+	manager.mu.Unlock()
+
+	if _, err := manager.StartTerminal(terminal.ID, size); err != nil {
+		return ProjectTerminal{}, err
+	}
+	return manager.Terminal(terminal.ID)
+}
+
+func (manager *ShellSessionManager) CreateTerminal(project Project, size TerminalSize) (ProjectTerminal, error) {
+	if !project.Available {
+		return ProjectTerminal{}, errors.New("project path is unavailable")
+	}
+
+	manager.mu.Lock()
+	terminal := manager.registerTerminalLocked(project)
+	manager.mu.Unlock()
+
+	if _, err := manager.StartTerminal(terminal.ID, size); err != nil {
+		manager.mu.Lock()
+		delete(manager.terminals, terminal.ID)
+		delete(manager.activeByProject, project.ID)
 		manager.mu.Unlock()
+		return ProjectTerminal{}, err
+	}
+	return manager.Terminal(terminal.ID)
+}
+
+func (manager *ShellSessionManager) StartTerminal(terminalID string, size TerminalSize) (ShellStatus, error) {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	terminal, ok := manager.terminals[terminalID]
+	if !ok {
+		return ShellStatus{}, errors.New("terminal not found")
+	}
+	if session, ok := manager.sessions[terminalID]; ok && session.state == ShellStateRunning {
+		status := ShellStatus{ProjectID: terminal.ProjectID, TerminalID: terminal.ID, State: session.state}
+		terminal.State = session.state
+		manager.touchTerminalLocked(terminal)
 		return status, nil
 	}
 
+	launch, err := IntegratedShellLaunch(terminal.shellPath, os.Environ())
+	if err != nil {
+		terminal.State = ShellStateExited
+		return ShellStatus{}, err
+	}
+
 	request := ShellStartRequest{
-		ProjectID:  project.ID,
-		WorkingDir: project.Path,
-		ShellPath:  manager.shellPathResolver(),
+		TerminalID: terminal.ID,
+		ProjectID:  terminal.ProjectID,
+		WorkingDir: terminal.projectPath,
+		ShellPath:  launch.Path,
+		ShellArgs:  launch.Args,
+		ShellName:  launch.ShellName,
 		Size:       size,
-		Env:        EmbeddedTerminalEnv(os.Environ()),
+		Env:        launch.Env,
 	}
 	process, err := manager.starter(request)
 	if err != nil {
-		manager.mu.Unlock()
+		launch.Cleanup()
+		terminal.State = ShellStateExited
 		return ShellStatus{}, err
 	}
 
 	session := &ShellSession{
-		projectID: project.ID,
-		process:   process,
-		size:      size,
-		state:     ShellStateRunning,
+		terminalID: terminal.ID,
+		projectID:  terminal.ProjectID,
+		process:    process,
+		size:       size,
+		state:      ShellStateRunning,
+		cleanup:    launch.Cleanup,
 	}
 
-	manager.sessions[project.ID] = session
-	manager.mu.Unlock()
-
+	manager.sessions[terminal.ID] = session
+	terminal.State = ShellStateRunning
+	manager.touchTerminalLocked(terminal)
 	go manager.readOutput(session)
 	go manager.waitForExit(session)
 
-	return ShellStatus{ProjectID: project.ID, State: ShellStateRunning}, nil
+	return ShellStatus{ProjectID: terminal.ProjectID, TerminalID: terminal.ID, State: ShellStateRunning}, nil
 }
 
-func (manager *ShellSessionManager) WriteInput(projectID string, data string) error {
-	session, err := manager.runningSession(projectID)
+func (manager *ShellSessionManager) SelectTerminal(terminalID string) (ProjectTerminal, error) {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	terminal, ok := manager.terminals[terminalID]
+	if !ok {
+		return ProjectTerminal{}, errors.New("terminal not found")
+	}
+	manager.touchTerminalLocked(terminal)
+	return *terminal, nil
+}
+
+func (manager *ShellSessionManager) Terminal(terminalID string) (ProjectTerminal, error) {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	terminal, ok := manager.terminals[terminalID]
+	if !ok {
+		return ProjectTerminal{}, errors.New("terminal not found")
+	}
+	return *terminal, nil
+}
+
+func (manager *ShellSessionManager) Terminals() []ProjectTerminal {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	terminals := make([]ProjectTerminal, 0, len(manager.terminals))
+	for _, terminal := range manager.terminals {
+		terminals = append(terminals, *terminal)
+	}
+	sort.Slice(terminals, func(left, right int) bool {
+		if terminals[left].CreatedAt == terminals[right].CreatedAt {
+			return terminals[left].ID < terminals[right].ID
+		}
+		return terminals[left].CreatedAt < terminals[right].CreatedAt
+	})
+	return terminals
+}
+
+func (manager *ShellSessionManager) ActiveTerminalID(projectID string) string {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	return manager.activeByProject[projectID]
+}
+
+func (manager *ShellSessionManager) registerTerminalLocked(project Project) ProjectTerminal {
+	shellPath := manager.shellPathResolver()
+	now := manager.now().UTC().Format(time.RFC3339)
+	terminal := &ProjectTerminal{
+		ID:             manager.newID(),
+		ProjectID:      project.ID,
+		ShellName:      shellNameFromPath(shellPath),
+		State:          ShellStateExited,
+		CreatedAt:      now,
+		LastSelectedAt: now,
+		projectPath:    project.Path,
+		shellPath:      shellPath,
+	}
+	manager.terminals[terminal.ID] = terminal
+	manager.activeByProject[project.ID] = terminal.ID
+	return *terminal
+}
+
+func (manager *ShellSessionManager) touchTerminalLocked(terminal *ProjectTerminal) {
+	terminal.LastSelectedAt = manager.now().UTC().Format(time.RFC3339)
+	manager.activeByProject[terminal.ProjectID] = terminal.ID
+}
+
+func (manager *ShellSessionManager) WriteInput(terminalID string, data string) error {
+	session, err := manager.runningSession(terminalID)
 	if err != nil {
 		return err
 	}
@@ -140,8 +339,8 @@ func (manager *ShellSessionManager) WriteInput(projectID string, data string) er
 	return err
 }
 
-func (manager *ShellSessionManager) Resize(projectID string, size TerminalSize) error {
-	session, err := manager.runningSession(projectID)
+func (manager *ShellSessionManager) Resize(terminalID string, size TerminalSize) error {
+	session, err := manager.runningSession(terminalID)
 	if err != nil {
 		return err
 	}
@@ -155,14 +354,17 @@ func (manager *ShellSessionManager) Resize(projectID string, size TerminalSize) 
 	return nil
 }
 
-func (manager *ShellSessionManager) Status(projectID string) ShellStatus {
+func (manager *ShellSessionManager) Status(terminalID string) ShellStatus {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 
-	if session, ok := manager.sessions[projectID]; ok {
-		return ShellStatus{ProjectID: projectID, State: session.state}
+	if session, ok := manager.sessions[terminalID]; ok {
+		return ShellStatus{ProjectID: session.projectID, TerminalID: terminalID, State: session.state}
 	}
-	return ShellStatus{ProjectID: projectID, State: ShellStateExited}
+	if terminal, ok := manager.terminals[terminalID]; ok {
+		return ShellStatus{ProjectID: terminal.ProjectID, TerminalID: terminalID, State: terminal.State}
+	}
+	return ShellStatus{TerminalID: terminalID, State: ShellStateExited}
 }
 
 func (manager *ShellSessionManager) Shutdown() {
@@ -175,14 +377,15 @@ func (manager *ShellSessionManager) Shutdown() {
 
 	for _, session := range sessions {
 		_ = session.process.Close()
+		session.cleanupSession()
 	}
 }
 
-func (manager *ShellSessionManager) runningSession(projectID string) (*ShellSession, error) {
+func (manager *ShellSessionManager) runningSession(terminalID string) (*ShellSession, error) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 
-	session, ok := manager.sessions[projectID]
+	session, ok := manager.sessions[terminalID]
 	if !ok || session.state != ShellStateRunning {
 		return nil, errors.New("shell session is not running")
 	}
@@ -195,8 +398,9 @@ func (manager *ShellSessionManager) readOutput(session *ShellSession) {
 		n, err := session.process.Read(buffer)
 		if n > 0 && manager.callbacks.OnOutput != nil {
 			manager.callbacks.OnOutput(TerminalOutputEvent{
-				ProjectID: session.projectID,
-				Data:      string(buffer[:n]),
+				ProjectID:  session.projectID,
+				TerminalID: session.terminalID,
+				Data:       string(buffer[:n]),
 			})
 		}
 		if err != nil {
@@ -209,14 +413,172 @@ func (manager *ShellSessionManager) waitForExit(session *ShellSession) {
 	_ = session.process.Wait()
 
 	manager.mu.Lock()
-	if current, ok := manager.sessions[session.projectID]; ok && current == session {
+	if current, ok := manager.sessions[session.terminalID]; ok && current == session {
 		current.state = ShellStateExited
+		if terminal, ok := manager.terminals[session.terminalID]; ok {
+			terminal.State = ShellStateExited
+		}
 	}
 	manager.mu.Unlock()
+	session.cleanupSession()
 
 	if manager.callbacks.OnStatus != nil {
-		manager.callbacks.OnStatus(ShellStatus{ProjectID: session.projectID, State: ShellStateExited})
+		manager.callbacks.OnStatus(ShellStatus{ProjectID: session.projectID, TerminalID: session.terminalID, State: ShellStateExited})
 	}
+}
+
+func (session *ShellSession) cleanupSession() {
+	if session.cleanup != nil {
+		session.cleanupOnce.Do(session.cleanup)
+	}
+}
+
+type ShellLaunch struct {
+	Path      string
+	Args      []string
+	Env       []string
+	ShellName string
+	Cleanup   func()
+}
+
+func IntegratedShellLaunch(shellPath string, baseEnv []string) (ShellLaunch, error) {
+	shellName := shellNameFromPath(shellPath)
+	env := EmbeddedTerminalEnv(baseEnv)
+	launch := ShellLaunch{
+		Path:      shellPath,
+		Env:       env,
+		ShellName: shellName,
+		Cleanup:   func() {},
+	}
+
+	switch shellName {
+	case "zsh":
+		return zshIntegratedLaunch(launch)
+	case "bash":
+		return bashIntegratedLaunch(launch)
+	default:
+		return launch, nil
+	}
+}
+
+func zshIntegratedLaunch(launch ShellLaunch) (ShellLaunch, error) {
+	dir, err := os.MkdirTemp("", "tui-helper-zsh-*")
+	if err != nil {
+		return ShellLaunch{}, err
+	}
+	originalZDOTDIR := envValueFromList(launch.Env, "ZDOTDIR")
+	if originalZDOTDIR == "" {
+		originalZDOTDIR = envValueFromList(launch.Env, "HOME")
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".zshrc"), []byte(zshIntegrationScript()), 0o600); err != nil {
+		_ = os.RemoveAll(dir)
+		return ShellLaunch{}, err
+	}
+	launch.Args = []string{"-i"}
+	launch.Env = envWithOverrides(launch.Env, map[string]string{
+		"ZDOTDIR":                     dir,
+		"TUI_HELPER_ORIGINAL_ZDOTDIR": originalZDOTDIR,
+	})
+	launch.Cleanup = func() {
+		_ = os.RemoveAll(dir)
+	}
+	return launch, nil
+}
+
+func bashIntegratedLaunch(launch ShellLaunch) (ShellLaunch, error) {
+	file, err := os.CreateTemp("", "tui-helper-bash-*.bashrc")
+	if err != nil {
+		return ShellLaunch{}, err
+	}
+	path := file.Name()
+	if _, err := file.WriteString(bashIntegrationScript()); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return ShellLaunch{}, err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return ShellLaunch{}, err
+	}
+	launch.Args = []string{"--rcfile", path, "-i"}
+	launch.Cleanup = func() {
+		_ = os.Remove(path)
+	}
+	return launch, nil
+}
+
+func zshIntegrationScript() string {
+	return `
+if [ -n "$TUI_HELPER_ORIGINAL_ZDOTDIR" ] && [ -f "$TUI_HELPER_ORIGINAL_ZDOTDIR/.zshrc" ]; then
+  source "$TUI_HELPER_ORIGINAL_ZDOTDIR/.zshrc"
+fi
+
+autoload -Uz add-zsh-hook
+__tui_helper_emit_command_start() {
+  printf '\033]777;tui-helper;command-start;%s\a' "$(printf '%s' "$1" | base64 | tr -d '\n')"
+}
+__tui_helper_emit_command_end() {
+  printf '\033]777;tui-helper;command-end\a'
+}
+__tui_helper_preexec() {
+  __tui_helper_emit_command_start "$1"
+}
+__tui_helper_precmd() {
+  __tui_helper_emit_command_end
+}
+add-zsh-hook preexec __tui_helper_preexec
+add-zsh-hook precmd __tui_helper_precmd
+`
+}
+
+func bashIntegrationScript() string {
+	return `
+if [ -f "$HOME/.bashrc" ]; then
+  . "$HOME/.bashrc"
+fi
+
+__tui_helper_command_started=0
+__tui_helper_in_prompt=0
+__tui_helper_original_prompt_command="$PROMPT_COMMAND"
+__tui_helper_emit_command_start() {
+  printf '\033]777;tui-helper;command-start;%s\a' "$(printf '%s' "$1" | base64 | tr -d '\n')"
+}
+__tui_helper_emit_command_end() {
+  printf '\033]777;tui-helper;command-end\a'
+}
+__tui_helper_debug_trap() {
+  if [ "$__tui_helper_in_prompt" = "1" ]; then
+    return
+  fi
+  local command="$BASH_COMMAND"
+  case "$command" in
+    __tui_helper_*|trap\ *|PROMPT_COMMAND=*) return ;;
+  esac
+  __tui_helper_emit_command_start "$command"
+  __tui_helper_command_started=1
+}
+__tui_helper_prompt_command() {
+  __tui_helper_in_prompt=1
+  if [ "$__tui_helper_command_started" = "1" ]; then
+    __tui_helper_emit_command_end
+    __tui_helper_command_started=0
+  fi
+  if [ -n "$__tui_helper_original_prompt_command" ]; then
+    eval "$__tui_helper_original_prompt_command"
+  fi
+  __tui_helper_in_prompt=0
+}
+trap '__tui_helper_debug_trap' DEBUG
+PROMPT_COMMAND="__tui_helper_prompt_command"
+`
+}
+
+func shellNameFromPath(shellPath string) string {
+	name := filepath.Base(shellPath)
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		return "shell"
+	}
+	return name
 }
 
 func DefaultShellPath() string {
@@ -230,7 +592,7 @@ func DefaultShellPath() string {
 }
 
 func NewPtyProcess(request ShellStartRequest) (PtyProcess, error) {
-	cmd := exec.Command(request.ShellPath)
+	cmd := exec.Command(request.ShellPath, request.ShellArgs...)
 	cmd.Dir = request.WorkingDir
 	cmd.Env = request.Env
 	if len(cmd.Env) == 0 {
@@ -304,10 +666,20 @@ func envWithOverrides(base []string, overrides map[string]string) []string {
 		result = append(result, entry)
 	}
 
-	for _, key := range []string{"TERM", "COLORTERM"} {
+	for key, value := range overrides {
 		if !seen[key] {
-			result = append(result, key+"="+overrides[key])
+			result = append(result, key+"="+value)
 		}
 	}
 	return result
+}
+
+func envValueFromList(env []string, key string) string {
+	prefix := key + "="
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			return strings.TrimPrefix(entry, prefix)
+		}
+	}
+	return ""
 }

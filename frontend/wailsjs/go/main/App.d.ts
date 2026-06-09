@@ -6,6 +6,8 @@ export function AddProjectFromPath(arg1:string):Promise<main.ProjectState>;
 
 export function CreateProjectFromDialog():Promise<main.ProjectState>;
 
+export function CreateTerminal(arg1:string,arg2:number,arg3:number):Promise<main.ProjectState>;
+
 export function GetShellStatus(arg1:string):Promise<main.ShellStatus>;
 
 export function ListProjects():Promise<main.ProjectState>;
@@ -13,6 +15,8 @@ export function ListProjects():Promise<main.ProjectState>;
 export function ResizeTerminal(arg1:string,arg2:number,arg3:number):Promise<void>;
 
 export function SelectProject(arg1:string):Promise<main.ProjectState>;
+
+export function SelectTerminal(arg1:string):Promise<main.ProjectState>;
 
 export function SendTerminalInput(arg1:string,arg2:string):Promise<void>;
 
