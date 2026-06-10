@@ -9,9 +9,11 @@ import (
 )
 
 type App struct {
-	ctx      context.Context
-	projects *ProjectManager
-	shells   *ShellSessionManager
+	ctx       context.Context
+	projects  *ProjectManager
+	shells    *ShellSessionManager
+	settings  *SettingsManager
+	gitStatus func(path string) (GitStatus, error)
 }
 
 func NewApp() *App {
@@ -24,8 +26,13 @@ func NewAppWithConfig(configPath string) *App {
 
 func NewAppWithConfigAndShellStarter(configPath string, starter ShellStarter, shellOpts ...ShellSessionManagerOption) *App {
 	app := &App{
-		projects: NewProjectManager(configPath),
+		projects:  NewProjectManager(configPath),
+		settings:  NewSettingsManager(defaultSettingsConfigPath(configPath)),
+		gitStatus: queryGitStatus,
 	}
+	shellOpts = append([]ShellSessionManagerOption{
+		WithShellPathResolver(app.settings.ResolveShellPath),
+	}, shellOpts...)
 	app.shells = NewShellSessionManager(starter, ShellSessionCallbacks{
 		OnOutput: app.emitTerminalOutput,
 		OnStatus: app.emitShellStatus,
@@ -103,12 +110,32 @@ func (a *App) CreateTerminal(projectID string, cols int, rows int) (ProjectState
 	return a.withShellState(state), nil
 }
 
+func (a *App) DeleteProject(projectID string) (ProjectState, error) {
+	state, err := a.projects.DeleteProject(projectID)
+	if err != nil {
+		return ProjectState{}, err
+	}
+	a.shells.DeleteProjectTerminals(projectID)
+	return a.withShellState(state), nil
+}
+
 func (a *App) SelectTerminal(terminalID string) (ProjectState, error) {
 	terminal, err := a.shells.SelectTerminal(terminalID)
 	if err != nil {
 		return ProjectState{}, err
 	}
 	state, err := a.projects.SelectProject(terminal.ProjectID)
+	if err != nil {
+		return ProjectState{}, err
+	}
+	return a.withShellState(state), nil
+}
+
+func (a *App) DeleteTerminal(terminalID string) (ProjectState, error) {
+	if err := a.shells.DeleteTerminal(terminalID); err != nil {
+		return ProjectState{}, err
+	}
+	state, err := a.projects.Load()
 	if err != nil {
 		return ProjectState{}, err
 	}
@@ -131,6 +158,37 @@ func (a *App) GetShellStatus(terminalID string) ShellStatus {
 	return a.shells.Status(terminalID)
 }
 
+func (a *App) GetProjectGitStatus(projectID string) (GitStatus, error) {
+	project, err := a.projects.GetProject(projectID)
+	if err != nil {
+		return GitStatus{}, err
+	}
+	status := GitStatus{ProjectID: projectID}
+	if !project.Available {
+		status.PathUnavailable = true
+		return status, nil
+	}
+
+	status, err = a.gitStatus(project.Path)
+	if err != nil {
+		return GitStatus{}, err
+	}
+	status.ProjectID = projectID
+	return status, nil
+}
+
+func (a *App) LoadTerminalSettings() (TerminalSettingsState, error) {
+	return a.settings.Load()
+}
+
+func (a *App) SaveTerminalShell(path string, source string) (TerminalSettingsState, error) {
+	return a.settings.SaveShellPath(path, source)
+}
+
+func (a *App) DetectTerminalShell() (TerminalShellSetting, error) {
+	return a.settings.DetectShell()
+}
+
 func (a *App) emitTerminalOutput(event TerminalOutputEvent) {
 	if a.ctx != nil {
 		wailsruntime.EventsEmit(a.ctx, "terminal-output", event)
@@ -149,6 +207,10 @@ func defaultProjectConfigPath() string {
 		configDir = "."
 	}
 	return filepath.Join(configDir, "tui-helper", "projects.json")
+}
+
+func defaultSettingsConfigPath(projectConfigPath string) string {
+	return filepath.Join(filepath.Dir(projectConfigPath), "settings.json")
 }
 
 func normalizeTerminalSize(cols int, rows int) TerminalSize {

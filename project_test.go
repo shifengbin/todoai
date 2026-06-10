@@ -135,6 +135,130 @@ func TestProjectManagerMarksMissingPathsUnavailable(t *testing.T) {
 	}
 }
 
+func TestProjectManagerDeletesProjectWithoutRemovingDirectory(t *testing.T) {
+	projectDir := t.TempDir()
+	otherDir := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	now := time.Date(2026, 6, 10, 9, 0, 0, 0, time.UTC)
+	manager := NewProjectManager(
+		configPath,
+		WithProjectIDGenerator(sequenceIDs("project-a", "project-b")),
+		WithProjectClock(func() time.Time { return now }),
+	)
+	if _, _, err := manager.AddProjectPath(projectDir); err != nil {
+		t.Fatalf("AddProjectPath(projectDir) error = %v", err)
+	}
+	now = now.Add(time.Minute)
+	if _, _, err := manager.AddProjectPath(otherDir); err != nil {
+		t.Fatalf("AddProjectPath(otherDir) error = %v", err)
+	}
+
+	state, err := manager.DeleteProject("project-a")
+	if err != nil {
+		t.Fatalf("DeleteProject() error = %v", err)
+	}
+
+	if len(state.Projects) != 1 {
+		t.Fatalf("Projects length = %d, want 1", len(state.Projects))
+	}
+	if state.Projects[0].ID != "project-b" {
+		t.Fatalf("remaining project ID = %q, want project-b", state.Projects[0].ID)
+	}
+	if _, err := os.Stat(projectDir); err != nil {
+		t.Fatalf("deleted project directory should remain on disk: %v", err)
+	}
+
+	reloaded := NewProjectManager(configPath)
+	persisted, err := reloaded.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(persisted.Projects) != 1 || persisted.Projects[0].ID != "project-b" {
+		t.Fatalf("persisted projects = %#v, want only project-b", persisted.Projects)
+	}
+}
+
+func TestProjectManagerDeleteProjectSelectsMostRecentlySelectedRemainingProject(t *testing.T) {
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+	dirC := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	now := time.Date(2026, 6, 10, 9, 0, 0, 0, time.UTC)
+	manager := NewProjectManager(
+		configPath,
+		WithProjectIDGenerator(sequenceIDs("project-a", "project-b", "project-c")),
+		WithProjectClock(func() time.Time { return now }),
+	)
+	if _, _, err := manager.AddProjectPath(dirA); err != nil {
+		t.Fatalf("AddProjectPath(dirA) error = %v", err)
+	}
+	now = now.Add(time.Minute)
+	if _, _, err := manager.AddProjectPath(dirB); err != nil {
+		t.Fatalf("AddProjectPath(dirB) error = %v", err)
+	}
+	now = now.Add(time.Minute)
+	if _, _, err := manager.AddProjectPath(dirC); err != nil {
+		t.Fatalf("AddProjectPath(dirC) error = %v", err)
+	}
+	now = now.Add(time.Minute)
+	if _, err := manager.SelectProject("project-b"); err != nil {
+		t.Fatalf("SelectProject(project-b) error = %v", err)
+	}
+	now = now.Add(time.Minute)
+	if _, err := manager.SelectProject("project-c"); err != nil {
+		t.Fatalf("SelectProject(project-c) error = %v", err)
+	}
+
+	state, err := manager.DeleteProject("project-c")
+	if err != nil {
+		t.Fatalf("DeleteProject() error = %v", err)
+	}
+
+	if state.ActiveProjectID != "project-b" {
+		t.Fatalf("ActiveProjectID = %q, want project-b", state.ActiveProjectID)
+	}
+
+	state, err = manager.DeleteProject("project-b")
+	if err != nil {
+		t.Fatalf("DeleteProject(project-b) error = %v", err)
+	}
+	if state.ActiveProjectID != "project-a" {
+		t.Fatalf("ActiveProjectID after deleting project-b = %q, want project-a", state.ActiveProjectID)
+	}
+
+	state, err = manager.DeleteProject("project-a")
+	if err != nil {
+		t.Fatalf("DeleteProject(project-a) error = %v", err)
+	}
+	if state.ActiveProjectID != "" {
+		t.Fatalf("ActiveProjectID after deleting last project = %q, want empty", state.ActiveProjectID)
+	}
+}
+
+func TestProjectManagerDeleteProjectReturnsErrorWhenProjectIsMissing(t *testing.T) {
+	projectDir := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	manager := NewProjectManager(configPath, WithProjectIDGenerator(func() string { return "project-a" }))
+	if _, _, err := manager.AddProjectPath(projectDir); err != nil {
+		t.Fatalf("AddProjectPath() error = %v", err)
+	}
+
+	if _, err := manager.DeleteProject("missing-project"); err == nil {
+		t.Fatal("DeleteProject() error = nil, want error")
+	}
+
+	state, err := manager.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(state.Projects) != 1 || state.Projects[0].ID != "project-a" {
+		t.Fatalf("projects after missing delete = %#v, want project-a unchanged", state.Projects)
+	}
+	if state.ActiveProjectID != "project-a" {
+		t.Fatalf("ActiveProjectID = %q, want project-a", state.ActiveProjectID)
+	}
+}
+
 func sequenceIDs(ids ...string) func() string {
 	index := 0
 	return func() string {

@@ -1,5 +1,10 @@
 schema: spec-driven
 
+context: |
+  技术栈: go, vue, wails
+  文档语言：中文
+  项目领域：桌面应用开发
+
 # Project context (optional)
 # This is shown to AI when creating artifacts.
 # Add your tech stack, conventions, style guides, domain knowledge, etc.

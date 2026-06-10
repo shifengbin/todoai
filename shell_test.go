@@ -385,6 +385,159 @@ func TestShellSessionManagerFallsBackToShellNameWithoutIntegrationForUnsupported
 	}
 }
 
+func TestShellSessionManagerDeletesRunningTerminalAndClosesProcess(t *testing.T) {
+	starter := newFakeShellStarter()
+	manager := NewShellSessionManager(
+		starter.Start,
+		ShellSessionCallbacks{},
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-a")),
+	)
+	project := Project{ID: "project-a", Path: t.TempDir(), Available: true}
+	terminal, err := manager.CreateTerminal(project, TerminalSize{Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatalf("CreateTerminal() error = %v", err)
+	}
+
+	if err := manager.DeleteTerminal(terminal.ID); err != nil {
+		t.Fatalf("DeleteTerminal() error = %v", err)
+	}
+
+	if len(manager.Terminals()) != 0 {
+		t.Fatalf("Terminals length = %d, want 0", len(manager.Terminals()))
+	}
+	if got := manager.ActiveTerminalID(project.ID); got != "" {
+		t.Fatalf("ActiveTerminalID = %q, want empty", got)
+	}
+	if !starter.processes[0].closed {
+		t.Fatal("deleted running terminal process was not closed")
+	}
+}
+
+func TestShellSessionManagerDeletesExitedTerminalWithoutStartingReplacement(t *testing.T) {
+	starter := newFakeShellStarter()
+	manager := NewShellSessionManager(
+		starter.Start,
+		ShellSessionCallbacks{},
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-a")),
+	)
+	project := Project{ID: "project-a", Path: t.TempDir(), Available: true}
+	terminal, err := manager.CreateTerminal(project, TerminalSize{Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatalf("CreateTerminal() error = %v", err)
+	}
+	starter.processes[0].exit(errors.New("shell exited"))
+	eventually(t, func() bool {
+		return manager.Status(terminal.ID).State == ShellStateExited
+	})
+
+	if err := manager.DeleteTerminal(terminal.ID); err != nil {
+		t.Fatalf("DeleteTerminal() error = %v", err)
+	}
+
+	if len(manager.Terminals()) != 0 {
+		t.Fatalf("Terminals length = %d, want 0", len(manager.Terminals()))
+	}
+	if len(starter.requests) != 1 {
+		t.Fatalf("start count = %d, want 1", len(starter.requests))
+	}
+}
+
+func TestShellSessionManagerDeleteTerminalSelectsRemainingProjectTerminal(t *testing.T) {
+	starter := newFakeShellStarter()
+	now := time.Date(2026, 6, 10, 9, 0, 0, 0, time.UTC)
+	manager := NewShellSessionManager(
+		starter.Start,
+		ShellSessionCallbacks{},
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-a", "terminal-b")),
+		WithShellClock(func() time.Time { return now }),
+	)
+	project := Project{ID: "project-a", Path: t.TempDir(), Available: true}
+	terminalA, err := manager.CreateTerminal(project, TerminalSize{Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatalf("CreateTerminal(A) error = %v", err)
+	}
+	now = now.Add(time.Minute)
+	terminalB, err := manager.CreateTerminal(project, TerminalSize{Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatalf("CreateTerminal(B) error = %v", err)
+	}
+	if got := manager.ActiveTerminalID(project.ID); got != terminalB.ID {
+		t.Fatalf("ActiveTerminalID setup = %q, want %q", got, terminalB.ID)
+	}
+
+	if err := manager.DeleteTerminal(terminalB.ID); err != nil {
+		t.Fatalf("DeleteTerminal() error = %v", err)
+	}
+
+	if got := manager.ActiveTerminalID(project.ID); got != terminalA.ID {
+		t.Fatalf("ActiveTerminalID = %q, want %q", got, terminalA.ID)
+	}
+}
+
+func TestShellSessionManagerDeleteTerminalReturnsErrorWhenMissing(t *testing.T) {
+	starter := newFakeShellStarter()
+	manager := NewShellSessionManager(
+		starter.Start,
+		ShellSessionCallbacks{},
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-a")),
+	)
+	project := Project{ID: "project-a", Path: t.TempDir(), Available: true}
+	if _, err := manager.CreateTerminal(project, TerminalSize{Cols: 80, Rows: 24}); err != nil {
+		t.Fatalf("CreateTerminal() error = %v", err)
+	}
+
+	if err := manager.DeleteTerminal("missing-terminal"); err == nil {
+		t.Fatal("DeleteTerminal() error = nil, want error")
+	}
+
+	if len(manager.Terminals()) != 1 {
+		t.Fatalf("Terminals length = %d, want 1", len(manager.Terminals()))
+	}
+}
+
+func TestShellSessionManagerDeletesProjectTerminalsAndPreservesOtherProjects(t *testing.T) {
+	starter := newFakeShellStarter()
+	manager := NewShellSessionManager(
+		starter.Start,
+		ShellSessionCallbacks{},
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-a", "terminal-b", "terminal-c")),
+	)
+	projectA := Project{ID: "project-a", Path: t.TempDir(), Available: true}
+	projectB := Project{ID: "project-b", Path: t.TempDir(), Available: true}
+	if _, err := manager.CreateTerminal(projectA, TerminalSize{Cols: 80, Rows: 24}); err != nil {
+		t.Fatalf("CreateTerminal(projectA first) error = %v", err)
+	}
+	if _, err := manager.CreateTerminal(projectA, TerminalSize{Cols: 100, Rows: 32}); err != nil {
+		t.Fatalf("CreateTerminal(projectA second) error = %v", err)
+	}
+	terminalB, err := manager.CreateTerminal(projectB, TerminalSize{Cols: 120, Rows: 40})
+	if err != nil {
+		t.Fatalf("CreateTerminal(projectB) error = %v", err)
+	}
+
+	manager.DeleteProjectTerminals(projectA.ID)
+
+	terminals := manager.Terminals()
+	if len(terminals) != 1 {
+		t.Fatalf("Terminals length = %d, want 1", len(terminals))
+	}
+	if terminals[0].ID != terminalB.ID {
+		t.Fatalf("remaining terminal ID = %q, want %q", terminals[0].ID, terminalB.ID)
+	}
+	if got := manager.ActiveTerminalID(projectA.ID); got != "" {
+		t.Fatalf("project A ActiveTerminalID = %q, want empty", got)
+	}
+	if got := manager.ActiveTerminalID(projectB.ID); got != terminalB.ID {
+		t.Fatalf("project B ActiveTerminalID = %q, want %q", got, terminalB.ID)
+	}
+	if !starter.processes[0].closed || !starter.processes[1].closed {
+		t.Fatal("project A terminal processes were not closed")
+	}
+	if starter.processes[2].closed {
+		t.Fatal("project B terminal process was closed")
+	}
+}
+
 type fakeShellStarter struct {
 	requests  []ShellStartRequest
 	processes []*fakePtyProcess
@@ -406,6 +559,7 @@ type fakePtyProcess struct {
 	wait    chan error
 	written string
 	sizes   []TerminalSize
+	closed  bool
 }
 
 func newFakePtyProcess(size TerminalSize) *fakePtyProcess {
@@ -439,6 +593,7 @@ func (process *fakePtyProcess) Wait() error {
 }
 
 func (process *fakePtyProcess) Close() error {
+	process.closed = true
 	close(process.output)
 	process.wait <- nil
 	return nil

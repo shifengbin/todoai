@@ -1,0 +1,121 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"os/exec"
+	"strconv"
+	"strings"
+	"time"
+)
+
+const gitStatusTimeout = 2 * time.Second
+
+type gitStatusRunner func(context.Context, string) ([]byte, error)
+
+type GitStatus struct {
+	ProjectID       string `json:"projectId,omitempty"`
+	IsRepo          bool   `json:"isRepo"`
+	Branch          string `json:"branch"`
+	ChangedCount    int    `json:"changedCount"`
+	StagedCount     int    `json:"stagedCount"`
+	UnstagedCount   int    `json:"unstagedCount"`
+	UntrackedCount  int    `json:"untrackedCount"`
+	Ahead           int    `json:"ahead"`
+	Behind          int    `json:"behind"`
+	PathUnavailable bool   `json:"pathUnavailable,omitempty"`
+}
+
+func parseGitStatusPorcelainV2(output string) GitStatus {
+	status := GitStatus{IsRepo: true}
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "# branch.head ") {
+			status.Branch = strings.TrimPrefix(line, "# branch.head ")
+			continue
+		}
+		if strings.HasPrefix(line, "# branch.ab ") {
+			parseBranchAheadBehind(&status, strings.TrimPrefix(line, "# branch.ab "))
+			continue
+		}
+		if strings.HasPrefix(line, "? ") {
+			status.ChangedCount++
+			status.UntrackedCount++
+			continue
+		}
+		if strings.HasPrefix(line, "! ") {
+			continue
+		}
+
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		switch fields[0] {
+		case "1", "2", "u":
+			countTrackedGitStatus(&status, fields[1])
+		}
+	}
+	return status
+}
+
+func queryGitStatus(path string) (GitStatus, error) {
+	return gitStatusForPath(path, runGitStatusCommand)
+}
+
+func gitStatusForPath(path string, runner gitStatusRunner) (GitStatus, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitStatusTimeout)
+	defer cancel()
+
+	output, err := runner(ctx, path)
+	if err != nil {
+		if isNotGitRepositoryOutput(string(output)) {
+			return GitStatus{IsRepo: false}, nil
+		}
+		if errorsIsDeadlineExceeded(ctx.Err()) {
+			return GitStatus{}, fmt.Errorf("git status timed out")
+		}
+		return GitStatus{}, fmt.Errorf("git status failed: %w", err)
+	}
+	return parseGitStatusPorcelainV2(string(output)), nil
+}
+
+func runGitStatusCommand(ctx context.Context, path string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "git", "-C", path, "status", "--porcelain=v2", "--branch")
+	return cmd.CombinedOutput()
+}
+
+func isNotGitRepositoryOutput(output string) bool {
+	return strings.Contains(strings.ToLower(output), "not a git repository")
+}
+
+func errorsIsDeadlineExceeded(err error) bool {
+	return err == context.DeadlineExceeded
+}
+
+func parseBranchAheadBehind(status *GitStatus, value string) {
+	for _, field := range strings.Fields(value) {
+		if strings.HasPrefix(field, "+") {
+			status.Ahead, _ = strconv.Atoi(strings.TrimPrefix(field, "+"))
+		}
+		if strings.HasPrefix(field, "-") {
+			status.Behind, _ = strconv.Atoi(strings.TrimPrefix(field, "-"))
+		}
+	}
+}
+
+func countTrackedGitStatus(status *GitStatus, xy string) {
+	if xy == "" || xy == ".." {
+		return
+	}
+	status.ChangedCount++
+	if xy[0] != '.' {
+		status.StagedCount++
+	}
+	if len(xy) > 1 && xy[1] != '.' {
+		status.UnstagedCount++
+	}
+}

@@ -14,6 +14,22 @@ export function CreateTerminal(arg1, arg2, arg3) {
   return window['go']['main']['App']['CreateTerminal'](arg1, arg2, arg3);
 }
 
+export function DeleteProject(arg1) {
+  return window['go']['main']['App']['DeleteProject'](arg1);
+}
+
+export function DeleteTerminal(arg1) {
+  return window['go']['main']['App']['DeleteTerminal'](arg1);
+}
+
+export function DetectTerminalShell() {
+  return window['go']['main']['App']['DetectTerminalShell']();
+}
+
+export function GetProjectGitStatus(arg1) {
+  return window['go']['main']['App']['GetProjectGitStatus'](arg1);
+}
+
 export function GetShellStatus(arg1) {
   return window['go']['main']['App']['GetShellStatus'](arg1);
 }
@@ -22,8 +38,16 @@ export function ListProjects() {
   return window['go']['main']['App']['ListProjects']();
 }
 
+export function LoadTerminalSettings() {
+  return window['go']['main']['App']['LoadTerminalSettings']();
+}
+
 export function ResizeTerminal(arg1, arg2, arg3) {
   return window['go']['main']['App']['ResizeTerminal'](arg1, arg2, arg3);
+}
+
+export function SaveTerminalShell(arg1, arg2) {
+  return window['go']['main']['App']['SaveTerminalShell'](arg1, arg2);
 }
 
 export function SelectProject(arg1) {

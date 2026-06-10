@@ -136,6 +136,38 @@ func (manager *ProjectManager) SelectProject(projectID string) (ProjectState, er
 	return ProjectState{}, errors.New("project not found")
 }
 
+func (manager *ProjectManager) DeleteProject(projectID string) (ProjectState, error) {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	state, err := manager.loadLocked()
+	if err != nil {
+		return ProjectState{}, err
+	}
+
+	nextProjects := make([]Project, 0, len(state.Projects))
+	deleted := false
+	for _, project := range state.Projects {
+		if project.ID == projectID {
+			deleted = true
+			continue
+		}
+		nextProjects = append(nextProjects, project)
+	}
+	if !deleted {
+		return ProjectState{}, errors.New("project not found")
+	}
+
+	state.Projects = nextProjects
+	if state.ActiveProjectID == projectID {
+		state.ActiveProjectID = mostRecentlySelectedProjectID(state.Projects)
+	}
+	if err := manager.saveLocked(state); err != nil {
+		return ProjectState{}, err
+	}
+	return state, nil
+}
+
 func (manager *ProjectManager) GetProject(projectID string) (Project, error) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
@@ -219,4 +251,16 @@ func containsProject(projects []Project, projectID string) bool {
 		}
 	}
 	return false
+}
+
+func mostRecentlySelectedProjectID(projects []Project) string {
+	selectedProjectID := ""
+	selectedAt := ""
+	for _, project := range projects {
+		if selectedProjectID == "" || project.LastSelectedAt > selectedAt {
+			selectedProjectID = project.ID
+			selectedAt = project.LastSelectedAt
+		}
+	}
+	return selectedProjectID
 }

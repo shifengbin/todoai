@@ -1,16 +1,22 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { RotateCcw } from '@lucide/vue'
+import { RotateCcw, Settings, X } from '@lucide/vue'
 import ProjectSidebar from './components/ProjectSidebar.vue'
 import { TerminalSessionManager } from './terminalManager'
 import { createXtermSession } from './xtermFactory'
 import {
   CreateProjectFromDialog,
   CreateTerminal,
+  DeleteProject,
+  DeleteTerminal,
+  DetectTerminalShell,
+  GetProjectGitStatus,
   ListProjects,
+  LoadTerminalSettings,
   ResizeTerminal,
   SelectProject,
   SelectTerminal,
+  SaveTerminalShell,
   SendTerminalInput,
   StartShell
 } from '../wailsjs/go/main/App'
@@ -23,11 +29,26 @@ const activeTerminalId = ref('')
 const shellStatuses = reactive({})
 const terminalContainers = new Map()
 const errorMessage = ref('')
+let gitStatusRequestId = 0
 const terminalMenu = reactive({
   visible: false,
   terminalId: '',
   x: 0,
   y: 0
+})
+const terminalSettings = ref(null)
+const detectedTerminalShell = ref(null)
+const gitStatus = ref(null)
+const gitStatusLoading = ref(false)
+const gitStatusError = ref('')
+const settingsPanel = reactive({
+  visible: false,
+  loading: false,
+  detecting: false,
+  saving: false,
+  mode: 'detected',
+  manualPath: '',
+  error: ''
 })
 const terminalManager = new TerminalSessionManager({
   createSession: createXtermSession,
@@ -57,6 +78,38 @@ const activeTerminalState = computed(() => {
   return activeTerminal.value ? terminalState(activeTerminal.value.id) : ''
 })
 
+const selectedTerminalShell = computed(() => terminalSettings.value?.selected || null)
+
+const projectGitStatusText = computed(() => {
+  if (!activeProject.value) {
+    return 'No project'
+  }
+  if (!activeProject.value.available || gitStatus.value?.pathUnavailable) {
+    return 'Project path unavailable'
+  }
+  if (gitStatusLoading.value) {
+    return 'Loading git status'
+  }
+  if (gitStatusError.value) {
+    return 'Git status unavailable'
+  }
+  if (gitStatus.value && !gitStatus.value.isRepo) {
+    return 'Not a git repository'
+  }
+  if (gitStatus.value?.isRepo) {
+    const branch = gitStatus.value.branch || '(detached)'
+    const changedCount = gitStatus.value.changedCount || 0
+    return `${branch} · ${changedCount} changed`
+  }
+  return 'Git status unavailable'
+})
+
+const terminalSettingsDetected = computed(() => {
+  return detectedTerminalShell.value || terminalSettings.value?.detected || terminalSettings.value?.fallback || null
+})
+
+const terminalSettingsFallback = computed(() => terminalSettings.value?.fallback || null)
+
 onMounted(async () => {
   EventsOn('terminal-output', (event) => {
     terminalManager.write(event.terminalId, event.data)
@@ -65,6 +118,7 @@ onMounted(async () => {
     updateTerminalState(status.terminalId, status.state)
   })
   window.addEventListener('resize', fitActiveTerminal)
+  window.addEventListener('focus', refreshProjectGitStatus)
   window.addEventListener('click', closeTerminalMenu)
 
   try {
@@ -83,10 +137,12 @@ onBeforeUnmount(() => {
   EventsOff('terminal-output')
   EventsOff('terminal-status')
   window.removeEventListener('resize', fitActiveTerminal)
+  window.removeEventListener('focus', refreshProjectGitStatus)
   window.removeEventListener('click', closeTerminalMenu)
 })
 
 function applyState(state) {
+  const previousActiveProjectId = activeProjectId.value
   const previousTerminals = new Map(terminals.value.map((terminal) => [terminal.id, terminal]))
   projects.value = state?.projects || []
   terminals.value = (state?.terminals || []).map((terminal) => ({
@@ -104,6 +160,7 @@ function applyState(state) {
     }
   }
   closeTerminalMenu()
+  syncGitStatusForActiveProject(previousActiveProjectId)
 }
 
 async function createProject() {
@@ -139,6 +196,29 @@ async function createTerminal(projectId) {
   try {
     const size = terminalManager.size() || { cols: 80, rows: 24 }
     applyState(await CreateTerminal(projectId, size.cols || 80, size.rows || 24))
+    await activateActiveTerminal()
+  } catch (error) {
+    showError(error)
+  }
+}
+
+async function deleteProject(projectId) {
+  const project = projects.value.find((candidate) => candidate.id === projectId)
+  const projectName = project?.name || 'this project'
+  if (!window.confirm(`Delete project "${projectName}" from this app? Files on disk will not be deleted.`)) {
+    return
+  }
+  try {
+    applyState(await DeleteProject(projectId))
+    await activateActiveTerminal()
+  } catch (error) {
+    showError(error)
+  }
+}
+
+async function deleteTerminal(terminalId) {
+  try {
+    applyState(await DeleteTerminal(terminalId))
     await activateActiveTerminal()
   } catch (error) {
     showError(error)
@@ -217,6 +297,129 @@ function hasTerminalSelection(terminalId) {
   return terminalManager.hasSelection(terminalId)
 }
 
+async function openTerminalSettings() {
+  closeTerminalMenu()
+  settingsPanel.visible = true
+  settingsPanel.loading = true
+  settingsPanel.error = ''
+  try {
+    const state = await LoadTerminalSettings()
+    applyTerminalSettings(state)
+    if (!detectedTerminalShell.value) {
+      detectedTerminalShell.value = await DetectTerminalShell()
+    }
+    settingsPanel.mode = detectedTerminalShell.value ? 'detected' : 'manual'
+  } catch (error) {
+    settingsPanel.error = errorMessageFrom(error)
+  } finally {
+    settingsPanel.loading = false
+  }
+}
+
+function closeTerminalSettings() {
+  settingsPanel.visible = false
+  settingsPanel.error = ''
+}
+
+function applyTerminalSettings(state) {
+  terminalSettings.value = state || null
+  detectedTerminalShell.value = state?.detected || state?.fallback || null
+  settingsPanel.manualPath = state?.selected?.path || settingsPanel.manualPath || ''
+}
+
+async function redetectTerminalShell() {
+  settingsPanel.detecting = true
+  settingsPanel.error = ''
+  try {
+    detectedTerminalShell.value = await DetectTerminalShell()
+    settingsPanel.mode = 'detected'
+  } catch (error) {
+    settingsPanel.error = errorMessageFrom(error)
+  } finally {
+    settingsPanel.detecting = false
+  }
+}
+
+async function saveTerminalSettings() {
+  const source = settingsPanel.mode === 'manual' ? 'manual' : 'detected'
+  const path = source === 'manual' ? settingsPanel.manualPath.trim() : terminalSettingsDetected.value?.path || ''
+  if (!path) {
+    settingsPanel.error = 'Choose a terminal shell path'
+    return
+  }
+  settingsPanel.saving = true
+  settingsPanel.error = ''
+  try {
+    applyTerminalSettings(await SaveTerminalShell(path, source))
+    closeTerminalSettings()
+  } catch (error) {
+    settingsPanel.error = errorMessageFrom(error)
+  } finally {
+    settingsPanel.saving = false
+  }
+}
+
+function shellDisplay(shell) {
+  if (!shell) {
+    return ''
+  }
+  return `${shell.displayName || 'shell'} ${shell.path || ''}`.trim()
+}
+
+function syncGitStatusForActiveProject(previousActiveProjectId = '') {
+  if (!activeProject.value) {
+    gitStatusRequestId += 1
+    gitStatus.value = null
+    gitStatusLoading.value = false
+    gitStatusError.value = ''
+    return
+  }
+  if (!activeProject.value.available) {
+    gitStatusRequestId += 1
+    gitStatus.value = { projectId: activeProject.value.id, isRepo: false, pathUnavailable: true }
+    gitStatusLoading.value = false
+    gitStatusError.value = ''
+    return
+  }
+  if (activeProject.value.id !== previousActiveProjectId) {
+    refreshProjectGitStatus()
+  }
+}
+
+async function refreshProjectGitStatus() {
+  const project = activeProject.value
+  if (!project || !project.available) {
+    syncGitStatusForActiveProject(activeProjectId.value)
+    return
+  }
+  const requestId = gitStatusRequestId + 1
+  gitStatusRequestId = requestId
+  const projectId = project.id
+  gitStatusLoading.value = true
+  gitStatusError.value = ''
+  try {
+    const status = await GetProjectGitStatus(projectId)
+    if (requestId !== gitStatusRequestId || activeProjectId.value !== projectId) {
+      return
+    }
+    gitStatus.value = status
+  } catch (error) {
+    if (requestId !== gitStatusRequestId || activeProjectId.value !== projectId) {
+      return
+    }
+    gitStatus.value = null
+    gitStatusError.value = errorMessageFrom(error)
+  } finally {
+    if (requestId === gitStatusRequestId) {
+      gitStatusLoading.value = false
+    }
+  }
+}
+
+function errorMessageFrom(error) {
+  return error?.message || String(error)
+}
+
 function fitActiveTerminal() {
   terminalManager.fitActive()
 }
@@ -249,6 +452,9 @@ function handleTerminalCommandState(terminalId, event) {
   }
   if (event.type === 'command-end') {
     terminal.currentCommand = ''
+    if (terminal.projectId === activeProjectId.value) {
+      refreshProjectGitStatus()
+    }
   }
 }
 
@@ -257,7 +463,7 @@ function sanitizeCommandLabel(command) {
 }
 
 function showError(error) {
-  errorMessage.value = error?.message || String(error)
+  errorMessage.value = errorMessageFrom(error)
 }
 </script>
 
@@ -272,6 +478,8 @@ function showError(error) {
       @select-project="selectProject"
       @create-terminal="createTerminal"
       @select-terminal="selectTerminal"
+      @delete-project="deleteProject"
+      @delete-terminal="deleteTerminal"
     />
 
     <section class="workspace">
@@ -281,16 +489,28 @@ function showError(error) {
           <span class="heading-path">{{ activeProject.path }}</span>
         </div>
         <div v-else class="project-heading muted">No project selected</div>
-        <button
-          v-if="activeProject && activeTerminalState === 'exited'"
-          type="button"
-          class="toolbar-button"
-          title="Restart shell"
-          @click="restartActiveShell"
-        >
-          <RotateCcw :size="16" />
-          <span>Restart</span>
-        </button>
+        <div class="workspace-actions">
+          <button
+            type="button"
+            class="toolbar-button"
+            data-testid="settings-toggle"
+            title="Settings"
+            @click="openTerminalSettings"
+          >
+            <Settings :size="16" />
+            <span>Settings</span>
+          </button>
+          <button
+            v-if="activeProject && activeTerminalState === 'exited'"
+            type="button"
+            class="toolbar-button"
+            title="Restart shell"
+            @click="restartActiveShell"
+          >
+            <RotateCcw :size="16" />
+            <span>Restart</span>
+          </button>
+        </div>
       </header>
 
       <div class="terminal-surface">
@@ -330,7 +550,96 @@ function showError(error) {
         <div v-else-if="activeTerminalState === 'exited'" class="state-layer warning">Shell exited</div>
       </div>
 
-      <footer v-if="errorMessage" class="error-bar">{{ errorMessage }}</footer>
+      <footer class="status-bar">
+        <div class="status-item" data-testid="project-git-status">{{ projectGitStatusText }}</div>
+        <div v-if="errorMessage" class="status-error">{{ errorMessage }}</div>
+      </footer>
     </section>
+
+    <div v-if="settingsPanel.visible" class="settings-overlay" @click="closeTerminalSettings">
+      <section class="settings-dialog" data-testid="terminal-settings-dialog" @click.stop>
+        <header class="settings-header">
+          <div>
+            <h2>Terminal Settings</h2>
+            <p>Embedded shell</p>
+          </div>
+          <button type="button" class="icon-button" title="Close settings" @click="closeTerminalSettings">
+            <X :size="16" />
+          </button>
+        </header>
+
+        <div v-if="settingsPanel.loading" class="settings-loading">Loading</div>
+        <div v-else class="settings-body">
+          <div class="settings-field" data-testid="terminal-settings-current">
+            <span class="settings-label">Current</span>
+            <strong>{{ shellDisplay(selectedTerminalShell) }}</strong>
+            <span v-if="selectedTerminalShell && !selectedTerminalShell.available" class="settings-warning">Unavailable</span>
+          </div>
+
+          <div v-if="terminalSettingsFallback" class="settings-field" data-testid="terminal-settings-fallback">
+            <span class="settings-label">Fallback</span>
+            <strong>{{ shellDisplay(terminalSettingsFallback) }}</strong>
+          </div>
+
+          <label v-if="terminalSettingsDetected" class="settings-option" data-testid="terminal-settings-detected">
+            <input
+              v-model="settingsPanel.mode"
+              type="radio"
+              value="detected"
+              data-testid="terminal-settings-detected-option"
+            />
+            <span>
+              <span class="settings-label">Detected</span>
+              <strong>{{ shellDisplay(terminalSettingsDetected) }}</strong>
+            </span>
+          </label>
+
+          <label class="settings-option">
+            <input
+              v-model="settingsPanel.mode"
+              type="radio"
+              value="manual"
+              data-testid="terminal-settings-manual-option"
+            />
+            <span class="manual-shell-entry">
+              <span class="settings-label">Manual path</span>
+              <input
+                v-model="settingsPanel.manualPath"
+                type="text"
+                data-testid="terminal-settings-manual-path"
+                placeholder="/usr/bin/zsh"
+                @focus="settingsPanel.mode = 'manual'"
+              />
+            </span>
+          </label>
+
+          <div v-if="settingsPanel.error" class="settings-error" data-testid="terminal-settings-error">
+            {{ settingsPanel.error }}
+          </div>
+        </div>
+
+        <footer class="settings-actions">
+          <button
+            type="button"
+            class="toolbar-button"
+            data-testid="terminal-settings-redetect"
+            :disabled="settingsPanel.detecting || settingsPanel.loading"
+            @click="redetectTerminalShell"
+          >
+            Detect
+          </button>
+          <button type="button" class="toolbar-button" @click="closeTerminalSettings">Cancel</button>
+          <button
+            type="button"
+            class="toolbar-button primary"
+            data-testid="terminal-settings-save"
+            :disabled="settingsPanel.saving || settingsPanel.loading"
+            @click="saveTerminalSettings"
+          >
+            Save
+          </button>
+        </footer>
+      </section>
+    </div>
   </main>
 </template>

@@ -8,11 +8,23 @@ export function CreateProjectFromDialog():Promise<main.ProjectState>;
 
 export function CreateTerminal(arg1:string,arg2:number,arg3:number):Promise<main.ProjectState>;
 
+export function DeleteProject(arg1:string):Promise<main.ProjectState>;
+
+export function DeleteTerminal(arg1:string):Promise<main.ProjectState>;
+
+export function DetectTerminalShell():Promise<main.TerminalShellSetting>;
+
+export function GetProjectGitStatus(arg1:string):Promise<main.GitStatus>;
+
 export function GetShellStatus(arg1:string):Promise<main.ShellStatus>;
 
 export function ListProjects():Promise<main.ProjectState>;
 
+export function LoadTerminalSettings():Promise<main.TerminalSettingsState>;
+
 export function ResizeTerminal(arg1:string,arg2:number,arg3:number):Promise<void>;
+
+export function SaveTerminalShell(arg1:string,arg2:string):Promise<main.TerminalSettingsState>;
 
 export function SelectProject(arg1:string):Promise<main.ProjectState>;
 

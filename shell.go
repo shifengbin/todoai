@@ -272,6 +272,70 @@ func (manager *ShellSessionManager) SelectTerminal(terminalID string) (ProjectTe
 	return *terminal, nil
 }
 
+func (manager *ShellSessionManager) DeleteTerminal(terminalID string) error {
+	manager.mu.Lock()
+	terminal, ok := manager.terminals[terminalID]
+	if !ok {
+		manager.mu.Unlock()
+		return errors.New("terminal not found")
+	}
+
+	projectID := terminal.ProjectID
+	session, hasSession := manager.sessions[terminalID]
+	shouldClose := hasSession && session.state == ShellStateRunning
+	delete(manager.terminals, terminalID)
+	delete(manager.sessions, terminalID)
+	if manager.activeByProject[projectID] == terminalID {
+		if nextTerminalID := manager.mostRecentlySelectedTerminalIDLocked(projectID); nextTerminalID != "" {
+			manager.activeByProject[projectID] = nextTerminalID
+		} else {
+			delete(manager.activeByProject, projectID)
+		}
+	}
+	manager.mu.Unlock()
+
+	if hasSession {
+		if shouldClose {
+			_ = session.process.Close()
+		}
+		session.cleanupSession()
+	}
+	return nil
+}
+
+func (manager *ShellSessionManager) DeleteProjectTerminals(projectID string) {
+	manager.mu.Lock()
+	sessions := []struct {
+		session     *ShellSession
+		shouldClose bool
+	}{}
+	for terminalID, terminal := range manager.terminals {
+		if terminal.ProjectID != projectID {
+			continue
+		}
+		if session, ok := manager.sessions[terminalID]; ok {
+			sessions = append(sessions, struct {
+				session     *ShellSession
+				shouldClose bool
+			}{
+				session:     session,
+				shouldClose: session.state == ShellStateRunning,
+			})
+			delete(manager.sessions, terminalID)
+		}
+		delete(manager.terminals, terminalID)
+	}
+	delete(manager.activeByProject, projectID)
+	manager.mu.Unlock()
+
+	for _, item := range sessions {
+		if item.shouldClose {
+			_ = item.session.process.Close()
+		}
+		item.session.cleanupSession()
+	}
+}
+
 func (manager *ShellSessionManager) Terminal(terminalID string) (ProjectTerminal, error) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
@@ -328,6 +392,22 @@ func (manager *ShellSessionManager) registerTerminalLocked(project Project) Proj
 func (manager *ShellSessionManager) touchTerminalLocked(terminal *ProjectTerminal) {
 	terminal.LastSelectedAt = manager.now().UTC().Format(time.RFC3339)
 	manager.activeByProject[terminal.ProjectID] = terminal.ID
+}
+
+func (manager *ShellSessionManager) mostRecentlySelectedTerminalIDLocked(projectID string) string {
+	selectedTerminalID := ""
+	selectedAt := ""
+	for _, terminal := range manager.terminals {
+		if terminal.ProjectID != projectID {
+			continue
+		}
+		if selectedTerminalID == "" || terminal.LastSelectedAt > selectedAt ||
+			(terminal.LastSelectedAt == selectedAt && terminal.ID < selectedTerminalID) {
+			selectedTerminalID = terminal.ID
+			selectedAt = terminal.LastSelectedAt
+		}
+	}
+	return selectedTerminalID
 }
 
 func (manager *ShellSessionManager) WriteInput(terminalID string, data string) error {
