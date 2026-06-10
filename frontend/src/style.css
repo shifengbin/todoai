@@ -170,10 +170,16 @@ button {
     color: #7b4d21;
 }
 
+.terminal-launch-control,
 .add-terminal-button,
 .delete-project-button,
 .add-terminal-placeholder {
     width: 30px;
+}
+
+.terminal-launch-control {
+    position: relative;
+    min-height: 52px;
 }
 
 .add-terminal-button,
@@ -191,6 +197,39 @@ button {
 .add-terminal-button:hover {
     background: #eef6f5;
     color: #0f766e;
+}
+
+.terminal-launch-menu {
+    position: absolute;
+    z-index: 20;
+    top: 44px;
+    right: 0;
+    display: grid;
+    min-width: 132px;
+    overflow: hidden;
+    border: 1px solid #c8d0da;
+    background: #ffffff;
+    box-shadow: 0 12px 28px rgba(20, 28, 36, 0.16);
+}
+
+.terminal-launch-option {
+    display: flex;
+    align-items: center;
+    min-height: 32px;
+    padding: 0 10px;
+    border: 0;
+    background: #ffffff;
+    color: #27303a;
+    cursor: pointer;
+    font-size: 12px;
+    text-align: left;
+}
+
+.terminal-launch-option:hover,
+.terminal-launch-option:focus-visible {
+    background: #eef6f5;
+    color: #0f766e;
+    outline: none;
 }
 
 .delete-project-button {
@@ -558,7 +597,7 @@ button {
 
 .settings-dialog {
     display: grid;
-    width: min(560px, 100%);
+    width: min(720px, 100%);
     max-height: min(680px, calc(100vh - 40px));
     overflow: hidden;
     grid-template-rows: auto minmax(0, 1fr) auto;
@@ -683,6 +722,56 @@ button {
 .manual-shell-entry input[type="text"]:focus {
     border-color: #0f766e;
     outline: none;
+}
+
+.launch-profile-settings {
+    display: grid;
+    min-width: 0;
+    gap: 8px;
+    padding: 11px 12px;
+    border: 1px solid #d9dee6;
+    background: #fbfcfd;
+}
+
+.launch-profile-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.launch-profile-row {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: minmax(110px, 0.9fr) minmax(160px, 1.4fr) 32px 32px 32px;
+    gap: 6px;
+    align-items: center;
+}
+
+.launch-profile-row input[type="text"] {
+    min-width: 0;
+    height: 32px;
+    padding: 0 9px;
+    border: 1px solid #c8d0da;
+    color: #20242a;
+    font: inherit;
+    font-size: 13px;
+}
+
+.launch-profile-row input[type="text"]:focus {
+    border-color: #0f766e;
+    outline: none;
+}
+
+.launch-profile-row .icon-button:disabled {
+    cursor: default;
+    opacity: 0.42;
+}
+
+@media (max-width: 680px) {
+    .launch-profile-row {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 32px 32px 32px;
+    }
 }
 
 .settings-actions {

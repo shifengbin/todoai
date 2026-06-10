@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -22,11 +23,17 @@ type TerminalShellSetting struct {
 	Available   bool   `json:"available"`
 }
 
+type TerminalLaunchProfileSetting struct {
+	Name    string `json:"name"`
+	Command string `json:"command"`
+}
+
 type TerminalSettingsState struct {
-	Version  int                   `json:"version"`
-	Selected TerminalShellSetting  `json:"selected"`
-	Detected *TerminalShellSetting `json:"detected,omitempty"`
-	Fallback *TerminalShellSetting `json:"fallback,omitempty"`
+	Version        int                            `json:"version"`
+	Selected       TerminalShellSetting           `json:"selected"`
+	Detected       *TerminalShellSetting          `json:"detected,omitempty"`
+	Fallback       *TerminalShellSetting          `json:"fallback,omitempty"`
+	LaunchProfiles []TerminalLaunchProfileSetting `json:"launchProfiles"`
 }
 
 type SettingsManagerOption func(*SettingsManager)
@@ -38,8 +45,9 @@ type SettingsManager struct {
 }
 
 type persistedSettings struct {
-	Version  int                  `json:"version"`
-	Selected TerminalShellSetting `json:"selected"`
+	Version        int                            `json:"version"`
+	Selected       TerminalShellSetting           `json:"selected"`
+	LaunchProfiles []TerminalLaunchProfileSetting `json:"launchProfiles"`
 }
 
 func NewSettingsManager(configPath string, opts ...SettingsManagerOption) *SettingsManager {
@@ -71,6 +79,23 @@ func (manager *SettingsManager) DetectShell() (TerminalShellSetting, error) {
 	return manager.detectShell()
 }
 
+func (manager *SettingsManager) SaveLaunchProfiles(profiles []TerminalLaunchProfileSetting) (TerminalSettingsState, error) {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	normalizedProfiles, err := normalizeTerminalLaunchProfiles(profiles)
+	if err != nil {
+		state, _ := manager.loadExistingLocked()
+		return state, err
+	}
+	state, err := manager.loadLocked()
+	if err != nil {
+		return TerminalSettingsState{}, err
+	}
+	state.LaunchProfiles = normalizedProfiles
+	return state, manager.saveLocked(state)
+}
+
 func (manager *SettingsManager) SaveShellPath(path string, source string) (TerminalSettingsState, error) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
@@ -86,9 +111,11 @@ func (manager *SettingsManager) SaveShellPath(path string, source string) (Termi
 		Source:      normalizeShellSource(source),
 		Available:   true,
 	}
-	state := TerminalSettingsState{
-		Version:  settingsConfigVersion,
-		Selected: selected,
+	state, _ := manager.loadExistingLocked()
+	state.Version = settingsConfigVersion
+	state.Selected = selected
+	if state.LaunchProfiles == nil {
+		state.LaunchProfiles = defaultTerminalLaunchProfiles()
 	}
 	return state, manager.saveLocked(state)
 }
@@ -115,9 +142,10 @@ func (manager *SettingsManager) loadLocked() (TerminalSettingsState, error) {
 			return TerminalSettingsState{}, detectErr
 		}
 		state = TerminalSettingsState{
-			Version:  settingsConfigVersion,
-			Selected: detected,
-			Detected: &detected,
+			Version:        settingsConfigVersion,
+			Selected:       detected,
+			Detected:       &detected,
+			LaunchProfiles: defaultTerminalLaunchProfiles(),
 		}
 		if saveErr := manager.saveLocked(state); saveErr != nil {
 			return TerminalSettingsState{}, saveErr
@@ -159,9 +187,14 @@ func (manager *SettingsManager) loadExistingLocked() (TerminalSettingsState, err
 	if persisted.Version == 0 {
 		persisted.Version = settingsConfigVersion
 	}
+	launchProfiles := persisted.LaunchProfiles
+	if launchProfiles == nil {
+		launchProfiles = defaultTerminalLaunchProfiles()
+	}
 	return TerminalSettingsState{
-		Version:  persisted.Version,
-		Selected: persisted.Selected,
+		Version:        persisted.Version,
+		Selected:       persisted.Selected,
+		LaunchProfiles: launchProfiles,
 	}, nil
 }
 
@@ -169,9 +202,14 @@ func (manager *SettingsManager) saveLocked(state TerminalSettingsState) error {
 	if err := os.MkdirAll(filepath.Dir(manager.configPath), 0o755); err != nil {
 		return err
 	}
+	launchProfiles := state.LaunchProfiles
+	if launchProfiles == nil {
+		launchProfiles = defaultTerminalLaunchProfiles()
+	}
 	data, err := json.MarshalIndent(persistedSettings{
-		Version:  settingsConfigVersion,
-		Selected: normalizeShellSetting(state.Selected),
+		Version:        settingsConfigVersion,
+		Selected:       normalizeShellSetting(state.Selected),
+		LaunchProfiles: append([]TerminalLaunchProfileSetting{}, launchProfiles...),
 	}, "", "  ")
 	if err != nil {
 		return err
@@ -195,6 +233,38 @@ func (manager *SettingsManager) detectShell() (TerminalShellSetting, error) {
 		return TerminalShellSetting{}, fmt.Errorf("detected terminal shell is not executable: %s", detected.Path)
 	}
 	return detected, nil
+}
+
+func normalizeTerminalLaunchProfiles(profiles []TerminalLaunchProfileSetting) ([]TerminalLaunchProfileSetting, error) {
+	normalized := make([]TerminalLaunchProfileSetting, 0, len(profiles))
+	seen := map[string]struct{}{}
+	for _, profile := range profiles {
+		name := strings.TrimSpace(profile.Name)
+		command := strings.TrimSpace(profile.Command)
+		if name == "" {
+			return nil, errors.New("terminal launch profile name is required")
+		}
+		if command == "" {
+			return nil, fmt.Errorf("terminal launch profile %q command is required", name)
+		}
+		key := strings.ToLower(name)
+		if key == "terminal" {
+			return nil, errors.New("terminal launch profile name Terminal is reserved")
+		}
+		if _, ok := seen[key]; ok {
+			return nil, fmt.Errorf("terminal launch profile name is duplicated: %s", name)
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, TerminalLaunchProfileSetting{Name: name, Command: command})
+	}
+	return normalized, nil
+}
+
+func defaultTerminalLaunchProfiles() []TerminalLaunchProfileSetting {
+	return []TerminalLaunchProfileSetting{
+		{Name: "codex", Command: "codex"},
+		{Name: "claude", Command: "claude"},
+	}
 }
 
 func normalizeShellSetting(setting TerminalShellSetting) TerminalShellSetting {

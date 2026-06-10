@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { RotateCcw, Settings, X } from '@lucide/vue'
+import { ChevronDown, ChevronUp, Plus, RotateCcw, Settings, Trash2, X } from '@lucide/vue'
 import ProjectSidebar from './components/ProjectSidebar.vue'
 import { TerminalSessionManager } from './terminalManager'
 import { createXtermSession } from './xtermFactory'
@@ -16,6 +16,7 @@ import {
   ResizeTerminal,
   SelectProject,
   SelectTerminal,
+  SaveTerminalLaunchProfiles,
   SaveTerminalShell,
   SendTerminalInput,
   StartShell
@@ -36,6 +37,10 @@ const terminalMenu = reactive({
   x: 0,
   y: 0
 })
+const defaultTerminalLaunchProfiles = [
+  { name: 'codex', command: 'codex' },
+  { name: 'claude', command: 'claude' }
+]
 const terminalSettings = ref(null)
 const detectedTerminalShell = ref(null)
 const gitStatus = ref(null)
@@ -48,6 +53,7 @@ const settingsPanel = reactive({
   saving: false,
   mode: 'detected',
   manualPath: '',
+  launchProfiles: [],
   error: ''
 })
 const terminalManager = new TerminalSessionManager({
@@ -80,6 +86,12 @@ const activeTerminalState = computed(() => {
 })
 
 const selectedTerminalShell = computed(() => terminalSettings.value?.selected || null)
+const terminalLaunchProfiles = computed(() => {
+  if (Array.isArray(terminalSettings.value?.launchProfiles)) {
+    return terminalSettings.value.launchProfiles
+  }
+  return defaultTerminalLaunchProfiles
+})
 
 const projectGitStatusText = computed(() => {
   if (!activeProject.value) {
@@ -121,6 +133,12 @@ onMounted(async () => {
   window.addEventListener('resize', fitActiveTerminal)
   window.addEventListener('focus', refreshProjectGitStatus)
   window.addEventListener('click', closeTerminalMenu)
+
+  try {
+    applyTerminalSettings(await LoadTerminalSettings())
+  } catch (error) {
+    showError(error)
+  }
 
   try {
     applyState(await ListProjects())
@@ -196,11 +214,15 @@ async function selectTerminal(terminalId) {
   }
 }
 
-async function createTerminal(projectId) {
+async function createTerminal(projectId, launchProfile = null) {
   try {
     const size = terminalManager.size() || { cols: 80, rows: 24 }
-    applyState(await CreateTerminal(projectId, size.cols || 80, size.rows || 24))
+    const state = await CreateTerminal(projectId, size.cols || 80, size.rows || 24)
+    applyState(state)
     await activateActiveTerminal()
+    if (launchProfile?.command && state?.activeTerminalId) {
+      await SendTerminalInput(state.activeTerminalId, `${launchProfile.command}\n`)
+    }
   } catch (error) {
     showError(error)
   }
@@ -329,6 +351,66 @@ function applyTerminalSettings(state) {
   terminalSettings.value = state || null
   detectedTerminalShell.value = state?.detected || state?.fallback || null
   settingsPanel.manualPath = state?.selected?.path || settingsPanel.manualPath || ''
+  settingsPanel.launchProfiles = cloneLaunchProfiles(launchProfilesFromState(state))
+}
+
+function launchProfilesFromState(state) {
+  if (Array.isArray(state?.launchProfiles)) {
+    return state.launchProfiles
+  }
+  return defaultTerminalLaunchProfiles
+}
+
+function cloneLaunchProfiles(profiles) {
+  return profiles.map((profile) => ({
+    name: profile.name || '',
+    command: profile.command || ''
+  }))
+}
+
+function addTerminalLaunchProfile() {
+  settingsPanel.launchProfiles.push({ name: '', command: '' })
+}
+
+function removeTerminalLaunchProfile(index) {
+  settingsPanel.launchProfiles.splice(index, 1)
+}
+
+function moveTerminalLaunchProfile(index, direction) {
+  const nextIndex = index + direction
+  if (nextIndex < 0 || nextIndex >= settingsPanel.launchProfiles.length) {
+    return
+  }
+  const [profile] = settingsPanel.launchProfiles.splice(index, 1)
+  settingsPanel.launchProfiles.splice(nextIndex, 0, profile)
+}
+
+function normalizedLaunchProfiles() {
+  return settingsPanel.launchProfiles.map((profile) => ({
+    name: (profile.name || '').trim(),
+    command: (profile.command || '').trim()
+  }))
+}
+
+function validateLaunchProfiles(profiles) {
+  const names = new Set()
+  for (const profile of profiles) {
+    if (!profile.name) {
+      return 'Launch profile name is required'
+    }
+    if (!profile.command) {
+      return `Launch profile command is required for ${profile.name}`
+    }
+    const key = profile.name.toLowerCase()
+    if (key === 'terminal') {
+      return 'Terminal is reserved'
+    }
+    if (names.has(key)) {
+      return `Launch profile name is duplicated: ${profile.name}`
+    }
+    names.add(key)
+  }
+  return ''
 }
 
 async function redetectTerminalShell() {
@@ -351,10 +433,17 @@ async function saveTerminalSettings() {
     settingsPanel.error = 'Choose a terminal shell path'
     return
   }
+  const launchProfiles = normalizedLaunchProfiles()
+  const launchProfileError = validateLaunchProfiles(launchProfiles)
+  if (launchProfileError) {
+    settingsPanel.error = launchProfileError
+    return
+  }
   settingsPanel.saving = true
   settingsPanel.error = ''
   try {
-    applyTerminalSettings(await SaveTerminalShell(path, source))
+    await SaveTerminalShell(path, source)
+    applyTerminalSettings(await SaveTerminalLaunchProfiles(launchProfiles))
     closeTerminalSettings()
   } catch (error) {
     settingsPanel.error = errorMessageFrom(error)
@@ -543,6 +632,7 @@ function showError(error) {
       :terminals="terminals"
       :active-project-id="activeProjectId"
       :active-terminal-id="activeTerminalId"
+      :launch-profiles="terminalLaunchProfiles"
       @create-project="createProject"
       @select-project="selectProject"
       @create-terminal="createTerminal"
@@ -681,6 +771,74 @@ function showError(error) {
               />
             </span>
           </label>
+
+          <div class="settings-field" data-testid="terminal-settings-built-in-launch-profile">
+            <span class="settings-label">Built-in launch</span>
+            <strong>Terminal</strong>
+          </div>
+
+          <div class="launch-profile-settings" data-testid="terminal-launch-profiles">
+            <div class="launch-profile-header">
+              <span class="settings-label">Launch profiles</span>
+              <button
+                type="button"
+                class="icon-button"
+                data-testid="terminal-launch-profile-add"
+                title="Add launch profile"
+                @click="addTerminalLaunchProfile"
+              >
+                <Plus :size="14" />
+              </button>
+            </div>
+            <div
+              v-for="(profile, index) in settingsPanel.launchProfiles"
+              :key="index"
+              class="launch-profile-row"
+              :data-testid="`terminal-launch-profile-${index}`"
+            >
+              <input
+                v-model="profile.name"
+                type="text"
+                :data-testid="`terminal-launch-profile-name-${index}`"
+                placeholder="codex"
+              />
+              <input
+                v-model="profile.command"
+                type="text"
+                :data-testid="`terminal-launch-profile-command-${index}`"
+                placeholder="codex"
+              />
+              <button
+                type="button"
+                class="icon-button"
+                :data-testid="`terminal-launch-profile-up-${index}`"
+                title="Move up"
+                :disabled="index === 0"
+                @click="moveTerminalLaunchProfile(index, -1)"
+              >
+                <ChevronUp :size="14" />
+              </button>
+              <button
+                type="button"
+                class="icon-button"
+                :data-testid="`terminal-launch-profile-down-${index}`"
+                title="Move down"
+                :disabled="index === settingsPanel.launchProfiles.length - 1"
+                @click="moveTerminalLaunchProfile(index, 1)"
+              >
+                <ChevronDown :size="14" />
+              </button>
+              <button
+                type="button"
+                class="icon-button"
+                :data-testid="`terminal-launch-profile-remove-${index}`"
+                title="Remove launch profile"
+                @click="removeTerminalLaunchProfile(index)"
+              >
+                <Trash2 :size="14" />
+              </button>
+            </div>
+          </div>
 
           <div v-if="settingsPanel.error" class="settings-error" data-testid="terminal-settings-error">
             {{ settingsPanel.error }}

@@ -131,6 +131,20 @@ export namespace main {
 	        this.state = source["state"];
 	    }
 	}
+	export class TerminalLaunchProfileSetting {
+	    name: string;
+	    command: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TerminalLaunchProfileSetting(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.command = source["command"];
+	    }
+	}
 	export class TerminalShellSetting {
 	    path: string;
 	    displayName: string;
@@ -154,6 +168,7 @@ export namespace main {
 	    selected: TerminalShellSetting;
 	    detected?: TerminalShellSetting;
 	    fallback?: TerminalShellSetting;
+	    launchProfiles: TerminalLaunchProfileSetting[];
 	
 	    static createFrom(source: any = {}) {
 	        return new TerminalSettingsState(source);
@@ -165,6 +180,7 @@ export namespace main {
 	        this.selected = this.convertValues(source["selected"], TerminalShellSetting);
 	        this.detected = this.convertValues(source["detected"], TerminalShellSetting);
 	        this.fallback = this.convertValues(source["fallback"], TerminalShellSetting);
+	        this.launchProfiles = this.convertValues(source["launchProfiles"], TerminalLaunchProfileSetting);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

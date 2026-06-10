@@ -24,6 +24,8 @@ export function LoadTerminalSettings():Promise<main.TerminalSettingsState>;
 
 export function ResizeTerminal(arg1:string,arg2:number,arg3:number):Promise<void>;
 
+export function SaveTerminalLaunchProfiles(arg1:Array<main.TerminalLaunchProfileSetting>):Promise<main.TerminalSettingsState>;
+
 export function SaveTerminalShell(arg1:string,arg2:string):Promise<main.TerminalSettingsState>;
 
 export function SelectProject(arg1:string):Promise<main.ProjectState>;

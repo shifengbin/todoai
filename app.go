@@ -185,6 +185,10 @@ func (a *App) SaveTerminalShell(path string, source string) (TerminalSettingsSta
 	return a.settings.SaveShellPath(path, source)
 }
 
+func (a *App) SaveTerminalLaunchProfiles(profiles []TerminalLaunchProfileSetting) (TerminalSettingsState, error) {
+	return a.settings.SaveLaunchProfiles(profiles)
+}
+
 func (a *App) DetectTerminalShell() (TerminalShellSetting, error) {
 	return a.settings.DetectShell()
 }

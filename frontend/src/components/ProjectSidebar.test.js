@@ -37,13 +37,60 @@ describe('ProjectSidebar', () => {
 
     await wrapper.find('[data-testid="new-project"]').trigger('click')
     await wrapper.find('[data-testid="add-terminal-project-a"]').trigger('click')
+    await wrapper.find('[data-testid="terminal-launch-option-project-a-0"]').trigger('click')
     await wrapper.find('[data-testid="project-project-b"]').trigger('click')
     await wrapper.find('[data-testid="terminal-terminal-a"]').trigger('click')
 
     expect(wrapper.emitted('create-project')).toHaveLength(1)
-    expect(wrapper.emitted('create-terminal')[0]).toEqual(['project-a'])
+    expect(wrapper.emitted('create-terminal')[0]).toEqual(['project-a', null])
     expect(wrapper.emitted('select-project')[0]).toEqual(['project-b'])
     expect(wrapper.emitted('select-terminal')[0]).toEqual(['terminal-a'])
+  })
+
+  it('opens a terminal launch menu and emits the selected launch profile', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        launchProfiles: [
+          { name: 'codex', command: 'codex' },
+          { name: 'claude', command: 'claude' }
+        ]
+      }
+    })
+
+    await wrapper.find('[data-testid="add-terminal-project-a"]').trigger('click')
+
+    const menu = wrapper.find('[data-testid="terminal-launch-menu-project-a"]')
+    expect(menu.exists()).toBe(true)
+    expect(menu.text()).toContain('Terminal')
+    expect(menu.text()).toContain('codex')
+    expect(menu.text()).toContain('claude')
+
+    await wrapper.find('[data-testid="terminal-launch-option-project-a-1"]').trigger('click')
+
+    expect(wrapper.emitted('create-terminal')[0]).toEqual(['project-a', { name: 'codex', command: 'codex' }])
+    expect(wrapper.find('[data-testid="terminal-launch-menu-project-a"]').exists()).toBe(false)
+  })
+
+  it('closes the terminal launch menu on outside click and unavailable project changes', async () => {
+    const wrapper = mountSidebar({
+      props: { launchProfiles: [{ name: 'codex', command: 'codex' }] }
+    })
+
+    await wrapper.find('[data-testid="add-terminal-project-a"]').trigger('click')
+    expect(wrapper.find('[data-testid="terminal-launch-menu-project-a"]').exists()).toBe(true)
+
+    window.dispatchEvent(new MouseEvent('click'))
+    await nextTick()
+    expect(wrapper.find('[data-testid="terminal-launch-menu-project-a"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="add-terminal-project-a"]').trigger('click')
+    await wrapper.setProps({
+      projects: [{ id: 'project-a', name: 'alpha', path: '/work/alpha', available: false }]
+    })
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="terminal-launch-menu-project-a"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="add-terminal-project-a"]').exists()).toBe(false)
   })
 
   it('collapses and expands a project terminal branch', async () => {

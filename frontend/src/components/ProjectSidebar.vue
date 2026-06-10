@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ChevronDown, ChevronRight, CircleAlert, FolderPlus, LoaderCircle, Plus, TerminalSquare, Trash2 } from '@lucide/vue'
 
 const props = defineProps({
@@ -18,6 +18,10 @@ const props = defineProps({
   activeTerminalId: {
     type: String,
     default: ''
+  },
+  launchProfiles: {
+    type: Array,
+    default: () => []
   }
 })
 
@@ -31,6 +35,12 @@ const emit = defineEmits([
 ])
 
 const collapsedProjectIds = ref(new Set())
+const openLaunchProjectId = ref('')
+
+const terminalLaunchOptions = computed(() => [
+  { name: 'Terminal', command: '' },
+  ...props.launchProfiles
+])
 
 const terminalsByProject = computed(() => {
   const groups = new Map()
@@ -92,9 +102,19 @@ function selectProject(projectId) {
   emit('select-project', projectId)
 }
 
-function createTerminal(projectId) {
+function toggleTerminalLaunchMenu(projectId) {
   expandProject(projectId)
-  emit('create-terminal', projectId)
+  openLaunchProjectId.value = openLaunchProjectId.value === projectId ? '' : projectId
+}
+
+function closeTerminalLaunchMenu() {
+  openLaunchProjectId.value = ''
+}
+
+function selectTerminalLaunchOption(projectId, option) {
+  expandProject(projectId)
+  emit('create-terminal', projectId, option.command ? option : null)
+  closeTerminalLaunchMenu()
 }
 
 function terminalDisplayName(terminal) {
@@ -121,6 +141,14 @@ function terminalRowLabel(terminal) {
   const displayName = terminalDisplayName(terminal)
   return activityLabel === 'Idle' ? displayName : `${displayName} - ${activityLabel}`
 }
+
+onMounted(() => {
+  window.addEventListener('click', closeTerminalLaunchMenu)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('click', closeTerminalLaunchMenu)
+})
 
 watch(
   () => props.activeProjectId,
@@ -207,16 +235,37 @@ watch(
             </span>
           </button>
 
-          <button
-            v-if="project.available"
-            type="button"
-            class="add-terminal-button"
-            :data-testid="`add-terminal-${project.id}`"
-            title="New terminal"
-            @click.stop="createTerminal(project.id)"
-          >
-            <Plus :size="14" />
-          </button>
+          <div v-if="project.available" class="terminal-launch-control">
+            <button
+              type="button"
+              class="add-terminal-button"
+              :data-testid="`add-terminal-${project.id}`"
+              title="New terminal"
+              :aria-expanded="openLaunchProjectId === project.id"
+              :aria-controls="`terminal-launch-menu-${project.id}`"
+              @click.stop="toggleTerminalLaunchMenu(project.id)"
+            >
+              <Plus :size="14" />
+            </button>
+            <div
+              v-if="openLaunchProjectId === project.id"
+              :id="`terminal-launch-menu-${project.id}`"
+              class="terminal-launch-menu"
+              :data-testid="`terminal-launch-menu-${project.id}`"
+              @click.stop
+            >
+              <button
+                v-for="(option, index) in terminalLaunchOptions"
+                :key="`${option.name}-${index}`"
+                type="button"
+                class="terminal-launch-option"
+                :data-testid="`terminal-launch-option-${project.id}-${index}`"
+                @click="selectTerminalLaunchOption(project.id, option)"
+              >
+                {{ option.name }}
+              </button>
+            </div>
+          </div>
           <span v-else class="add-terminal-placeholder" aria-hidden="true"></span>
 
           <button

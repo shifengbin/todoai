@@ -46,6 +46,10 @@ export function ResizeTerminal(arg1, arg2, arg3) {
   return window['go']['main']['App']['ResizeTerminal'](arg1, arg2, arg3);
 }
 
+export function SaveTerminalLaunchProfiles(arg1) {
+  return window['go']['main']['App']['SaveTerminalLaunchProfiles'](arg1);
+}
+
 export function SaveTerminalShell(arg1, arg2) {
   return window['go']['main']['App']['SaveTerminalShell'](arg1, arg2);
 }

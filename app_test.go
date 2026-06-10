@@ -133,6 +133,37 @@ func TestAppUsesSavedTerminalShellForNewTerminals(t *testing.T) {
 	}
 }
 
+func TestAppSavesTerminalLaunchProfiles(t *testing.T) {
+	configDir := t.TempDir()
+	shellPath := executableFile(t, "zsh")
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(configDir, "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	if _, err := app.SaveTerminalShell(shellPath, ShellSourceManual); err != nil {
+		t.Fatalf("SaveTerminalShell() error = %v", err)
+	}
+
+	state, err := app.SaveTerminalLaunchProfiles([]TerminalLaunchProfileSetting{
+		{Name: "Codex", Command: "codex --model gpt-5"},
+	})
+	if err != nil {
+		t.Fatalf("SaveTerminalLaunchProfiles() error = %v", err)
+	}
+	if state.Selected.Path != shellPath {
+		t.Fatalf("Selected.Path = %q, want %q", state.Selected.Path, shellPath)
+	}
+	assertLaunchProfiles(t, state.LaunchProfiles, []TerminalLaunchProfileSetting{
+		{Name: "Codex", Command: "codex --model gpt-5"},
+	})
+
+	loaded, err := app.LoadTerminalSettings()
+	if err != nil {
+		t.Fatalf("LoadTerminalSettings() error = %v", err)
+	}
+	assertLaunchProfiles(t, loaded.LaunchProfiles, state.LaunchProfiles)
+}
+
 func TestAppKeepsExistingTerminalShellAfterSettingChanges(t *testing.T) {
 	configDir := t.TempDir()
 	projectDir := t.TempDir()

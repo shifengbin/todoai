@@ -9,6 +9,7 @@ import {
   DetectTerminalShell,
   GetProjectGitStatus,
   LoadTerminalSettings,
+  SaveTerminalLaunchProfiles,
   SaveTerminalShell,
   SelectTerminal,
   SendTerminalInput,
@@ -28,6 +29,7 @@ const appApiMock = vi.hoisted(() => ({
   ResizeTerminal: vi.fn(),
   SelectProject: vi.fn(),
   SelectTerminal: vi.fn(),
+  SaveTerminalLaunchProfiles: vi.fn(),
   SaveTerminalShell: vi.fn(),
   SendTerminalInput: vi.fn(),
   StartShell: vi.fn()
@@ -92,6 +94,7 @@ describe('App project terminal tree', () => {
     appApiMock.SaveTerminalShell.mockResolvedValue(
       settingsState({ selected: shellSetting({ path: '/usr/bin/bash', displayName: 'bash', source: 'detected' }) })
     )
+    appApiMock.SaveTerminalLaunchProfiles.mockResolvedValue(settingsState())
     appApiMock.SelectProject.mockResolvedValue(projectState())
     appApiMock.SelectTerminal.mockResolvedValue(projectState())
     appApiMock.CreateTerminal.mockResolvedValue(
@@ -157,14 +160,52 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="terminal-context-menu"]').exists()).toBe(false)
   })
 
+  it('shows configured terminal launch profiles from loaded settings', async () => {
+    appApiMock.LoadTerminalSettings.mockResolvedValue(
+      settingsState({
+        launchProfiles: [
+          { name: 'codex', command: 'codex' },
+          { name: 'claude', command: 'claude' }
+        ]
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="add-terminal-project-a"]').trigger('click')
+    await nextTick()
+
+    const menu = wrapper.find('[data-testid="terminal-launch-menu-project-a"]')
+    expect(LoadTerminalSettings).toHaveBeenCalled()
+    expect(menu.exists()).toBe(true)
+    expect(menu.text()).toContain('Terminal')
+    expect(menu.text()).toContain('codex')
+    expect(menu.text()).toContain('claude')
+  })
+
   it('creates an additional terminal under the active project', async () => {
     const wrapper = await mountReadyApp()
 
     await wrapper.find('[data-testid="add-terminal-project-a"]').trigger('click')
+    await wrapper.find('[data-testid="terminal-launch-option-project-a-0"]').trigger('click')
     await flushPromises()
 
     expect(CreateTerminal).toHaveBeenCalledWith('project-a', 100, 32)
     expect(xtermMock.sessions.has('terminal-b')).toBe(true)
+    expect(wrapper.find('[data-testid="terminal-terminal-b"]').classes()).toContain('active')
+  })
+
+  it('creates a terminal from a custom launch profile and submits its command', async () => {
+    appApiMock.LoadTerminalSettings.mockResolvedValue(
+      settingsState({ launchProfiles: [{ name: 'Codex GPT-5', command: 'codex --model gpt-5' }] })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="add-terminal-project-a"]').trigger('click')
+    await wrapper.find('[data-testid="terminal-launch-option-project-a-1"]').trigger('click')
+    await flushPromises()
+
+    expect(CreateTerminal).toHaveBeenCalledWith('project-a', 100, 32)
+    expect(SendTerminalInput).toHaveBeenCalledWith('terminal-b', 'codex --model gpt-5\n')
     expect(wrapper.find('[data-testid="terminal-terminal-b"]').classes()).toContain('active')
   })
 
@@ -578,6 +619,25 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="terminal-settings-fallback"]').text()).toContain('/bin/sh')
   })
 
+  it('renders terminal launch profiles in settings', async () => {
+    appApiMock.LoadTerminalSettings.mockResolvedValue(
+      settingsState({
+        launchProfiles: [
+          { name: 'Codex GPT-5', command: 'codex --model gpt-5' },
+          { name: 'Claude Plan', command: 'claude' }
+        ]
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await openSettings(wrapper)
+
+    expect(wrapper.find('[data-testid="terminal-settings-built-in-launch-profile"]').text()).toContain('Terminal')
+    expect(wrapper.find('[data-testid="terminal-launch-profile-name-0"]').element.value).toBe('Codex GPT-5')
+    expect(wrapper.find('[data-testid="terminal-launch-profile-command-0"]').element.value).toBe('codex --model gpt-5')
+    expect(wrapper.find('[data-testid="terminal-launch-profile-name-1"]').element.value).toBe('Claude Plan')
+  })
+
   it('re-detects a terminal shell from settings', async () => {
     const wrapper = await mountReadyApp()
 
@@ -587,6 +647,71 @@ describe('App project terminal tree', () => {
 
     expect(DetectTerminalShell).toHaveBeenCalled()
     expect(wrapper.find('[data-testid="terminal-settings-detected"]').text()).toContain('/usr/bin/bash')
+  })
+
+  it('saves edited terminal launch profiles from settings', async () => {
+    appApiMock.LoadTerminalSettings.mockResolvedValue(
+      settingsState({ launchProfiles: [{ name: 'codex', command: 'codex' }] })
+    )
+    appApiMock.SaveTerminalLaunchProfiles.mockResolvedValue(
+      settingsState({ launchProfiles: [{ name: 'Codex GPT-5', command: 'codex --model gpt-5' }] })
+    )
+    const wrapper = await mountReadyApp()
+
+    await openSettings(wrapper)
+    await wrapper.find('[data-testid="terminal-launch-profile-name-0"]').setValue(' Codex GPT-5 ')
+    await wrapper.find('[data-testid="terminal-launch-profile-command-0"]').setValue(' codex --model gpt-5 ')
+    await wrapper.find('[data-testid="terminal-settings-save"]').trigger('click')
+    await flushPromises()
+
+    expect(SaveTerminalShell).toHaveBeenCalled()
+    expect(SaveTerminalLaunchProfiles).toHaveBeenCalledWith([
+      { name: 'Codex GPT-5', command: 'codex --model gpt-5' }
+    ])
+    expect(wrapper.find('[data-testid="terminal-settings-dialog"]').exists()).toBe(false)
+  })
+
+  it('adds removes and reorders terminal launch profiles from settings', async () => {
+    appApiMock.LoadTerminalSettings.mockResolvedValue(
+      settingsState({
+        launchProfiles: [
+          { name: 'codex', command: 'codex' },
+          { name: 'claude', command: 'claude' }
+        ]
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await openSettings(wrapper)
+    await wrapper.find('[data-testid="terminal-launch-profile-down-0"]').trigger('click')
+    await wrapper.find('[data-testid="terminal-launch-profile-remove-1"]').trigger('click')
+    await wrapper.find('[data-testid="terminal-launch-profile-add"]').trigger('click')
+    await wrapper.find('[data-testid="terminal-launch-profile-name-1"]').setValue('Gemini')
+    await wrapper.find('[data-testid="terminal-launch-profile-command-1"]').setValue('gemini')
+    await wrapper.find('[data-testid="terminal-settings-save"]').trigger('click')
+    await flushPromises()
+
+    expect(SaveTerminalLaunchProfiles).toHaveBeenCalledWith([
+      { name: 'claude', command: 'claude' },
+      { name: 'Gemini', command: 'gemini' }
+    ])
+  })
+
+  it('shows launch profile validation errors without closing settings', async () => {
+    appApiMock.LoadTerminalSettings.mockResolvedValue(
+      settingsState({ launchProfiles: [{ name: 'codex', command: 'codex' }] })
+    )
+    const wrapper = await mountReadyApp()
+
+    await openSettings(wrapper)
+    await wrapper.find('[data-testid="terminal-launch-profile-command-0"]').setValue(' ')
+    await wrapper.find('[data-testid="terminal-settings-save"]').trigger('click')
+    await flushPromises()
+
+    expect(SaveTerminalShell).not.toHaveBeenCalled()
+    expect(SaveTerminalLaunchProfiles).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="terminal-settings-error"]').text()).toContain('Launch profile command is required')
+    expect(wrapper.find('[data-testid="terminal-settings-dialog"]').exists()).toBe(true)
   })
 
   it('saves the detected terminal shell setting', async () => {
@@ -684,6 +809,10 @@ function settingsState(overrides = {}) {
   return {
     version: 1,
     selected: shellSetting(),
+    launchProfiles: [
+      { name: 'codex', command: 'codex' },
+      { name: 'claude', command: 'claude' }
+    ],
     ...overrides
   }
 }
