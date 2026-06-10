@@ -48,6 +48,14 @@ vi.mock('@xterm/addon-fit', () => {
 })
 
 describe('createXtermSession', () => {
+  it('keeps the fixed terminal theme even when an appearance theme is passed', () => {
+    createXtermSession('terminal-a', vi.fn(), vi.fn(), vi.fn(), vi.fn(), 'light')
+
+    expect(terminalMock.lastTerminal.options.theme.background).toBe('#111418')
+    expect(terminalMock.lastTerminal.options.theme.foreground).toBe('#e6edf3')
+    expect(terminalMock.lastTerminal.options.theme.cursor).toBe('#f0c674')
+  })
+
   it('does not enable client-side EOL conversion for PTY output', () => {
     createXtermSession('project-a', vi.fn(), vi.fn())
 

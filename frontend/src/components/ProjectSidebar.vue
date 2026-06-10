@@ -36,6 +36,13 @@ const emit = defineEmits([
 
 const collapsedProjectIds = ref(new Set())
 const openLaunchProjectId = ref('')
+const launchMenuPlacement = ref('down')
+const launchMenuMaxHeight = ref('')
+
+const launchMenuBorderHeight = 2
+const launchMenuMinimumHeight = 32
+const launchMenuOptionHeight = 32
+const launchMenuViewportPadding = 8
 
 const terminalLaunchOptions = computed(() => [
   { name: 'Terminal', command: '' },
@@ -102,19 +109,65 @@ function selectProject(projectId) {
   emit('select-project', projectId)
 }
 
-function toggleTerminalLaunchMenu(projectId) {
+function toggleTerminalLaunchMenu(projectId, event) {
   expandProject(projectId)
-  openLaunchProjectId.value = openLaunchProjectId.value === projectId ? '' : projectId
+  if (openLaunchProjectId.value === projectId) {
+    closeTerminalLaunchMenu()
+    return
+  }
+
+  updateTerminalLaunchMenuPlacement(event?.currentTarget)
+  openLaunchProjectId.value = projectId
 }
 
 function closeTerminalLaunchMenu() {
   openLaunchProjectId.value = ''
+  resetTerminalLaunchMenuPlacement()
 }
 
 function selectTerminalLaunchOption(projectId, option) {
   expandProject(projectId)
   emit('create-terminal', projectId, option.command ? option : null)
   closeTerminalLaunchMenu()
+}
+
+function resetTerminalLaunchMenuPlacement() {
+  launchMenuPlacement.value = 'down'
+  launchMenuMaxHeight.value = ''
+}
+
+function updateTerminalLaunchMenuPlacement(trigger) {
+  const projectList = trigger?.closest?.('.project-list')
+  const triggerRect = trigger?.getBoundingClientRect?.()
+  const listRect = projectList?.getBoundingClientRect?.()
+  if (!triggerRect || !listRect || listRect.height <= 0) {
+    resetTerminalLaunchMenuPlacement()
+    return
+  }
+
+  const desiredMenuHeight = terminalLaunchOptions.value.length * launchMenuOptionHeight + launchMenuBorderHeight
+  const spaceBelow = Math.max(0, listRect.bottom - triggerRect.bottom - launchMenuViewportPadding)
+  const spaceAbove = Math.max(0, triggerRect.top - listRect.top - launchMenuViewportPadding)
+  const opensUp = spaceBelow < desiredMenuHeight && spaceAbove > spaceBelow
+  const availableHeight = opensUp ? spaceAbove : spaceBelow
+
+  launchMenuPlacement.value = opensUp ? 'up' : 'down'
+  launchMenuMaxHeight.value =
+    availableHeight < desiredMenuHeight
+      ? `${Math.max(availableHeight, launchMenuMinimumHeight)}px`
+      : ''
+}
+
+function terminalLaunchMenuClass() {
+  return {
+    'terminal-launch-menu--up': launchMenuPlacement.value === 'up',
+    'terminal-launch-menu--down': launchMenuPlacement.value !== 'up',
+    'terminal-launch-menu--constrained': Boolean(launchMenuMaxHeight.value)
+  }
+}
+
+function terminalLaunchMenuStyle() {
+  return launchMenuMaxHeight.value ? { maxHeight: launchMenuMaxHeight.value } : {}
 }
 
 function terminalDisplayName(terminal) {
@@ -243,7 +296,7 @@ watch(
               title="New terminal"
               :aria-expanded="openLaunchProjectId === project.id"
               :aria-controls="`terminal-launch-menu-${project.id}`"
-              @click.stop="toggleTerminalLaunchMenu(project.id)"
+              @click.stop="toggleTerminalLaunchMenu(project.id, $event)"
             >
               <Plus :size="14" />
             </button>
@@ -251,6 +304,8 @@ watch(
               v-if="openLaunchProjectId === project.id"
               :id="`terminal-launch-menu-${project.id}`"
               class="terminal-launch-menu"
+              :class="terminalLaunchMenuClass()"
+              :style="terminalLaunchMenuStyle()"
               :data-testid="`terminal-launch-menu-${project.id}`"
               @click.stop
             >

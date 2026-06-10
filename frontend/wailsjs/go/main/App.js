@@ -34,6 +34,10 @@ export function GetShellStatus(arg1) {
   return window['go']['main']['App']['GetShellStatus'](arg1);
 }
 
+export function InitializeProjectGitRepository(arg1) {
+  return window['go']['main']['App']['InitializeProjectGitRepository'](arg1);
+}
+
 export function ListProjects() {
   return window['go']['main']['App']['ListProjects']();
 }
@@ -52,6 +56,10 @@ export function SaveTerminalLaunchProfiles(arg1) {
 
 export function SaveTerminalShell(arg1, arg2) {
   return window['go']['main']['App']['SaveTerminalShell'](arg1, arg2);
+}
+
+export function SaveTerminalTheme(arg1) {
+  return window['go']['main']['App']['SaveTerminalTheme'](arg1);
 }
 
 export function SelectProject(arg1) {

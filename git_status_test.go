@@ -86,3 +86,36 @@ func TestGitStatusForPathReturnsCommandFailure(t *testing.T) {
 		t.Fatalf("error = %q, want git status failed", err.Error())
 	}
 }
+
+func TestInitializeGitRepositoryForPathRunsGitInit(t *testing.T) {
+	called := false
+	gotPath := ""
+	err := initializeGitRepositoryForPath("/work/new-repo", func(ctx context.Context, path string) ([]byte, error) {
+		called = true
+		gotPath = path
+		return []byte("Initialized empty Git repository"), nil
+	})
+
+	if err != nil {
+		t.Fatalf("initializeGitRepositoryForPath() error = %v, want nil", err)
+	}
+	if !called {
+		t.Fatal("git init runner was not called")
+	}
+	if gotPath != "/work/new-repo" {
+		t.Fatalf("git init path = %q, want /work/new-repo", gotPath)
+	}
+}
+
+func TestInitializeGitRepositoryForPathReturnsCommandFailure(t *testing.T) {
+	err := initializeGitRepositoryForPath("/work/new-repo", func(ctx context.Context, path string) ([]byte, error) {
+		return []byte("fatal: could not create work tree dir"), errors.New("exit status 128")
+	})
+
+	if err == nil {
+		t.Fatal("initializeGitRepositoryForPath() error = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "git init failed") {
+		t.Fatalf("error = %q, want git init failed", err.Error())
+	}
+}

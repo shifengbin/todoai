@@ -164,6 +164,51 @@ func TestAppSavesTerminalLaunchProfiles(t *testing.T) {
 	assertLaunchProfiles(t, loaded.LaunchProfiles, state.LaunchProfiles)
 }
 
+func TestAppSavesTerminalThemeWithoutChangingProjectShellBehavior(t *testing.T) {
+	configDir := t.TempDir()
+	projectDir := t.TempDir()
+	shellPath := executableFile(t, "zsh")
+	starter := newFakeShellStarter()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(configDir, "projects.json"),
+		starter.Start,
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-1")),
+	)
+	if _, err := app.SaveTerminalShell(shellPath, ShellSourceManual); err != nil {
+		t.Fatalf("SaveTerminalShell() error = %v", err)
+	}
+
+	settings, err := app.SaveTerminalTheme(AppearanceThemeDark)
+	if err != nil {
+		t.Fatalf("SaveTerminalTheme() error = %v", err)
+	}
+	if settings.Theme != AppearanceThemeDark {
+		t.Fatalf("Theme = %q, want %q", settings.Theme, AppearanceThemeDark)
+	}
+
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	if _, err := app.SelectProject(state.Projects[0].ID); err != nil {
+		t.Fatalf("SelectProject() error = %v", err)
+	}
+	if len(starter.requests) != 1 {
+		t.Fatalf("shell start count = %d, want 1", len(starter.requests))
+	}
+	if starter.requests[0].ShellPath != shellPath {
+		t.Fatalf("ShellPath = %q, want %q", starter.requests[0].ShellPath, shellPath)
+	}
+
+	loaded, err := app.LoadTerminalSettings()
+	if err != nil {
+		t.Fatalf("LoadTerminalSettings() error = %v", err)
+	}
+	if loaded.Theme != AppearanceThemeDark {
+		t.Fatalf("loaded Theme = %q, want %q", loaded.Theme, AppearanceThemeDark)
+	}
+}
+
 func TestAppKeepsExistingTerminalShellAfterSettingChanges(t *testing.T) {
 	configDir := t.TempDir()
 	projectDir := t.TempDir()
@@ -425,5 +470,93 @@ func TestAppGetProjectGitStatusReturnsErrorWhenProjectIsMissing(t *testing.T) {
 
 	if _, err := app.GetProjectGitStatus("missing-project"); err == nil {
 		t.Fatal("GetProjectGitStatus() error = nil, want error")
+	}
+}
+
+func TestAppInitializesProjectGitRepositoryForAvailableProject(t *testing.T) {
+	projectDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	projectID := state.Projects[0].ID
+	calls := 0
+	app.gitInit = func(path string) error {
+		calls++
+		if path != projectDir {
+			t.Fatalf("git init path = %q, want %q", path, projectDir)
+		}
+		return nil
+	}
+
+	if err := app.InitializeProjectGitRepository(projectID); err != nil {
+		t.Fatalf("InitializeProjectGitRepository() error = %v", err)
+	}
+
+	if calls != 1 {
+		t.Fatalf("git init calls = %d, want 1", calls)
+	}
+}
+
+func TestAppInitializeProjectGitRepositoryDoesNotInitializeUnavailableProject(t *testing.T) {
+	projectDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	projectID := state.Projects[0].ID
+	if err := os.RemoveAll(projectDir); err != nil {
+		t.Fatalf("RemoveAll(projectDir) error = %v", err)
+	}
+	calls := 0
+	app.gitInit = func(path string) error {
+		calls++
+		return nil
+	}
+
+	if err := app.InitializeProjectGitRepository(projectID); err == nil {
+		t.Fatal("InitializeProjectGitRepository() error = nil, want error")
+	}
+	if calls != 0 {
+		t.Fatalf("git init calls = %d, want 0", calls)
+	}
+}
+
+func TestAppInitializeProjectGitRepositoryReturnsErrorWhenProjectIsMissing(t *testing.T) {
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+
+	if err := app.InitializeProjectGitRepository("missing-project"); err == nil {
+		t.Fatal("InitializeProjectGitRepository() error = nil, want error")
+	}
+}
+
+func TestAppInitializeProjectGitRepositoryReturnsGitInitError(t *testing.T) {
+	projectDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	projectID := state.Projects[0].ID
+	app.gitInit = func(path string) error {
+		return os.ErrPermission
+	}
+
+	if err := app.InitializeProjectGitRepository(projectID); err == nil {
+		t.Fatal("InitializeProjectGitRepository() error = nil, want error")
 	}
 }

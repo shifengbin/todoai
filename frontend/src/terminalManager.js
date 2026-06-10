@@ -64,6 +64,19 @@ export class TerminalSessionManager {
     }
   }
 
+  dispose(terminalId) {
+    const session = this.sessions.get(terminalId)
+    if (!session) {
+      return
+    }
+
+    session.terminal.dispose?.()
+    this.sessions.delete(terminalId)
+    if (this.activeTerminalId === terminalId) {
+      this.activeTerminalId = null
+    }
+  }
+
   hasSelection(terminalId) {
     const session = this.sessions.get(terminalId)
     return Boolean(session?.terminal.hasSelection?.())

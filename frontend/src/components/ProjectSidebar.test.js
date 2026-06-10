@@ -61,6 +61,7 @@ describe('ProjectSidebar', () => {
 
     const menu = wrapper.find('[data-testid="terminal-launch-menu-project-a"]')
     expect(menu.exists()).toBe(true)
+    expect(menu.classes()).toContain('terminal-launch-menu--down')
     expect(menu.text()).toContain('Terminal')
     expect(menu.text()).toContain('codex')
     expect(menu.text()).toContain('claude')
@@ -69,6 +70,31 @@ describe('ProjectSidebar', () => {
 
     expect(wrapper.emitted('create-terminal')[0]).toEqual(['project-a', { name: 'codex', command: 'codex' }])
     expect(wrapper.find('[data-testid="terminal-launch-menu-project-a"]').exists()).toBe(false)
+  })
+
+  it('opens the terminal launch menu upward when a bottom project would clip it', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        projects: [
+          { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
+          { id: 'project-b', name: 'beta', path: '/work/beta', available: true }
+        ],
+        launchProfiles: [
+          { name: 'codex', command: 'codex' },
+          { name: 'claude', command: 'claude' }
+        ]
+      }
+    })
+
+    wrapper.find('.project-list').element.getBoundingClientRect = () => rect({ top: 0, bottom: 120 })
+    wrapper.find('[data-testid="add-terminal-project-b"]').element.getBoundingClientRect = () =>
+      rect({ top: 96, bottom: 118 })
+
+    await wrapper.find('[data-testid="add-terminal-project-b"]').trigger('click')
+
+    const menu = wrapper.find('[data-testid="terminal-launch-menu-project-b"]')
+    expect(menu.classes()).toContain('terminal-launch-menu--up')
+    expect(menu.element.style.maxHeight).toBe('88px')
   })
 
   it('closes the terminal launch menu on outside click and unavailable project changes', async () => {
@@ -309,4 +335,18 @@ function mountSidebar(options = {}) {
       ...(options.props || {})
     }
   })
+}
+
+function rect({ top, bottom, left = 0, right = 0 }) {
+  return {
+    top,
+    bottom,
+    left,
+    right,
+    width: right - left,
+    height: bottom - top,
+    x: left,
+    y: top,
+    toJSON: () => {}
+  }
 }

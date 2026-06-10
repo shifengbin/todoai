@@ -169,6 +169,7 @@ export namespace main {
 	    detected?: TerminalShellSetting;
 	    fallback?: TerminalShellSetting;
 	    launchProfiles: TerminalLaunchProfileSetting[];
+	    theme: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new TerminalSettingsState(source);
@@ -181,6 +182,7 @@ export namespace main {
 	        this.detected = this.convertValues(source["detected"], TerminalShellSetting);
 	        this.fallback = this.convertValues(source["fallback"], TerminalShellSetting);
 	        this.launchProfiles = this.convertValues(source["launchProfiles"], TerminalLaunchProfileSetting);
+	        this.theme = source["theme"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

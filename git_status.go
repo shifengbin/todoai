@@ -12,6 +12,7 @@ import (
 const gitStatusTimeout = 2 * time.Second
 
 type gitStatusRunner func(context.Context, string) ([]byte, error)
+type gitInitRunner func(context.Context, string) ([]byte, error)
 
 type GitStatus struct {
 	ProjectID       string `json:"projectId,omitempty"`
@@ -66,6 +67,10 @@ func queryGitStatus(path string) (GitStatus, error) {
 	return gitStatusForPath(path, runGitStatusCommand)
 }
 
+func initializeGitRepository(path string) error {
+	return initializeGitRepositoryForPath(path, runGitInitCommand)
+}
+
 func gitStatusForPath(path string, runner gitStatusRunner) (GitStatus, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitStatusTimeout)
 	defer cancel()
@@ -83,8 +88,30 @@ func gitStatusForPath(path string, runner gitStatusRunner) (GitStatus, error) {
 	return parseGitStatusPorcelainV2(string(output)), nil
 }
 
+func initializeGitRepositoryForPath(path string, runner gitInitRunner) error {
+	ctx, cancel := context.WithTimeout(context.Background(), gitStatusTimeout)
+	defer cancel()
+
+	output, err := runner(ctx, path)
+	if err != nil {
+		if errorsIsDeadlineExceeded(ctx.Err()) {
+			return fmt.Errorf("git init timed out")
+		}
+		if message := strings.TrimSpace(string(output)); message != "" {
+			return fmt.Errorf("git init failed: %w: %s", err, message)
+		}
+		return fmt.Errorf("git init failed: %w", err)
+	}
+	return nil
+}
+
 func runGitStatusCommand(ctx context.Context, path string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", "-C", path, "status", "--porcelain=v2", "--branch")
+	return cmd.CombinedOutput()
+}
+
+func runGitInitCommand(ctx context.Context, path string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "git", "-C", path, "init")
 	return cmd.CombinedOutput()
 }
 

@@ -714,7 +714,12 @@ func (process *realPtyProcess) Wait() error {
 }
 
 func (process *realPtyProcess) Close() error {
-	return process.file.Close()
+	killErr := terminateProcessTree(process.cmd)
+	closeErr := process.file.Close()
+	if closeErr != nil {
+		return closeErr
+	}
+	return killErr
 }
 
 func fileExists(path string) bool {

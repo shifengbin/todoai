@@ -89,6 +89,109 @@ func TestSettingsManagerAddsDefaultLaunchProfilesOnFirstLoad(t *testing.T) {
 	})
 }
 
+func TestSettingsManagerUsesLightThemeWhenSavedThemeIsMissing(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "settings.json")
+	shellPath := executableFile(t, "zsh")
+	writeSettingsFile(t, configPath, shellPath, "manual")
+
+	manager := NewSettingsManager(configPath)
+	state, err := manager.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if state.Theme != AppearanceThemeLight {
+		t.Fatalf("Theme = %q, want %q", state.Theme, AppearanceThemeLight)
+	}
+	if state.Selected.Path != shellPath {
+		t.Fatalf("Selected.Path = %q, want %q", state.Selected.Path, shellPath)
+	}
+}
+
+func TestSettingsManagerRestoresSavedDarkTheme(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "settings.json")
+	writeSettingsFileWithTheme(t, configPath, executableFile(t, "zsh"), "manual", AppearanceThemeDark)
+
+	manager := NewSettingsManager(configPath)
+	state, err := manager.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if state.Theme != AppearanceThemeDark {
+		t.Fatalf("Theme = %q, want %q", state.Theme, AppearanceThemeDark)
+	}
+}
+
+func TestSettingsManagerNormalizesInvalidSavedThemeToLight(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "settings.json")
+	writeSettingsFileWithTheme(t, configPath, executableFile(t, "zsh"), "manual", "midnight")
+
+	manager := NewSettingsManager(configPath)
+	state, err := manager.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if state.Theme != AppearanceThemeLight {
+		t.Fatalf("Theme = %q, want %q", state.Theme, AppearanceThemeLight)
+	}
+}
+
+func TestSettingsManagerSavesThemeAndPreservesOtherSettings(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "settings.json")
+	shellPath := executableFile(t, "zsh")
+	manager := NewSettingsManager(configPath)
+	if _, err := manager.SaveShellPath(shellPath, ShellSourceManual); err != nil {
+		t.Fatalf("SaveShellPath() error = %v", err)
+	}
+	wantProfiles := []TerminalLaunchProfileSetting{{Name: "Codex", Command: "codex"}}
+	if _, err := manager.SaveLaunchProfiles(wantProfiles); err != nil {
+		t.Fatalf("SaveLaunchProfiles() error = %v", err)
+	}
+
+	state, err := manager.SaveTheme(AppearanceThemeDark)
+	if err != nil {
+		t.Fatalf("SaveTheme() error = %v", err)
+	}
+	if state.Theme != AppearanceThemeDark {
+		t.Fatalf("Theme = %q, want %q", state.Theme, AppearanceThemeDark)
+	}
+	if state.Selected.Path != shellPath {
+		t.Fatalf("Selected.Path = %q, want %q", state.Selected.Path, shellPath)
+	}
+	assertLaunchProfiles(t, state.LaunchProfiles, wantProfiles)
+
+	reloaded, err := manager.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if reloaded.Theme != AppearanceThemeDark {
+		t.Fatalf("reloaded Theme = %q, want %q", reloaded.Theme, AppearanceThemeDark)
+	}
+	assertLaunchProfiles(t, reloaded.LaunchProfiles, wantProfiles)
+}
+
+func TestSettingsManagerRejectsInvalidThemeWithoutChangingSavedTheme(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "settings.json")
+	manager := NewSettingsManager(configPath)
+	if _, err := manager.SaveShellPath(executableFile(t, "zsh"), ShellSourceManual); err != nil {
+		t.Fatalf("SaveShellPath() error = %v", err)
+	}
+	if _, err := manager.SaveTheme(AppearanceThemeDark); err != nil {
+		t.Fatalf("SaveTheme(valid) error = %v", err)
+	}
+
+	if _, err := manager.SaveTheme("system"); err == nil {
+		t.Fatal("SaveTheme(invalid) error = nil, want error")
+	}
+
+	state, err := manager.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if state.Theme != AppearanceThemeDark {
+		t.Fatalf("Theme after invalid save = %q, want %q", state.Theme, AppearanceThemeDark)
+	}
+}
+
 func TestSettingsManagerRejectsInvalidManualShellWithoutChangingSavedSetting(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "settings.json")
 	validPath := executableFile(t, "bash")
@@ -352,6 +455,26 @@ func writeSettingsFile(t *testing.T, configPath string, shellPath string, source
     "source": "` + source + `",
     "available": true
   }
+}`
+	if err := os.WriteFile(configPath, []byte(data), 0o600); err != nil {
+		t.Fatalf("WriteFile(settings) error = %v", err)
+	}
+}
+
+func writeSettingsFileWithTheme(t *testing.T, configPath string, shellPath string, source string, theme string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll(settings dir) error = %v", err)
+	}
+	data := `{
+  "version": 1,
+  "selected": {
+    "path": "` + shellPath + `",
+    "displayName": "zsh",
+    "source": "` + source + `",
+    "available": true
+  },
+  "theme": "` + theme + `"
 }`
 	if err := os.WriteFile(configPath, []byte(data), 0o600); err != nil {
 		t.Fatalf("WriteFile(settings) error = %v", err)

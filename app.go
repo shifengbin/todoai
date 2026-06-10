@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -14,6 +15,7 @@ type App struct {
 	shells    *ShellSessionManager
 	settings  *SettingsManager
 	gitStatus func(path string) (GitStatus, error)
+	gitInit   func(path string) error
 }
 
 func NewApp() *App {
@@ -29,6 +31,7 @@ func NewAppWithConfigAndShellStarter(configPath string, starter ShellStarter, sh
 		projects:  NewProjectManager(configPath),
 		settings:  NewSettingsManager(defaultSettingsConfigPath(configPath)),
 		gitStatus: queryGitStatus,
+		gitInit:   initializeGitRepository,
 	}
 	shellOpts = append([]ShellSessionManagerOption{
 		WithShellPathResolver(app.settings.ResolveShellPath),
@@ -177,6 +180,17 @@ func (a *App) GetProjectGitStatus(projectID string) (GitStatus, error) {
 	return status, nil
 }
 
+func (a *App) InitializeProjectGitRepository(projectID string) error {
+	project, err := a.projects.GetProject(projectID)
+	if err != nil {
+		return err
+	}
+	if !project.Available {
+		return fmt.Errorf("project path unavailable")
+	}
+	return a.gitInit(project.Path)
+}
+
 func (a *App) LoadTerminalSettings() (TerminalSettingsState, error) {
 	return a.settings.Load()
 }
@@ -187,6 +201,10 @@ func (a *App) SaveTerminalShell(path string, source string) (TerminalSettingsSta
 
 func (a *App) SaveTerminalLaunchProfiles(profiles []TerminalLaunchProfileSetting) (TerminalSettingsState, error) {
 	return a.settings.SaveLaunchProfiles(profiles)
+}
+
+func (a *App) SaveTerminalTheme(theme string) (TerminalSettingsState, error) {
+	return a.settings.SaveTheme(theme)
 }
 
 func (a *App) DetectTerminalShell() (TerminalShellSetting, error) {

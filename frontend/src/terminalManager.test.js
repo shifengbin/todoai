@@ -163,6 +163,44 @@ describe('TerminalSessionManager', () => {
 
     expect(onTitleChange).toHaveBeenCalledWith('terminal-a', '! codex')
   })
+
+  it('does not pass application appearance themes into terminal sessions', () => {
+    const factory = createFakeTerminalFactory()
+    const manager = new TerminalSessionManager({
+      createSession: factory.createSession,
+      sendInput: vi.fn(),
+      resizeTerminal: vi.fn(),
+      theme: 'light'
+    })
+    const containerA = document.createElement('div')
+
+    manager.activate('terminal-a', containerA)
+
+    expect(factory.sessions.get('terminal-a').theme).toBeUndefined()
+    expect(factory.sessions.get('terminal-a').terminal.openCount).toBe(1)
+  })
+
+  it('disposes a terminal session and recreates it on the next activation', () => {
+    const factory = createFakeTerminalFactory()
+    const manager = new TerminalSessionManager({
+      createSession: factory.createSession,
+      sendInput: vi.fn(),
+      resizeTerminal: vi.fn()
+    })
+    const containerA = document.createElement('div')
+
+    manager.activate('terminal-a', containerA)
+    const firstSession = factory.sessions.get('terminal-a')
+
+    manager.dispose('terminal-a')
+    manager.write('terminal-a', 'ignored')
+    manager.activate('terminal-a', containerA)
+
+    expect(firstSession.terminal.dispose).toHaveBeenCalledTimes(1)
+    expect(firstSession.terminal.writes).toEqual([])
+    expect(factory.createdFor).toEqual(['terminal-a', 'terminal-a'])
+    expect(factory.sessions.get('terminal-a')).not.toBe(firstSession)
+  })
 })
 
 function createFakeTerminalFactory() {
@@ -172,7 +210,7 @@ function createFakeTerminalFactory() {
   return {
     sessions,
     createdFor,
-    createSession(terminalId, onData, onShortcut, onCommandState, onTitleChange) {
+    createSession(terminalId, onData, onShortcut, onCommandState, onTitleChange, theme) {
       createdFor.push(terminalId)
       const terminal = {
         cols: 100,
@@ -187,6 +225,7 @@ function createFakeTerminalFactory() {
         write(data) {
           this.writes.push(data)
         },
+        dispose: vi.fn(),
         hasSelection() {
           return Boolean(this.selection)
         },
@@ -205,6 +244,7 @@ function createFakeTerminalFactory() {
         fit: vi.fn()
       }
       const session = {
+        theme,
         terminal,
         fitAddon,
         emitCommandState(event) {

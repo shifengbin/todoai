@@ -14,6 +14,8 @@ const (
 	settingsConfigVersion = 1
 	ShellSourceDetected   = "detected"
 	ShellSourceManual     = "manual"
+	AppearanceThemeLight  = "light"
+	AppearanceThemeDark   = "dark"
 )
 
 type TerminalShellSetting struct {
@@ -34,6 +36,7 @@ type TerminalSettingsState struct {
 	Detected       *TerminalShellSetting          `json:"detected,omitempty"`
 	Fallback       *TerminalShellSetting          `json:"fallback,omitempty"`
 	LaunchProfiles []TerminalLaunchProfileSetting `json:"launchProfiles"`
+	Theme          string                         `json:"theme"`
 }
 
 type SettingsManagerOption func(*SettingsManager)
@@ -48,6 +51,7 @@ type persistedSettings struct {
 	Version        int                            `json:"version"`
 	Selected       TerminalShellSetting           `json:"selected"`
 	LaunchProfiles []TerminalLaunchProfileSetting `json:"launchProfiles"`
+	Theme          string                         `json:"theme"`
 }
 
 func NewSettingsManager(configPath string, opts ...SettingsManagerOption) *SettingsManager {
@@ -96,6 +100,23 @@ func (manager *SettingsManager) SaveLaunchProfiles(profiles []TerminalLaunchProf
 	return state, manager.saveLocked(state)
 }
 
+func (manager *SettingsManager) SaveTheme(theme string) (TerminalSettingsState, error) {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	theme = strings.TrimSpace(theme)
+	if !supportedAppearanceTheme(theme) {
+		state, _ := manager.loadExistingLocked()
+		return state, fmt.Errorf("unsupported appearance theme: %s", theme)
+	}
+	state, err := manager.loadLocked()
+	if err != nil {
+		return TerminalSettingsState{}, err
+	}
+	state.Theme = theme
+	return state, manager.saveLocked(state)
+}
+
 func (manager *SettingsManager) SaveShellPath(path string, source string) (TerminalSettingsState, error) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
@@ -117,6 +138,7 @@ func (manager *SettingsManager) SaveShellPath(path string, source string) (Termi
 	if state.LaunchProfiles == nil {
 		state.LaunchProfiles = defaultTerminalLaunchProfiles()
 	}
+	state.Theme = normalizeAppearanceTheme(state.Theme)
 	return state, manager.saveLocked(state)
 }
 
@@ -146,6 +168,7 @@ func (manager *SettingsManager) loadLocked() (TerminalSettingsState, error) {
 			Selected:       detected,
 			Detected:       &detected,
 			LaunchProfiles: defaultTerminalLaunchProfiles(),
+			Theme:          AppearanceThemeLight,
 		}
 		if saveErr := manager.saveLocked(state); saveErr != nil {
 			return TerminalSettingsState{}, saveErr
@@ -157,6 +180,7 @@ func (manager *SettingsManager) loadLocked() (TerminalSettingsState, error) {
 	}
 
 	state.Selected = normalizeShellSetting(state.Selected)
+	state.Theme = normalizeAppearanceTheme(state.Theme)
 	state.Selected.Available = executablePath(state.Selected.Path)
 	if !state.Selected.Available {
 		fallback, fallbackErr := manager.detectShell()
@@ -195,6 +219,7 @@ func (manager *SettingsManager) loadExistingLocked() (TerminalSettingsState, err
 		Version:        persisted.Version,
 		Selected:       persisted.Selected,
 		LaunchProfiles: launchProfiles,
+		Theme:          normalizeAppearanceTheme(persisted.Theme),
 	}, nil
 }
 
@@ -210,6 +235,7 @@ func (manager *SettingsManager) saveLocked(state TerminalSettingsState) error {
 		Version:        settingsConfigVersion,
 		Selected:       normalizeShellSetting(state.Selected),
 		LaunchProfiles: append([]TerminalLaunchProfileSetting{}, launchProfiles...),
+		Theme:          normalizeAppearanceTheme(state.Theme),
 	}, "", "  ")
 	if err != nil {
 		return err
@@ -286,6 +312,18 @@ func normalizeShellSource(source string) string {
 		return ShellSourceDetected
 	}
 	return ShellSourceManual
+}
+
+func normalizeAppearanceTheme(theme string) string {
+	theme = strings.TrimSpace(theme)
+	if supportedAppearanceTheme(theme) {
+		return theme
+	}
+	return AppearanceThemeLight
+}
+
+func supportedAppearanceTheme(theme string) bool {
+	return theme == AppearanceThemeLight || theme == AppearanceThemeDark
 }
 
 type ShellDetectorOption func(*ShellDetector)

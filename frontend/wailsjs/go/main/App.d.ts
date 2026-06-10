@@ -18,6 +18,8 @@ export function GetProjectGitStatus(arg1:string):Promise<main.GitStatus>;
 
 export function GetShellStatus(arg1:string):Promise<main.ShellStatus>;
 
+export function InitializeProjectGitRepository(arg1:string):Promise<void>;
+
 export function ListProjects():Promise<main.ProjectState>;
 
 export function LoadTerminalSettings():Promise<main.TerminalSettingsState>;
@@ -27,6 +29,8 @@ export function ResizeTerminal(arg1:string,arg2:number,arg3:number):Promise<void
 export function SaveTerminalLaunchProfiles(arg1:Array<main.TerminalLaunchProfileSetting>):Promise<main.TerminalSettingsState>;
 
 export function SaveTerminalShell(arg1:string,arg2:string):Promise<main.TerminalSettingsState>;
+
+export function SaveTerminalTheme(arg1:string):Promise<main.TerminalSettingsState>;
 
 export function SelectProject(arg1:string):Promise<main.ProjectState>;
 

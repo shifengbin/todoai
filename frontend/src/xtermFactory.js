@@ -2,6 +2,29 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 
+const terminalTheme = {
+  background: '#111418',
+  foreground: '#e6edf3',
+  cursor: '#f0c674',
+  selectionBackground: '#3c5266',
+  black: '#111418',
+  red: '#ef5b5b',
+  green: '#7bc96f',
+  yellow: '#f0c674',
+  blue: '#5aa7e8',
+  magenta: '#c678dd',
+  cyan: '#56b6c2',
+  white: '#e6edf3',
+  brightBlack: '#5c6773',
+  brightRed: '#ff7777',
+  brightGreen: '#9be282',
+  brightYellow: '#ffd479',
+  brightBlue: '#7cc5ff',
+  brightMagenta: '#d89df0',
+  brightCyan: '#74d5df',
+  brightWhite: '#ffffff'
+}
+
 export function createXtermSession(terminalId, onData, onShortcut, onCommandState, onTitleChange) {
   const terminal = new Terminal({
     cursorBlink: true,
@@ -9,28 +32,7 @@ export function createXtermSession(terminalId, onData, onShortcut, onCommandStat
     fontSize: 13,
     lineHeight: 1.15,
     scrollback: 4000,
-    theme: {
-      background: '#111418',
-      foreground: '#e6edf3',
-      cursor: '#f0c674',
-      selectionBackground: '#3c5266',
-      black: '#111418',
-      red: '#ef5b5b',
-      green: '#7bc96f',
-      yellow: '#f0c674',
-      blue: '#5aa7e8',
-      magenta: '#c678dd',
-      cyan: '#56b6c2',
-      white: '#e6edf3',
-      brightBlack: '#5c6773',
-      brightRed: '#ff7777',
-      brightGreen: '#9be282',
-      brightYellow: '#ffd479',
-      brightBlue: '#7cc5ff',
-      brightMagenta: '#d89df0',
-      brightCyan: '#74d5df',
-      brightWhite: '#ffffff'
-    }
+    theme: terminalTheme
   })
   const fitAddon = new FitAddon()
   terminal.loadAddon(fitAddon)

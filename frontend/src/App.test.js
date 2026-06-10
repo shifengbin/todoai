@@ -8,9 +8,11 @@ import {
   DeleteTerminal,
   DetectTerminalShell,
   GetProjectGitStatus,
+  InitializeProjectGitRepository,
   LoadTerminalSettings,
   SaveTerminalLaunchProfiles,
   SaveTerminalShell,
+  SaveTerminalTheme,
   SelectTerminal,
   SendTerminalInput,
   StartShell
@@ -24,6 +26,7 @@ const appApiMock = vi.hoisted(() => ({
   DeleteTerminal: vi.fn(),
   DetectTerminalShell: vi.fn(),
   GetProjectGitStatus: vi.fn(),
+  InitializeProjectGitRepository: vi.fn(),
   ListProjects: vi.fn(),
   LoadTerminalSettings: vi.fn(),
   ResizeTerminal: vi.fn(),
@@ -31,6 +34,7 @@ const appApiMock = vi.hoisted(() => ({
   SelectTerminal: vi.fn(),
   SaveTerminalLaunchProfiles: vi.fn(),
   SaveTerminalShell: vi.fn(),
+  SaveTerminalTheme: vi.fn(),
   SendTerminalInput: vi.fn(),
   StartShell: vi.fn()
 }))
@@ -59,6 +63,7 @@ vi.mock('./xtermFactory', () => {
           this.openedIn = container
         },
         write: vi.fn(),
+        dispose: vi.fn(),
         hasSelection() {
           return Boolean(this.selection)
         },
@@ -95,6 +100,7 @@ describe('App project terminal tree', () => {
       settingsState({ selected: shellSetting({ path: '/usr/bin/bash', displayName: 'bash', source: 'detected' }) })
     )
     appApiMock.SaveTerminalLaunchProfiles.mockResolvedValue(settingsState())
+    appApiMock.SaveTerminalTheme.mockResolvedValue(settingsState())
     appApiMock.SelectProject.mockResolvedValue(projectState())
     appApiMock.SelectTerminal.mockResolvedValue(projectState())
     appApiMock.CreateTerminal.mockResolvedValue(
@@ -109,6 +115,7 @@ describe('App project terminal tree', () => {
     appApiMock.DeleteProject.mockResolvedValue(projectState({ projects: [], activeProjectId: '', terminals: [], activeTerminalId: '' }))
     appApiMock.DeleteTerminal.mockResolvedValue(projectState({ terminals: [], activeTerminalId: '' }))
     appApiMock.GetProjectGitStatus.mockResolvedValue(gitStatus())
+    appApiMock.InitializeProjectGitRepository.mockResolvedValue()
     appApiMock.StartShell.mockResolvedValue({ projectId: 'project-a', terminalId: 'terminal-a', state: 'running' })
     appApiMock.SendTerminalInput.mockResolvedValue()
     runtimeMock.ClipboardGetText.mockResolvedValue('')
@@ -255,6 +262,7 @@ describe('App project terminal tree', () => {
 
   it('deletes a terminal from the project tree without confirmation', async () => {
     const wrapper = await mountReadyApp()
+    const session = xtermMock.sessions.get('terminal-a')
 
     await wrapper.find('[data-testid="delete-terminal-terminal-a"]').trigger('click')
     await flushPromises()
@@ -262,6 +270,7 @@ describe('App project terminal tree', () => {
     expect(window.confirm).not.toHaveBeenCalled()
     expect(DeleteTerminal).toHaveBeenCalledWith('terminal-a')
     expect(wrapper.find('[data-testid="terminal-terminal-a"]').exists()).toBe(false)
+    expect(session.terminal.dispose).toHaveBeenCalledTimes(1)
   })
 
   it('updates terminal labels from command-state events and restores the shell name when idle', async () => {
@@ -451,8 +460,32 @@ describe('App project terminal tree', () => {
     const wrapper = await mountReadyApp()
 
     expect(GetProjectGitStatus).toHaveBeenCalledWith('project-a')
-    expect(wrapper.find('[data-testid="project-git-status"]').text()).toContain('main')
-    expect(wrapper.find('[data-testid="project-git-status"]').text()).toContain('3 changed')
+    expect(wrapper.find('[data-testid="status-chip-branch"]').text()).toContain('main')
+    expect(wrapper.find('[data-testid="status-chip-changed"]').text()).toContain('3 changed')
+  })
+
+  it('shows detailed git status chips when counts are present', async () => {
+    appApiMock.GetProjectGitStatus.mockResolvedValue(
+      gitStatus({
+        branch: 'feature/status-bar',
+        changedCount: 6,
+        stagedCount: 1,
+        unstagedCount: 2,
+        untrackedCount: 3,
+        ahead: 4,
+        behind: 5
+      })
+    )
+
+    const wrapper = await mountReadyApp()
+
+    expect(wrapper.find('[data-testid="status-chip-branch"]').text()).toContain('feature/status-bar')
+    expect(wrapper.find('[data-testid="status-chip-changed"]').text()).toContain('6 changed')
+    expect(wrapper.find('[data-testid="status-chip-staged"]').text()).toContain('1 staged')
+    expect(wrapper.find('[data-testid="status-chip-unstaged"]').text()).toContain('2 unstaged')
+    expect(wrapper.find('[data-testid="status-chip-untracked"]').text()).toContain('3 untracked')
+    expect(wrapper.find('[data-testid="status-chip-ahead"]').text()).toContain('4 ahead')
+    expect(wrapper.find('[data-testid="status-chip-behind"]').text()).toContain('5 behind')
   })
 
   it('shows a stable empty git status when no project is selected', async () => {
@@ -470,6 +503,60 @@ describe('App project terminal tree', () => {
     const wrapper = await mountReadyApp()
 
     expect(wrapper.find('[data-testid="project-git-status"]').text()).toContain('Not a git repository')
+    expect(wrapper.find('[data-testid="initialize-git-repository"]').exists()).toBe(true)
+  })
+
+  it('initializes a git repository from the status bar and refreshes status', async () => {
+    appApiMock.GetProjectGitStatus
+      .mockResolvedValueOnce(gitStatus({ isRepo: false, branch: '', changedCount: 0 }))
+      .mockResolvedValueOnce(gitStatus({ branch: 'main', changedCount: 0 }))
+
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="initialize-git-repository"]').trigger('click')
+    await flushPromises()
+
+    expect(InitializeProjectGitRepository).toHaveBeenCalledWith('project-a')
+    expect(GetProjectGitStatus).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('[data-testid="initialize-git-repository"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="status-chip-branch"]').text()).toContain('main')
+  })
+
+  it('disables the git initialization action while initialization is pending', async () => {
+    let resolveInit
+    appApiMock.GetProjectGitStatus
+      .mockResolvedValueOnce(gitStatus({ isRepo: false, branch: '', changedCount: 0 }))
+      .mockResolvedValueOnce(gitStatus({ branch: 'main', changedCount: 0 }))
+    appApiMock.InitializeProjectGitRepository.mockReturnValue(
+      new Promise((resolve) => {
+        resolveInit = resolve
+      })
+    )
+
+    const wrapper = await mountReadyApp()
+    await wrapper.find('[data-testid="initialize-git-repository"]').trigger('click')
+    await nextTick()
+
+    const button = wrapper.find('[data-testid="initialize-git-repository"]')
+    expect(button.attributes('disabled')).toBeDefined()
+    expect(button.text()).toContain('Initializing')
+
+    resolveInit()
+    await flushPromises()
+  })
+
+  it('keeps non-repository status visible when git initialization fails', async () => {
+    appApiMock.GetProjectGitStatus.mockResolvedValue(gitStatus({ isRepo: false, branch: '', changedCount: 0 }))
+    appApiMock.InitializeProjectGitRepository.mockRejectedValue(new Error('git init failed'))
+
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="initialize-git-repository"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="project-git-status"]').text()).toContain('Not a git repository')
+    expect(wrapper.find('[data-testid="initialize-git-repository"]').exists()).toBe(true)
+    expect(wrapper.find('.status-error').text()).toContain('git init failed')
   })
 
   it('shows when the active project path is unavailable without querying git', async () => {
@@ -602,6 +689,58 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="terminal-settings-dialog"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="terminal-settings-current"]').text()).toContain('/usr/bin/zsh')
     expect(wrapper.find('[data-testid="terminal-settings-detected"]').text()).toContain('/usr/bin/bash')
+  })
+
+  it('applies the loaded dark appearance theme to the app shell without changing terminal sessions', async () => {
+    appApiMock.LoadTerminalSettings.mockResolvedValue(settingsState({ theme: 'dark' }))
+
+    const wrapper = await mountReadyApp()
+
+    expect(wrapper.find('.app-shell').attributes('data-theme')).toBe('dark')
+    expect(xtermMock.sessions.has('terminal-a')).toBe(true)
+  })
+
+  it('saves a dark appearance theme from settings without updating terminal colors or restarting terminals', async () => {
+    appApiMock.SaveTerminalTheme.mockResolvedValue(settingsState({ theme: 'dark' }))
+    const wrapper = await mountReadyApp()
+
+    await openSettings(wrapper)
+    await wrapper.find('[data-testid="appearance-theme-dark"]').setValue(true)
+    await wrapper.find('[data-testid="terminal-settings-save"]').trigger('click')
+    await flushPromises()
+
+    expect(SaveTerminalTheme).toHaveBeenCalledWith('dark')
+    expect(wrapper.find('.app-shell').attributes('data-theme')).toBe('dark')
+    expect(StartShell).not.toHaveBeenCalled()
+    expect(xtermMock.sessions.has('terminal-a')).toBe(true)
+    expect(wrapper.find('[data-testid="terminal-settings-dialog"]').exists()).toBe(false)
+  })
+
+  it('does not apply a changed appearance theme when settings are cancelled', async () => {
+    const wrapper = await mountReadyApp()
+
+    await openSettings(wrapper)
+    await wrapper.find('[data-testid="appearance-theme-dark"]').setValue(true)
+    await wrapper.findAll('.settings-actions button').find((button) => button.text() === 'Cancel').trigger('click')
+    await flushPromises()
+
+    expect(SaveTerminalTheme).not.toHaveBeenCalled()
+    expect(wrapper.find('.app-shell').attributes('data-theme')).toBe('light')
+    expect(xtermMock.sessions.has('terminal-a')).toBe(true)
+  })
+
+  it('shows appearance theme save errors without closing settings', async () => {
+    appApiMock.SaveTerminalTheme.mockRejectedValue(new Error('unsupported appearance theme'))
+    const wrapper = await mountReadyApp()
+
+    await openSettings(wrapper)
+    await wrapper.find('[data-testid="appearance-theme-dark"]').setValue(true)
+    await wrapper.find('[data-testid="terminal-settings-save"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="terminal-settings-error"]').text()).toContain('unsupported appearance theme')
+    expect(wrapper.find('[data-testid="terminal-settings-dialog"]').exists()).toBe(true)
+    expect(wrapper.find('.app-shell').attributes('data-theme')).toBe('light')
   })
 
   it('shows an unavailable saved shell and fallback shell in settings', async () => {
@@ -809,6 +948,7 @@ function settingsState(overrides = {}) {
   return {
     version: 1,
     selected: shellSetting(),
+    theme: 'light',
     launchProfiles: [
       { name: 'codex', command: 'codex' },
       { name: 'claude', command: 'claude' }

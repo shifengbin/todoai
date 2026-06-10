@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { ChevronDown, ChevronUp, Plus, RotateCcw, Settings, Trash2, X } from '@lucide/vue'
+import { ChevronDown, ChevronUp, GitBranch, Plus, RotateCcw, Settings, Trash2, X } from '@lucide/vue'
 import ProjectSidebar from './components/ProjectSidebar.vue'
 import { TerminalSessionManager } from './terminalManager'
 import { createXtermSession } from './xtermFactory'
@@ -11,6 +11,7 @@ import {
   DeleteTerminal,
   DetectTerminalShell,
   GetProjectGitStatus,
+  InitializeProjectGitRepository,
   ListProjects,
   LoadTerminalSettings,
   ResizeTerminal,
@@ -18,6 +19,7 @@ import {
   SelectTerminal,
   SaveTerminalLaunchProfiles,
   SaveTerminalShell,
+  SaveTerminalTheme,
   SendTerminalInput,
   StartShell
 } from '../wailsjs/go/main/App'
@@ -41,11 +43,14 @@ const defaultTerminalLaunchProfiles = [
   { name: 'codex', command: 'codex' },
   { name: 'claude', command: 'claude' }
 ]
+const appearanceThemes = ['light', 'dark']
+const currentTheme = ref('light')
 const terminalSettings = ref(null)
 const detectedTerminalShell = ref(null)
 const gitStatus = ref(null)
 const gitStatusLoading = ref(false)
 const gitStatusError = ref('')
+const gitInitLoading = ref(false)
 const settingsPanel = reactive({
   visible: false,
   loading: false,
@@ -54,6 +59,7 @@ const settingsPanel = reactive({
   mode: 'detected',
   manualPath: '',
   launchProfiles: [],
+  theme: 'light',
   error: ''
 })
 const terminalManager = new TerminalSessionManager({
@@ -93,28 +99,52 @@ const terminalLaunchProfiles = computed(() => {
   return defaultTerminalLaunchProfiles
 })
 
-const projectGitStatusText = computed(() => {
+const projectGitStatusChips = computed(() => {
   if (!activeProject.value) {
-    return 'No project'
+    return [statusChip('neutral', 'neutral', 'No project')]
   }
   if (!activeProject.value.available || gitStatus.value?.pathUnavailable) {
-    return 'Project path unavailable'
+    return [statusChip('warning', 'warning', 'Project path unavailable')]
   }
   if (gitStatusLoading.value) {
-    return 'Loading git status'
+    return [statusChip('neutral', 'neutral', 'Loading git status')]
   }
   if (gitStatusError.value) {
-    return 'Git status unavailable'
+    return [statusChip('error', 'error', 'Git status unavailable')]
   }
   if (gitStatus.value && !gitStatus.value.isRepo) {
-    return 'Not a git repository'
+    return [statusChip('warning', 'warning', 'Not a git repository')]
   }
   if (gitStatus.value?.isRepo) {
     const branch = gitStatus.value.branch || '(detached)'
-    const changedCount = gitStatus.value.changedCount || 0
-    return `${branch} · ${changedCount} changed`
+    const chips = [
+      statusChip('branch', 'branch', branch),
+      statusChip('changed', 'changed', `${gitStatus.value.changedCount || 0} changed`)
+    ]
+    addCountChip(chips, 'staged', gitStatus.value.stagedCount, 'staged')
+    addCountChip(chips, 'unstaged', gitStatus.value.unstagedCount, 'unstaged')
+    addCountChip(chips, 'untracked', gitStatus.value.untrackedCount, 'untracked')
+    addCountChip(chips, 'ahead', gitStatus.value.ahead, 'ahead')
+    addCountChip(chips, 'behind', gitStatus.value.behind, 'behind')
+    return chips
   }
-  return 'Git status unavailable'
+  return [statusChip('error', 'error', 'Git status unavailable')]
+})
+
+const showInitializeGitRepository = computed(() => {
+  return Boolean(
+    activeProject.value &&
+    activeProject.value.available &&
+    gitStatus.value &&
+    !gitStatus.value.pathUnavailable &&
+    !gitStatus.value.isRepo &&
+    !gitStatusLoading.value &&
+    !gitStatusError.value
+  )
+})
+
+const gitInitializeButtonText = computed(() => {
+  return gitInitLoading.value ? 'Initializing Git Repository' : 'Initialize Git Repository'
 })
 
 const terminalSettingsDetected = computed(() => {
@@ -164,7 +194,7 @@ function applyState(state) {
   const previousActiveProjectId = activeProjectId.value
   const previousTerminals = new Map(terminals.value.map((terminal) => [terminal.id, terminal]))
   projects.value = state?.projects || []
-  terminals.value = (state?.terminals || []).map((terminal) => ({
+  const nextTerminals = (state?.terminals || []).map((terminal) => ({
     ...terminal,
     currentCommand:
       terminal.state === 'running'
@@ -174,6 +204,15 @@ function applyState(state) {
     idleTitle: terminal.state === 'running' ? previousTerminals.get(terminal.id)?.idleTitle || '' : '',
     activityState: terminal.state === 'running' ? previousTerminals.get(terminal.id)?.activityState || 'idle' : 'idle'
   }))
+  const nextTerminalIds = new Set(nextTerminals.map((terminal) => terminal.id))
+  for (const terminalId of previousTerminals.keys()) {
+    if (!nextTerminalIds.has(terminalId)) {
+      terminalManager.dispose(terminalId)
+      terminalContainers.delete(terminalId)
+      delete shellStatuses[terminalId]
+    }
+  }
+  terminals.value = nextTerminals
   activeProjectId.value = state?.activeProjectId || ''
   activeTerminalId.value = state?.activeTerminalId || ''
   for (const terminal of terminals.value) {
@@ -352,6 +391,16 @@ function applyTerminalSettings(state) {
   detectedTerminalShell.value = state?.detected || state?.fallback || null
   settingsPanel.manualPath = state?.selected?.path || settingsPanel.manualPath || ''
   settingsPanel.launchProfiles = cloneLaunchProfiles(launchProfilesFromState(state))
+  applyAppearanceTheme(state?.theme)
+  settingsPanel.theme = currentTheme.value
+}
+
+function applyAppearanceTheme(theme) {
+  currentTheme.value = normalizeAppearanceTheme(theme)
+}
+
+function normalizeAppearanceTheme(theme) {
+  return appearanceThemes.includes(theme) ? theme : 'light'
 }
 
 function launchProfilesFromState(state) {
@@ -443,7 +492,8 @@ async function saveTerminalSettings() {
   settingsPanel.error = ''
   try {
     await SaveTerminalShell(path, source)
-    applyTerminalSettings(await SaveTerminalLaunchProfiles(launchProfiles))
+    const profileState = await SaveTerminalLaunchProfiles(launchProfiles)
+    applyTerminalSettings(await SaveTerminalTheme(settingsPanel.theme) || profileState)
     closeTerminalSettings()
   } catch (error) {
     settingsPanel.error = errorMessageFrom(error)
@@ -465,6 +515,7 @@ function syncGitStatusForActiveProject(previousActiveProjectId = '') {
     gitStatus.value = null
     gitStatusLoading.value = false
     gitStatusError.value = ''
+    gitInitLoading.value = false
     return
   }
   if (!activeProject.value.available) {
@@ -472,6 +523,7 @@ function syncGitStatusForActiveProject(previousActiveProjectId = '') {
     gitStatus.value = { projectId: activeProject.value.id, isRepo: false, pathUnavailable: true }
     gitStatusLoading.value = false
     gitStatusError.value = ''
+    gitInitLoading.value = false
     return
   }
   if (activeProject.value.id !== previousActiveProjectId) {
@@ -507,6 +559,38 @@ async function refreshProjectGitStatus() {
       gitStatusLoading.value = false
     }
   }
+}
+
+async function initializeActiveProjectGitRepository() {
+  if (!showInitializeGitRepository.value || gitInitLoading.value) {
+    return
+  }
+  const projectId = activeProject.value.id
+  gitInitLoading.value = true
+  errorMessage.value = ''
+  try {
+    await InitializeProjectGitRepository(projectId)
+    if (activeProjectId.value === projectId) {
+      await refreshProjectGitStatus()
+    }
+  } catch (error) {
+    showError(error)
+  } finally {
+    if (activeProjectId.value === projectId) {
+      gitInitLoading.value = false
+    }
+  }
+}
+
+function statusChip(id, tone, text) {
+  return { id, tone, text }
+}
+
+function addCountChip(chips, id, count, label) {
+  if (!count) {
+    return
+  }
+  chips.push(statusChip(id, id === 'ahead' || id === 'behind' ? 'sync' : id, `${count} ${label}`))
 }
 
 function errorMessageFrom(error) {
@@ -626,7 +710,7 @@ function showError(error) {
 </script>
 
 <template>
-  <main class="app-shell">
+  <main class="app-shell" :data-theme="currentTheme">
     <ProjectSidebar
       :projects="projects"
       :terminals="terminals"
@@ -710,7 +794,28 @@ function showError(error) {
       </div>
 
       <footer class="status-bar">
-        <div class="status-item" data-testid="project-git-status">{{ projectGitStatusText }}</div>
+        <div class="status-item status-cluster" data-testid="project-git-status">
+          <span
+            v-for="chip in projectGitStatusChips"
+            :key="chip.id"
+            class="status-chip"
+            :class="`status-chip-${chip.tone}`"
+            :data-testid="`status-chip-${chip.id}`"
+          >
+            {{ chip.text }}
+          </span>
+          <button
+            v-if="showInitializeGitRepository"
+            type="button"
+            class="status-action"
+            data-testid="initialize-git-repository"
+            :disabled="gitInitLoading"
+            @click="initializeActiveProjectGitRepository"
+          >
+            <GitBranch :size="14" />
+            <span>{{ gitInitializeButtonText }}</span>
+          </button>
+        </div>
         <div v-if="errorMessage" class="status-error">{{ errorMessage }}</div>
       </footer>
     </section>
@@ -738,6 +843,30 @@ function showError(error) {
           <div v-if="terminalSettingsFallback" class="settings-field" data-testid="terminal-settings-fallback">
             <span class="settings-label">Fallback</span>
             <strong>{{ shellDisplay(terminalSettingsFallback) }}</strong>
+          </div>
+
+          <div class="settings-field" data-testid="appearance-theme-setting">
+            <span class="settings-label">Appearance</span>
+            <div class="theme-options">
+              <label class="theme-option">
+                <input
+                  v-model="settingsPanel.theme"
+                  type="radio"
+                  value="light"
+                  data-testid="appearance-theme-light"
+                />
+                <strong>Light</strong>
+              </label>
+              <label class="theme-option">
+                <input
+                  v-model="settingsPanel.theme"
+                  type="radio"
+                  value="dark"
+                  data-testid="appearance-theme-dark"
+                />
+                <strong>Dark</strong>
+              </label>
+            </div>
           </div>
 
           <label v-if="terminalSettingsDetected" class="settings-option" data-testid="terminal-settings-detected">
