@@ -63,6 +63,7 @@ const terminalManager = new TerminalSessionManager({
     writeText: ClipboardSetText
   },
   onCommandState: handleTerminalCommandState,
+  onTitleChange: handleTerminalTitleChange,
   onError: showError
 })
 
@@ -150,7 +151,10 @@ function applyState(state) {
     currentCommand:
       terminal.state === 'running'
         ? terminal.currentCommand || previousTerminals.get(terminal.id)?.currentCommand || ''
-        : ''
+        : '',
+    runtimeTitle: terminal.state === 'running' ? previousTerminals.get(terminal.id)?.runtimeTitle || '' : '',
+    idleTitle: terminal.state === 'running' ? previousTerminals.get(terminal.id)?.idleTitle || '' : '',
+    activityState: terminal.state === 'running' ? previousTerminals.get(terminal.id)?.activityState || 'idle' : 'idle'
   }))
   activeProjectId.value = state?.activeProjectId || ''
   activeTerminalId.value = state?.activeTerminalId || ''
@@ -438,6 +442,7 @@ function updateTerminalState(terminalId, state) {
     terminal.state = state
     if (state !== 'running') {
       terminal.currentCommand = ''
+      resetTerminalActivity(terminal)
     }
   }
 }
@@ -449,13 +454,77 @@ function handleTerminalCommandState(terminalId, event) {
   }
   if (event.type === 'command-start') {
     terminal.currentCommand = sanitizeCommandLabel(event.command)
+    resetTerminalActivity(terminal)
   }
   if (event.type === 'command-end') {
     terminal.currentCommand = ''
+    resetTerminalActivity(terminal)
     if (terminal.projectId === activeProjectId.value) {
       refreshProjectGitStatus()
     }
   }
+}
+
+function handleTerminalTitleChange(terminalId, title) {
+  const terminal = terminals.value.find((candidate) => candidate.id === terminalId)
+  if (!terminal) {
+    return
+  }
+  terminal.runtimeTitle = sanitizeCommandLabel(title)
+  terminal.activityState = classifyTerminalActivity(terminal, terminal.runtimeTitle)
+  if (terminal.activityState === 'idle' && terminal.runtimeTitle && !terminal.idleTitle) {
+    terminal.idleTitle = terminal.runtimeTitle
+  }
+}
+
+function classifyTerminalActivity(terminal, title) {
+  const normalizedTitle = normalizeActivityText(title)
+  if (!normalizedTitle) {
+    return 'idle'
+  }
+  if (normalizedTitle.includes('!')) {
+    return 'needs-input'
+  }
+  const stableLabel = normalizeActivityText(terminal.currentCommand || terminal.shellName || 'shell')
+  const idleTitle = normalizeActivityText(terminal.idleTitle)
+  if (!stableLabel || normalizedTitle === stableLabel || normalizedTitle === idleTitle) {
+    return 'idle'
+  }
+  if (hasBusyTitleSignal(normalizedTitle)) {
+    return 'busy'
+  }
+  if (titleLooksLikeStableProgramTitle(normalizedTitle, stableLabel)) {
+    return 'idle'
+  }
+  if (!idleTitle) {
+    return 'idle'
+  }
+  return 'busy'
+}
+
+function hasBusyTitleSignal(title) {
+  return /[|/\\⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏◐◓◑◒⣾⣽⣻⢿⡿⣟⣯⣷]/.test(title) ||
+    /\b(working|thinking|running|processing|executing|busy)\b/.test(title)
+}
+
+function titleLooksLikeStableProgramTitle(title, stableLabel) {
+  if (!stableLabel) {
+    return false
+  }
+  return title.startsWith(`${stableLabel} `) ||
+    title.startsWith(`${stableLabel} -`) ||
+    title.startsWith(`${stableLabel}:`) ||
+    title.startsWith(`${stableLabel}/`)
+}
+
+function normalizeActivityText(value) {
+  return (value || '').replace(/\s+/g, ' ').trim().toLowerCase()
+}
+
+function resetTerminalActivity(terminal) {
+  terminal.runtimeTitle = ''
+  terminal.idleTitle = ''
+  terminal.activityState = 'idle'
 }
 
 function sanitizeCommandLabel(command) {

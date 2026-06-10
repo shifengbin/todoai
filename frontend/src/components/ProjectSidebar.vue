@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
-import { ChevronDown, ChevronRight, FolderPlus, Plus, TerminalSquare, Trash2 } from '@lucide/vue'
+import { ChevronDown, ChevronRight, CircleAlert, FolderPlus, LoaderCircle, Plus, TerminalSquare, Trash2 } from '@lucide/vue'
 
 const props = defineProps({
   projects: {
@@ -99,6 +99,27 @@ function createTerminal(projectId) {
 
 function terminalDisplayName(terminal) {
   return terminal.currentCommand || terminal.shellName || 'shell'
+}
+
+function terminalActivityState(terminal) {
+  return terminal.activityState || 'idle'
+}
+
+function terminalActivityLabel(terminal) {
+  const state = terminalActivityState(terminal)
+  if (state === 'busy') {
+    return 'Running'
+  }
+  if (state === 'needs-input') {
+    return 'Needs input'
+  }
+  return 'Idle'
+}
+
+function terminalRowLabel(terminal) {
+  const activityLabel = terminalActivityLabel(terminal)
+  const displayName = terminalDisplayName(terminal)
+  return activityLabel === 'Idle' ? displayName : `${displayName} - ${activityLabel}`
 }
 
 watch(
@@ -221,10 +242,28 @@ watch(
             <button
               type="button"
               class="terminal-row"
-              :class="{ active: terminal.id === activeTerminalId, exited: terminal.state === 'exited' }"
+              :class="{
+                active: terminal.id === activeTerminalId,
+                exited: terminal.state === 'exited',
+                'activity-busy': terminal.activityState === 'busy',
+                'activity-needs-input': terminal.activityState === 'needs-input'
+              }"
+              :aria-label="terminalRowLabel(terminal)"
+              :title="terminalRowLabel(terminal)"
+              :data-activity-state="terminalActivityState(terminal)"
               :data-testid="`terminal-${terminal.id}`"
               @click="emit('select-terminal', terminal.id)"
             >
+              <span
+                class="terminal-activity"
+                :class="terminalActivityState(terminal)"
+                :data-testid="`terminal-activity-${terminal.id}`"
+                :aria-label="terminalActivityLabel(terminal)"
+                role="img"
+              >
+                <LoaderCircle v-if="terminalActivityState(terminal) === 'busy'" :size="13" aria-hidden="true" />
+                <CircleAlert v-else-if="terminalActivityState(terminal) === 'needs-input'" :size="13" aria-hidden="true" />
+              </span>
               <TerminalSquare class="terminal-icon" :size="15" />
               <span class="terminal-name">{{ terminalDisplayName(terminal) }}</span>
             </button>

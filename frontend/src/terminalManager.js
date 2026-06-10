@@ -5,7 +5,8 @@ export class TerminalSessionManager {
     resizeTerminal,
     clipboard = {},
     onError = () => {},
-    onCommandState = () => {}
+    onCommandState = () => {},
+    onTitleChange = () => {}
   }) {
     this.createSession = createSession
     this.sendInput = sendInput
@@ -13,6 +14,7 @@ export class TerminalSessionManager {
     this.clipboard = clipboard
     this.onError = onError
     this.onCommandState = onCommandState
+    this.onTitleChange = onTitleChange
     this.sessions = new Map()
     this.activeTerminalId = null
   }
@@ -29,6 +31,9 @@ export class TerminalSessionManager {
         },
         (event) => {
           this.onCommandState(terminalId, event)
+        },
+        (title) => {
+          this.onTitleChange(terminalId, title)
         }
       )
       session.opened = false

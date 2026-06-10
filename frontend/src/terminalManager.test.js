@@ -146,6 +146,23 @@ describe('TerminalSessionManager', () => {
       command: 'npm test'
     })
   })
+
+  it('forwards title-change events with the terminal id that owns the session', () => {
+    const onTitleChange = vi.fn()
+    const factory = createFakeTerminalFactory()
+    const manager = new TerminalSessionManager({
+      createSession: factory.createSession,
+      sendInput: vi.fn(),
+      resizeTerminal: vi.fn(),
+      onTitleChange
+    })
+
+    manager.activate('terminal-a', document.createElement('div'))
+    manager.activate('terminal-b', document.createElement('div'))
+    factory.sessions.get('terminal-a').emitTitleChange('! codex')
+
+    expect(onTitleChange).toHaveBeenCalledWith('terminal-a', '! codex')
+  })
 })
 
 function createFakeTerminalFactory() {
@@ -155,7 +172,7 @@ function createFakeTerminalFactory() {
   return {
     sessions,
     createdFor,
-    createSession(terminalId, onData, onShortcut, onCommandState) {
+    createSession(terminalId, onData, onShortcut, onCommandState, onTitleChange) {
       createdFor.push(terminalId)
       const terminal = {
         cols: 100,
@@ -192,6 +209,9 @@ function createFakeTerminalFactory() {
         fitAddon,
         emitCommandState(event) {
           onCommandState(event)
+        },
+        emitTitleChange(title) {
+          onTitleChange(title)
         }
       }
       sessions.set(terminalId, session)

@@ -2,7 +2,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 
-export function createXtermSession(terminalId, onData, onShortcut, onCommandState) {
+export function createXtermSession(terminalId, onData, onShortcut, onCommandState, onTitleChange) {
   const terminal = new Terminal({
     cursorBlink: true,
     fontFamily: '"Cascadia Mono", "JetBrains Mono", "SFMono-Regular", monospace',
@@ -35,6 +35,9 @@ export function createXtermSession(terminalId, onData, onShortcut, onCommandStat
   const fitAddon = new FitAddon()
   terminal.loadAddon(fitAddon)
   terminal.onData(onData)
+  terminal.onTitleChange?.((title) => {
+    onTitleChange?.(title)
+  })
   terminal.parser?.registerOscHandler?.(777, (data) => {
     const event = parseCommandStateOsc(data)
     if (!event) {

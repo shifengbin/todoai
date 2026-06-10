@@ -99,6 +99,60 @@ describe('ProjectSidebar', () => {
     expect(activeProjectNode.classList.contains('has-active-terminal')).toBe(true)
   })
 
+  it('shows a busy activity indicator without replacing the terminal label', () => {
+    const wrapper = mountSidebar({
+      props: {
+        terminals: [
+          {
+            id: 'terminal-a',
+            projectId: 'project-a',
+            shellName: 'zsh',
+            currentCommand: 'codex',
+            activityState: 'busy',
+            state: 'running'
+          }
+        ]
+      }
+    })
+
+    const terminalRow = wrapper.find('[data-testid="terminal-terminal-a"]')
+    const activity = wrapper.find('[data-testid="terminal-activity-terminal-a"]')
+    expect(terminalRow.text()).toContain('codex')
+    expect(terminalRow.classes()).toContain('activity-busy')
+    expect(terminalRow.attributes('data-activity-state')).toBe('busy')
+    expect(terminalRow.attributes('aria-label')).toContain('Running')
+    expect(activity.exists()).toBe(true)
+    expect(activity.classes()).toContain('busy')
+    expect(activity.attributes('aria-label')).toBe('Running')
+  })
+
+  it('shows a needs-input activity indicator without showing the busy state', () => {
+    const wrapper = mountSidebar({
+      props: {
+        terminals: [
+          {
+            id: 'terminal-a',
+            projectId: 'project-a',
+            shellName: 'zsh',
+            currentCommand: 'codex',
+            activityState: 'needs-input',
+            state: 'running'
+          }
+        ]
+      }
+    })
+
+    const terminalRow = wrapper.find('[data-testid="terminal-terminal-a"]')
+    const activity = wrapper.find('[data-testid="terminal-activity-terminal-a"]')
+    expect(terminalRow.text()).toContain('codex')
+    expect(terminalRow.classes()).toContain('activity-needs-input')
+    expect(terminalRow.classes()).not.toContain('activity-busy')
+    expect(terminalRow.attributes('data-activity-state')).toBe('needs-input')
+    expect(terminalRow.attributes('aria-label')).toContain('Needs input')
+    expect(activity.classes()).toContain('needs-input')
+    expect(activity.attributes('aria-label')).toBe('Needs input')
+  })
+
   it('keeps collapsed branch state independent per project', async () => {
     const wrapper = mountSidebar({
       props: {

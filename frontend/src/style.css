@@ -271,7 +271,7 @@ button {
     position: relative;
     display: grid;
     min-width: 0;
-    grid-template-columns: 20px minmax(0, 1fr);
+    grid-template-columns: 16px 20px minmax(0, 1fr);
     align-items: center;
     width: 100%;
     min-height: 30px;
@@ -312,6 +312,44 @@ button {
 
 .terminal-row.exited {
     color: #9a5b17;
+}
+
+.terminal-row.activity-busy {
+    color: #1c4f7a;
+}
+
+.terminal-row.activity-needs-input {
+    color: #7b4d21;
+}
+
+.terminal-activity {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    color: transparent;
+}
+
+.terminal-activity.busy {
+    color: #0f766e;
+}
+
+.terminal-activity.needs-input {
+    color: #9a5b17;
+}
+
+.terminal-activity.busy svg {
+    animation: terminal-activity-spin 1s linear infinite;
+}
+
+@keyframes terminal-activity-spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 .terminal-icon {

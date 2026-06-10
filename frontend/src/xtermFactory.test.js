@@ -17,6 +17,11 @@ vi.mock('@xterm/xterm', () => {
         this.dataHandler = handler
       }
 
+      onTitleChange(handler) {
+        this.titleHandler = handler
+        return { dispose() {} }
+      }
+
       attachCustomKeyEventHandler(handler) {
         this.keyHandler = handler
       }
@@ -93,6 +98,15 @@ describe('createXtermSession', () => {
     expect(onCommandState).toHaveBeenNthCalledWith(2, {
       type: 'command-end'
     })
+  })
+
+  it('emits terminal title changes from xterm title events', () => {
+    const onTitleChange = vi.fn()
+
+    createXtermSession('terminal-a', vi.fn(), vi.fn(), vi.fn(), onTitleChange)
+    terminalMock.lastTerminal.titleHandler('! codex')
+
+    expect(onTitleChange).toHaveBeenCalledWith('! codex')
   })
 })
 

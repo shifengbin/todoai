@@ -47,7 +47,7 @@ vi.mock('../wailsjs/go/main/App', () => appApiMock)
 vi.mock('../wailsjs/runtime/runtime', () => runtimeMock)
 vi.mock('./xtermFactory', () => {
   return {
-    createXtermSession(terminalId, onData, onShortcut, onCommandState) {
+    createXtermSession(terminalId, onData, onShortcut, onCommandState, onTitleChange) {
       const terminal = {
         cols: 100,
         rows: 32,
@@ -69,6 +69,7 @@ vi.mock('./xtermFactory', () => {
         onData,
         onShortcut,
         onCommandState,
+        onTitleChange,
         terminal
       }
       xtermMock.sessions.set(terminalId, session)
@@ -269,6 +270,138 @@ describe('App project terminal tree', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-testid="terminal-terminal-a"]').text()).toContain('npm run dev')
+  })
+
+  it('marks an interactive terminal busy from title changes without replacing the command label', async () => {
+    const wrapper = await mountReadyApp()
+
+    xtermMock.sessions.get('terminal-a').onCommandState({ type: 'command-start', command: 'codex' })
+    await nextTick()
+    xtermMock.sessions.get('terminal-a').onTitleChange('codex - alpha')
+    await nextTick()
+    xtermMock.sessions.get('terminal-a').onTitleChange('codex working')
+    await nextTick()
+
+    const terminalRow = wrapper.find('[data-testid="terminal-terminal-a"]')
+    expect(terminalRow.text()).toContain('codex')
+    expect(terminalRow.text()).not.toContain('codex working')
+    expect(terminalRow.attributes('data-activity-state')).toBe('busy')
+  })
+
+  it('keeps an interactive terminal idle when it receives the initial launch title', async () => {
+    const wrapper = await mountReadyApp()
+
+    xtermMock.sessions.get('terminal-a').onCommandState({ type: 'command-start', command: 'codex' })
+    await nextTick()
+    xtermMock.sessions.get('terminal-a').onTitleChange('codex - alpha')
+    await nextTick()
+
+    const terminalRow = wrapper.find('[data-testid="terminal-terminal-a"]')
+    expect(terminalRow.text()).toContain('codex')
+    expect(terminalRow.attributes('data-activity-state')).toBe('idle')
+  })
+
+  it('marks an interactive terminal as needing input from attention title changes', async () => {
+    const wrapper = await mountReadyApp()
+
+    xtermMock.sessions.get('terminal-a').onCommandState({ type: 'command-start', command: 'codex' })
+    await nextTick()
+    xtermMock.sessions.get('terminal-a').onTitleChange('! codex')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="terminal-terminal-a"]').attributes('data-activity-state')).toBe('needs-input')
+  })
+
+  it('restores idle activity when an interactive title returns to the command label', async () => {
+    const wrapper = await mountReadyApp()
+
+    xtermMock.sessions.get('terminal-a').onCommandState({ type: 'command-start', command: 'codex' })
+    await nextTick()
+    xtermMock.sessions.get('terminal-a').onTitleChange('codex - alpha')
+    await nextTick()
+    xtermMock.sessions.get('terminal-a').onTitleChange('codex working')
+    await nextTick()
+    xtermMock.sessions.get('terminal-a').onTitleChange('codex - alpha')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="terminal-terminal-a"]').attributes('data-activity-state')).toBe('idle')
+  })
+
+  it('clears interactive title activity when a shell command ends', async () => {
+    const wrapper = await mountReadyApp()
+
+    xtermMock.sessions.get('terminal-a').onCommandState({ type: 'command-start', command: 'codex' })
+    await nextTick()
+    xtermMock.sessions.get('terminal-a').onTitleChange('codex - alpha')
+    await nextTick()
+    xtermMock.sessions.get('terminal-a').onTitleChange('codex working')
+    await nextTick()
+    xtermMock.sessions.get('terminal-a').onCommandState({ type: 'command-end' })
+    await nextTick()
+
+    const terminalRow = wrapper.find('[data-testid="terminal-terminal-a"]')
+    expect(terminalRow.text()).toContain('zsh')
+    expect(terminalRow.attributes('data-activity-state')).toBe('idle')
+  })
+
+  it('preserves interactive title activity when switching terminals', async () => {
+    const twoTerminalState = projectState({
+      terminals: [terminal({ id: 'terminal-a' }), terminal({ id: 'terminal-b', shellName: 'bash' })]
+    })
+    appApiMock.ListProjects.mockResolvedValue(twoTerminalState)
+    appApiMock.SelectProject.mockResolvedValue(twoTerminalState)
+    appApiMock.SelectTerminal.mockResolvedValue(
+      projectState({
+        terminals: [terminal({ id: 'terminal-a' }), terminal({ id: 'terminal-b', shellName: 'bash' })],
+        activeTerminalId: 'terminal-b'
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    xtermMock.sessions.get('terminal-a').onCommandState({ type: 'command-start', command: 'codex' })
+    await nextTick()
+    xtermMock.sessions.get('terminal-a').onTitleChange('codex - alpha')
+    await nextTick()
+    xtermMock.sessions.get('terminal-a').onTitleChange('codex working')
+    await nextTick()
+    await wrapper.find('[data-testid="terminal-terminal-b"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="terminal-terminal-a"]').attributes('data-activity-state')).toBe('busy')
+  })
+
+  it('clears previous interactive title activity when a new shell command starts', async () => {
+    const wrapper = await mountReadyApp()
+
+    xtermMock.sessions.get('terminal-a').onCommandState({ type: 'command-start', command: 'codex' })
+    await nextTick()
+    xtermMock.sessions.get('terminal-a').onTitleChange('codex - alpha')
+    await nextTick()
+    xtermMock.sessions.get('terminal-a').onTitleChange('codex working')
+    await nextTick()
+    xtermMock.sessions.get('terminal-a').onCommandState({ type: 'command-start', command: 'npm test' })
+    await nextTick()
+
+    const terminalRow = wrapper.find('[data-testid="terminal-terminal-a"]')
+    expect(terminalRow.text()).toContain('npm test')
+    expect(terminalRow.attributes('data-activity-state')).toBe('idle')
+  })
+
+  it('clears interactive title activity when the shell exits', async () => {
+    const wrapper = await mountReadyApp()
+
+    xtermMock.sessions.get('terminal-a').onCommandState({ type: 'command-start', command: 'codex' })
+    await nextTick()
+    xtermMock.sessions.get('terminal-a').onTitleChange('codex - alpha')
+    await nextTick()
+    xtermMock.sessions.get('terminal-a').onTitleChange('codex working')
+    await nextTick()
+    runtimeMock.handlers['terminal-status']({ projectId: 'project-a', terminalId: 'terminal-a', state: 'exited' })
+    await nextTick()
+
+    const terminalRow = wrapper.find('[data-testid="terminal-terminal-a"]')
+    expect(terminalRow.text()).toContain('zsh')
+    expect(terminalRow.attributes('data-activity-state')).toBe('idle')
   })
 
   it('shows the active project git branch and changed file count', async () => {
