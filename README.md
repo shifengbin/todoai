@@ -6,7 +6,7 @@ TUI Helper 是一个 Wails 桌面应用，前端使用 Vue，后端使用 Go。�
 
 ## 平台支持
 
-TUI Helper 当前主要面向 Linux 桌面使用，并已增加 Windows 终端 shell 探测和终端设置解析支持。
+TUI Helper 支持 Linux 桌面，并为 Windows 10 1809+ 和 Windows 11 提供 ConPTY 嵌入式终端支持。
 
 在 Windows 上，后端会按以下顺序探测系统 shell：
 
@@ -16,7 +16,7 @@ TUI Helper 当前主要面向 Linux 桌面使用，并已增加 Windows 终端 s
 
 手动配置终端 shell 路径时，Windows 会按 Windows 可执行文件语义校验，支持 `.exe`、`.cmd`、`.bat`、`.com`，以及 `PATHEXT` 中声明的扩展名。类 Unix 系统继续使用 `$SHELL` 和已知 shell 路径，例如 `/bin/zsh`、`/bin/bash`、`/bin/sh`。
 
-注意：当前嵌入式 PTY 后端仍使用 `creack/pty`，该依赖不提供 Windows ConPTY 运行时。因此目前支持 Windows shell 探测和设置解析，但 Windows 上完整启动嵌入式终端仍需要后续增加 ConPTY 后端实现。
+嵌入式终端后端按平台实现：Linux/macOS 使用 `creack/pty`，Windows 使用 ConPTY。低于 Windows 10 1809、缺少 ConPTY API 或运行环境不支持 ConPTY 时，应用会显示稳定的 unsupported 状态，不会自动重复启动 shell。
 
 包元数据：
 

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"strconv"
@@ -10,7 +11,15 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/creack/pty"
 )
+
+func TestNormalizePtyStartErrorMapsUnsupportedBackend(t *testing.T) {
+	if err := normalizePtyStartError(pty.ErrUnsupported); !errors.Is(err, ErrEmbeddedShellUnsupported) {
+		t.Fatalf("normalizePtyStartError() = %v, want %v", err, ErrEmbeddedShellUnsupported)
+	}
+}
 
 func TestRealPtyProcessCloseTerminatesShellProcessTree(t *testing.T) {
 	shellPath, err := exec.LookPath("sh")

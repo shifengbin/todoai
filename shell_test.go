@@ -7,8 +7,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/creack/pty"
 )
 
 func TestShellSessionManagerCreatesDefaultTerminalInProjectDirectoryAndReusesIt(t *testing.T) {
@@ -482,12 +480,6 @@ func TestShellSessionManagerKeepsUnsupportedEmbeddedTerminal(t *testing.T) {
 	}
 }
 
-func TestNormalizePtyStartErrorMapsUnsupportedBackend(t *testing.T) {
-	if err := normalizePtyStartError(pty.ErrUnsupported); !errors.Is(err, ErrEmbeddedShellUnsupported) {
-		t.Fatalf("normalizePtyStartError() = %v, want %v", err, ErrEmbeddedShellUnsupported)
-	}
-}
-
 func TestShellSessionManagerDeletesRunningTerminalAndClosesProcess(t *testing.T) {
 	starter := newFakeShellStarter()
 	manager := NewShellSessionManager(
@@ -513,6 +505,26 @@ func TestShellSessionManagerDeletesRunningTerminalAndClosesProcess(t *testing.T)
 	}
 	if !starter.processes[0].closed {
 		t.Fatal("deleted running terminal process was not closed")
+	}
+}
+
+func TestShellSessionManagerShutdownClosesRunningProcess(t *testing.T) {
+	starter := newFakeShellStarter()
+	manager := NewShellSessionManager(
+		starter.Start,
+		ShellSessionCallbacks{},
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-a")),
+	)
+	project := Project{ID: "project-a", Path: t.TempDir(), Available: true}
+
+	if _, err := manager.CreateTerminal(project, TerminalSize{Cols: 80, Rows: 24}); err != nil {
+		t.Fatalf("CreateTerminal() error = %v", err)
+	}
+
+	manager.Shutdown()
+
+	if !starter.processes[0].closed {
+		t.Fatal("running terminal process was not closed")
 	}
 }
 
