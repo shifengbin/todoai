@@ -387,12 +387,15 @@ func TestProjectManagerChangesTodoWorkflowStatusManually(t *testing.T) {
 		t.Fatalf("Status = %q, want in-progress", state.Todos[0].Status)
 	}
 
-	state, err = manager.ChangeTodoStatus("todo-a", "not-started")
-	if err != nil {
-		t.Fatalf("ChangeTodoStatus(not-started) error = %v", err)
+	if _, err := manager.ChangeTodoStatus("todo-a", "not-started"); err == nil {
+		t.Fatal("ChangeTodoStatus(not-started) error = nil, want invalid status transition error")
 	}
-	if state.Todos[0].Status != "not-started" {
-		t.Fatalf("Status = %q, want not-started", state.Todos[0].Status)
+	state, err = manager.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if state.Todos[0].Status != "in-progress" {
+		t.Fatalf("Status after rejected transition = %q, want in-progress", state.Todos[0].Status)
 	}
 
 	if _, err := manager.ChangeTodoStatus("todo-a", "completed"); err == nil {
@@ -717,6 +720,13 @@ func TestProjectManagerArchivesTodoWithProjectSnapshots(t *testing.T) {
 		t.Fatalf("AssociateProjectWithTodo() error = %v", err)
 	}
 
+	if _, err := manager.CompleteTodo("todo-a"); err == nil {
+		t.Fatal("CompleteTodo(not-started) error = nil, want invalid status error")
+	}
+	if _, err := manager.ChangeTodoStatus("todo-a", "in-progress"); err != nil {
+		t.Fatalf("ChangeTodoStatus(in-progress) error = %v", err)
+	}
+
 	now = now.Add(time.Minute)
 	state, err := manager.CompleteTodo("todo-a")
 	if err != nil {
@@ -835,6 +845,9 @@ func TestProjectManagerDeleteProjectRemovesActiveTodoAssociationsButPreservesArc
 	}
 	if _, err := manager.AssociateProjectWithTodo("todo-archived", project.ID); err != nil {
 		t.Fatalf("AssociateProjectWithTodo(archived) error = %v", err)
+	}
+	if _, err := manager.ChangeTodoStatus("todo-archived", "in-progress"); err != nil {
+		t.Fatalf("ChangeTodoStatus(archived) error = %v", err)
 	}
 	if _, err := manager.CompleteTodo("todo-archived"); err != nil {
 		t.Fatalf("CompleteTodo() error = %v", err)

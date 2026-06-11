@@ -6,11 +6,13 @@ import ProjectSidebar from './ProjectSidebar.vue'
 
 describe('ProjectSidebar', () => {
   it('renders the TODO tree and emits TODO-scoped terminal actions', async () => {
-    const wrapper = mountSidebar({
+    const wrapper = mountInProgressSidebar({
       props: {
         launchProfiles: [{ name: 'codex', command: 'codex' }]
       }
     })
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
 
     expect(wrapper.find('[data-testid="workspace-tabs"]').classes()).toContain('tab-strip')
     expect(wrapper.find('[data-testid="sidebar-tab-todos"]').classes()).toContain('active')
@@ -96,10 +98,9 @@ describe('ProjectSidebar', () => {
 
     await wrapper.find('[data-testid="mark-todo-in-progress-todo-a"]').trigger('click')
     await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
-    await wrapper.find('[data-testid="mark-todo-not-started-todo-b"]').trigger('click')
 
     expect(wrapper.emitted('change-todo-status')[0]).toEqual(['todo-a', 'in-progress'])
-    expect(wrapper.emitted('change-todo-status')[1]).toEqual(['todo-b', 'not-started'])
+    expect(wrapper.find('[data-testid="mark-todo-not-started-todo-b"]').exists()).toBe(false)
   })
 
   it('groups TODO workflow tabs and item actions into single rows', () => {
@@ -124,7 +125,6 @@ describe('ProjectSidebar', () => {
       'mark-todo-in-progress-todo-a',
       'edit-todo-todo-a',
       'add-project-to-todo-todo-a',
-      'complete-todo-todo-a',
       'delete-todo-todo-a'
     ])
     expect(tabsRule).toContain('grid-template-columns: repeat(3, minmax(0, 1fr));')
@@ -653,7 +653,9 @@ describe('ProjectSidebar', () => {
   })
 
   it('opens TODO action confirmation popovers before emitting', async () => {
-    const wrapper = mountSidebar()
+    const wrapper = mountInProgressSidebar()
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
 
     await wrapper.find('[data-testid="complete-todo-todo-a"]').trigger('click')
     await nextTick()
@@ -670,7 +672,9 @@ describe('ProjectSidebar', () => {
   })
 
   it('confirms and cancels TODO action popovers', async () => {
-    const wrapper = mountSidebar()
+    const wrapper = mountInProgressSidebar()
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
 
     await wrapper.find('[data-testid="complete-todo-todo-a"]').trigger('click')
     await wrapper.find('[data-testid="cancel-complete-todo-todo-a"]').trigger('click')
@@ -693,11 +697,13 @@ describe('ProjectSidebar', () => {
   })
 
   it('closes TODO action popovers from outside clicks and other sidebar popovers', async () => {
-    const wrapper = mountSidebar({
+    const wrapper = mountInProgressSidebar({
       props: {
         launchProfiles: [{ name: 'codex', command: 'codex' }]
       }
     })
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
 
     await wrapper.find('[data-testid="delete-todo-todo-a"]').trigger('click')
     window.dispatchEvent(new MouseEvent('click'))
@@ -950,6 +956,25 @@ function mountSidebar(options = {}) {
       activeTodoProjectId: 'todo-project-a',
       activeTerminalId: 'terminal-a',
       launchProfiles: [],
+      ...(options.props || {})
+    }
+  })
+}
+
+function mountInProgressSidebar(options = {}) {
+  return mountSidebar({
+    ...options,
+    props: {
+      todos: [
+        { id: 'todo-a', title: '修复登录问题', status: 'in-progress' },
+        {
+          id: 'todo-completed',
+          title: '已完成任务',
+          status: 'completed',
+          completedAt: '2026-06-10T10:00:00Z',
+          projectSnapshots: [{ projectId: 'project-a', name: 'archived-alpha', path: '/work/archived-alpha' }]
+        }
+      ],
       ...(options.props || {})
     }
   })

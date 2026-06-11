@@ -75,6 +75,16 @@ func TestAppCreatesAndSelectsTodoProjectTerminals(t *testing.T) {
 		t.Fatal("ActiveTodoProjectID = empty, want associated todo project")
 	}
 
+	if _, err := app.CreateTodoTerminal(todoProjectID, 100, 32); err == nil {
+		t.Fatal("CreateTodoTerminal(not-started) error = nil, want invalid status error")
+	}
+	if len(starter.requests) != 0 {
+		t.Fatalf("shell start count after rejected terminal = %d, want 0", len(starter.requests))
+	}
+	state, err = app.ChangeTodoStatus(todoID, "in-progress")
+	if err != nil {
+		t.Fatalf("ChangeTodoStatus(in-progress) error = %v", err)
+	}
 	state, err = app.CreateTodoTerminal(todoProjectID, 100, 32)
 	if err != nil {
 		t.Fatalf("CreateTodoTerminal() error = %v", err)
@@ -251,6 +261,9 @@ func TestAppCompletesTodoAndClosesOnlyOwnedTerminals(t *testing.T) {
 		t.Fatalf("AddProjectToTodo(A) error = %v", err)
 	}
 	todoProjectAID := state.ActiveTodoProjectID
+	if _, err := app.ChangeTodoStatus(todoAID, "in-progress"); err != nil {
+		t.Fatalf("ChangeTodoStatus(A) error = %v", err)
+	}
 	if _, err := app.CreateTodoTerminal(todoProjectAID, 80, 24); err != nil {
 		t.Fatalf("CreateTodoTerminal(A) error = %v", err)
 	}
@@ -264,6 +277,9 @@ func TestAppCompletesTodoAndClosesOnlyOwnedTerminals(t *testing.T) {
 		t.Fatalf("AddProjectToTodo(B) error = %v", err)
 	}
 	todoProjectBID := state.ActiveTodoProjectID
+	if _, err := app.ChangeTodoStatus(todoBID, "in-progress"); err != nil {
+		t.Fatalf("ChangeTodoStatus(B) error = %v", err)
+	}
 	if _, err := app.CreateTodoTerminal(todoProjectBID, 80, 24); err != nil {
 		t.Fatalf("CreateTodoTerminal(B) error = %v", err)
 	}
@@ -314,6 +330,9 @@ func TestAppUpdateTodoRemovesProjectAndClosesOnlyThatTodoProjectTerminals(t *tes
 	todoAID := state.Todos[0].ID
 	todoProjectAProjectAID := state.TodoProjects[0].ID
 	todoProjectAProjectBID := state.TodoProjects[1].ID
+	if _, err := app.ChangeTodoStatus(todoAID, "in-progress"); err != nil {
+		t.Fatalf("ChangeTodoStatus(A) error = %v", err)
+	}
 	if _, err := app.CreateTodoTerminal(todoProjectAProjectAID, 80, 24); err != nil {
 		t.Fatalf("CreateTodoTerminal(A/projectA) error = %v", err)
 	}
@@ -324,7 +343,11 @@ func TestAppUpdateTodoRemovesProjectAndClosesOnlyThatTodoProjectTerminals(t *tes
 	if err != nil {
 		t.Fatalf("CreateTodo(B) error = %v", err)
 	}
+	todoBID := state.Todos[1].ID
 	todoProjectBProjectAID := state.TodoProjects[2].ID
+	if _, err := app.ChangeTodoStatus(todoBID, "in-progress"); err != nil {
+		t.Fatalf("ChangeTodoStatus(B) error = %v", err)
+	}
 	if _, err := app.CreateTodoTerminal(todoProjectBProjectAID, 80, 24); err != nil {
 		t.Fatalf("CreateTodoTerminal(B/projectA) error = %v", err)
 	}
@@ -1018,6 +1041,9 @@ func createTodoProjectForApp(t *testing.T, app *App, title string, projectID str
 	}
 	if state.ActiveTodoProjectID == "" {
 		t.Fatal("ActiveTodoProjectID = empty, want associated todo project")
+	}
+	if _, err := app.ChangeTodoStatus(todoID, "in-progress"); err != nil {
+		t.Fatalf("ChangeTodoStatus(%q) error = %v", todoID, err)
 	}
 	return todoID, state.ActiveTodoProjectID
 }

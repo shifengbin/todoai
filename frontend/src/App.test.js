@@ -131,7 +131,7 @@ describe('App project terminal tree', () => {
     appApiMock.SelectTodoProject.mockResolvedValue(projectState())
     appApiMock.SelectTerminal.mockResolvedValue(projectState())
     appApiMock.CreateTodoTerminal.mockResolvedValue(
-      projectState({
+      inProgressProjectState({
         terminals: [
           terminal({ id: 'terminal-a' }),
           terminal({ id: 'terminal-b', shellName: 'bash', state: 'running' })
@@ -242,8 +242,10 @@ describe('App project terminal tree', () => {
         ]
       })
     )
+    appApiMock.ListProjects.mockResolvedValue(inProgressProjectState())
     const wrapper = await mountReadyApp()
 
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
     await wrapper.find('[data-testid="add-terminal-todo-project-a"]').trigger('click')
     await nextTick()
 
@@ -256,8 +258,10 @@ describe('App project terminal tree', () => {
   })
 
   it('creates an additional terminal under the active project', async () => {
+    appApiMock.ListProjects.mockResolvedValue(inProgressProjectState())
     const wrapper = await mountReadyApp()
 
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
     await wrapper.find('[data-testid="add-terminal-todo-project-a"]').trigger('click')
     await wrapper.find('[data-testid="terminal-launch-option-todo-project-a-0"]').trigger('click')
     await flushPromises()
@@ -269,14 +273,16 @@ describe('App project terminal tree', () => {
 
   it('shows unsupported embedded terminal state without restarting the shell', async () => {
     appApiMock.CreateTodoTerminal.mockResolvedValue(
-      projectState({
+      inProgressProjectState({
         terminals: [terminal({ id: 'terminal-unsupported', state: 'unsupported' })],
         activeTerminalId: 'terminal-unsupported'
       })
     )
+    appApiMock.ListProjects.mockResolvedValue(inProgressProjectState())
     const wrapper = await mountReadyApp()
     StartShell.mockClear()
 
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
     await wrapper.find('[data-testid="add-terminal-todo-project-a"]').trigger('click')
     await wrapper.find('[data-testid="terminal-launch-option-todo-project-a-0"]').trigger('click')
     await flushPromises()
@@ -291,8 +297,10 @@ describe('App project terminal tree', () => {
     appApiMock.LoadTerminalSettings.mockResolvedValue(
       settingsState({ launchProfiles: [{ name: 'Codex GPT-5', command: 'codex --model gpt-5' }] })
     )
+    appApiMock.ListProjects.mockResolvedValue(inProgressProjectState())
     const wrapper = await mountReadyApp()
 
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
     await wrapper.find('[data-testid="add-terminal-todo-project-a"]').trigger('click')
     await wrapper.find('[data-testid="terminal-launch-option-todo-project-a-1"]').trigger('click')
     await flushPromises()
@@ -709,8 +717,10 @@ describe('App project terminal tree', () => {
   })
 
   it('completes a TODO and shows its completed snapshot', async () => {
+    appApiMock.ListProjects.mockResolvedValue(inProgressProjectState())
     const wrapper = await mountReadyApp()
 
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
     await wrapper.find('[data-testid="complete-todo-todo-a"]').trigger('click')
     await nextTick()
     expect(CompleteTodo).not.toHaveBeenCalled()
@@ -740,6 +750,34 @@ describe('App project terminal tree', () => {
     expect(window.confirm).not.toHaveBeenCalled()
     expect(DeleteTodo).not.toHaveBeenCalled()
     expect(wrapper.find('[data-testid="todo-todo-a"]').exists()).toBe(true)
+  })
+
+  it('shows only start and management actions for not-started TODOs', async () => {
+    appApiMock.ListProjects.mockResolvedValue(projectState({ todos: [todo({ status: 'not-started' })] }))
+    const wrapper = await mountReadyApp()
+
+    expect(wrapper.find('[data-testid="mark-todo-in-progress-todo-a"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="delete-todo-todo-a"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="edit-todo-todo-a"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="add-project-to-todo-todo-a"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="complete-todo-todo-a"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="mark-todo-not-started-todo-a"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="add-terminal-todo-project-a"]').exists()).toBe(false)
+  })
+
+  it('shows complete and terminal actions for in-progress TODOs', async () => {
+    appApiMock.ListProjects.mockResolvedValue(inProgressProjectState())
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+
+    expect(wrapper.find('[data-testid="complete-todo-todo-a"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="delete-todo-todo-a"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="edit-todo-todo-a"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="add-project-to-todo-todo-a"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="add-terminal-todo-project-a"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="mark-todo-not-started-todo-a"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="mark-todo-in-progress-todo-a"]').exists()).toBe(false)
   })
 
   it('changes TODO workflow status from the sidebar', async () => {
@@ -1650,6 +1688,13 @@ function projectState(overrides = {}) {
     activeTerminalId: 'terminal-a',
     ...overrides
   }
+}
+
+function inProgressProjectState(overrides = {}) {
+  return projectState({
+    todos: [todo({ status: 'in-progress' })],
+    ...overrides
+  })
 }
 
 function todo(overrides = {}) {

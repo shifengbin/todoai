@@ -15,7 +15,6 @@ import {
   LoaderCircle,
   Play,
   Plus,
-  RotateCcw,
   TerminalSquare,
   Trash2
 } from '@lucide/vue'
@@ -889,17 +888,6 @@ watch(
                 <Play :size="14" />
               </button>
               <button
-                v-else-if="todoWorkflowStatus(todo) === 'in-progress'"
-                type="button"
-                class="todo-action-button"
-                :data-testid="`mark-todo-not-started-${todo.id}`"
-                title="Mark not started"
-                aria-label="Mark TODO not started"
-                @click.stop="changeTodoStatus(todo.id, 'not-started')"
-              >
-                <RotateCcw :size="14" />
-              </button>
-              <button
                 type="button"
                 class="todo-action-button"
                 :data-testid="`edit-todo-${todo.id}`"
@@ -917,7 +905,7 @@ watch(
               >
                 <FolderPlus :size="14" />
               </button>
-              <div class="todo-action-confirm-control">
+              <div v-if="todoWorkflowStatus(todo) === 'in-progress'" class="todo-action-confirm-control">
                 <button
                   type="button"
                   class="todo-action-button"
@@ -1051,7 +1039,10 @@ watch(
                   </span>
                 </button>
 
-                <div v-if="projectForTodoProject(todoProject)?.available" class="terminal-launch-control">
+                <div
+                  v-if="todoWorkflowStatus(todo) === 'in-progress' && projectForTodoProject(todoProject)?.available"
+                  class="terminal-launch-control"
+                >
                   <button
                     type="button"
                     class="add-terminal-button"

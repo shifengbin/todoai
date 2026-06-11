@@ -528,7 +528,7 @@ func (manager *ProjectManager) CompleteTodo(todoID string) (ProjectState, error)
 	now := manager.now().UTC().Format(time.RFC3339)
 	todoIndex := -1
 	for index := range state.Todos {
-		if state.Todos[index].ID == todoID && isOpenTodoStatus(state.Todos[index].Status) {
+		if state.Todos[index].ID == todoID && state.Todos[index].Status == TodoStatusInProgress {
 			todoIndex = index
 			break
 		}
@@ -579,7 +579,7 @@ func (manager *ProjectManager) DeleteTodo(todoID string) (ProjectState, error) {
 
 func (manager *ProjectManager) ChangeTodoStatus(todoID string, status string) (ProjectState, error) {
 	status = strings.TrimSpace(status)
-	if !isOpenTodoStatus(status) {
+	if status != TodoStatusInProgress {
 		return ProjectState{}, errors.New("invalid todo status")
 	}
 
@@ -591,7 +591,10 @@ func (manager *ProjectManager) ChangeTodoStatus(todoID string, status string) (P
 		return ProjectState{}, err
 	}
 	for index := range state.Todos {
-		if state.Todos[index].ID == todoID && isOpenTodoStatus(state.Todos[index].Status) {
+		if state.Todos[index].ID == todoID {
+			if state.Todos[index].Status != TodoStatusNotStarted {
+				return ProjectState{}, errors.New("invalid todo status transition")
+			}
 			state.Todos[index].Status = status
 			if err := manager.saveLocked(state); err != nil {
 				return ProjectState{}, err

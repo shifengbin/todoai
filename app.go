@@ -183,6 +183,22 @@ func (a *App) CreateTerminal(projectID string, cols int, rows int) (ProjectState
 }
 
 func (a *App) CreateTodoTerminal(todoProjectID string, cols int, rows int) (ProjectState, error) {
+	currentState, err := a.projects.Load()
+	if err != nil {
+		return ProjectState{}, err
+	}
+	terminalTodoProject, ok := todoProjectByID(currentState.TodoProjects, todoProjectID)
+	if !ok {
+		return ProjectState{}, os.ErrNotExist
+	}
+	todo, ok := openTodoByID(currentState.Todos, terminalTodoProject.TodoID)
+	if !ok {
+		return ProjectState{}, os.ErrNotExist
+	}
+	if todo.Status != TodoStatusInProgress {
+		return ProjectState{}, fmt.Errorf("todo is not in progress")
+	}
+
 	state, todoProject, project, err := a.projects.SelectTodoProject(todoProjectID)
 	if err != nil {
 		return ProjectState{}, err
@@ -386,4 +402,13 @@ func projectByID(projects []Project, projectID string) (Project, bool) {
 		}
 	}
 	return Project{}, false
+}
+
+func todoProjectByID(todoProjects []TodoProject, todoProjectID string) (TodoProject, bool) {
+	for _, todoProject := range todoProjects {
+		if todoProject.ID == todoProjectID {
+			return todoProject, true
+		}
+	}
+	return TodoProject{}, false
 }

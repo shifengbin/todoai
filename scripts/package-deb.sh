@@ -2,7 +2,7 @@
 set -euo pipefail
 
 APP_NAME="tui-helper"
-VERSION="${VERSION:-0.1.6}"
+VERSION="${VERSION:-0.1.7}"
 ARCH="${ARCH:-amd64}"
 MAINTAINER="${MAINTAINER:-FengbinShi <shifengbin@jiandan100.cn>}"
 DESCRIPTION="Desktop project shell helper"
