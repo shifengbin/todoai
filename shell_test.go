@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/creack/pty"
 )
 
 func TestShellSessionManagerCreatesDefaultTerminalInProjectDirectoryAndReusesIt(t *testing.T) {
@@ -452,6 +454,37 @@ func TestShellSessionManagerSurfacesStartupErrorForWindowsShellPath(t *testing.T
 	}
 	if starter.requests[0].ShellPath == "/bin/sh" || starter.requests[0].ShellPath == "/bin/bash" {
 		t.Fatalf("ShellPath used Unix fallback %q", starter.requests[0].ShellPath)
+	}
+}
+
+func TestShellSessionManagerKeepsUnsupportedEmbeddedTerminal(t *testing.T) {
+	starter := newFailingShellStarter(ErrEmbeddedShellUnsupported)
+	manager := NewShellSessionManager(
+		starter.Start,
+		ShellSessionCallbacks{},
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-a")),
+	)
+	project := Project{ID: "project-a", Path: t.TempDir(), Available: true}
+
+	terminal, err := manager.CreateTerminal(project, TerminalSize{Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatalf("CreateTerminal() error = %v, want nil", err)
+	}
+	if terminal.State != ShellStateUnsupported {
+		t.Fatalf("State = %q, want %q", terminal.State, ShellStateUnsupported)
+	}
+	status := manager.Status(terminal.ID)
+	if status.State != ShellStateUnsupported {
+		t.Fatalf("Status.State = %q, want %q", status.State, ShellStateUnsupported)
+	}
+	if len(starter.requests) != 1 {
+		t.Fatalf("start count = %d, want 1", len(starter.requests))
+	}
+}
+
+func TestNormalizePtyStartErrorMapsUnsupportedBackend(t *testing.T) {
+	if err := normalizePtyStartError(pty.ErrUnsupported); !errors.Is(err, ErrEmbeddedShellUnsupported) {
+		t.Fatalf("normalizePtyStartError() = %v, want %v", err, ErrEmbeddedShellUnsupported)
 	}
 }
 

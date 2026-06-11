@@ -6,6 +6,7 @@ import { TerminalSessionManager } from './terminalManager'
 import { createXtermSession } from './xtermFactory'
 import {
   AddProjectsToTodo,
+  ChangeTodoStatus,
   CompleteTodo,
   CreateProjectFromDialog,
   CreateTodo,
@@ -47,6 +48,11 @@ const shellStatuses = reactive({})
 const terminalContainers = new Map()
 const errorMessage = ref('')
 let gitStatusRequestId = 0
+let gitStatusInFlightProjectId = ''
+let gitStatusInFlightRequestId = 0
+let lastFocusGitRefreshProjectId = ''
+let lastFocusGitRefreshAt = 0
+const focusGitRefreshDedupeMs = 500
 const terminalMenu = reactive({
   visible: false,
   terminalId: '',
@@ -168,12 +174,33 @@ const terminalLaunchProfiles = computed(() => {
   return defaultTerminalLaunchProfiles
 })
 
+const currentGitStatus = computed(() => {
+  if (!activeProject.value || gitStatus.value?.projectId !== activeProject.value.id) {
+    return null
+  }
+  return gitStatus.value
+})
+
+const displayedGitStatus = computed(() => {
+  if (!activeProject.value || !gitStatus.value) {
+    return null
+  }
+  if (gitStatusLoading.value && gitStatus.value.projectId !== activeProject.value.id) {
+    return null
+  }
+  return gitStatus.value
+})
+
 const projectGitStatusChips = computed(() => {
   if (!activeProject.value) {
     return [statusChip('neutral', 'neutral', 'No project')]
   }
-  if (!activeProject.value.available || gitStatus.value?.pathUnavailable) {
+  const status = displayedGitStatus.value
+  if (!activeProject.value.available || status?.pathUnavailable) {
     return [statusChip('warning', 'warning', 'Project path unavailable')]
+  }
+  if (status?.gitUnavailable) {
+    return [statusChip('git-unavailable', 'warning', '未安装 Git')]
   }
   if (gitStatusLoading.value) {
     return [statusChip('neutral', 'neutral', 'Loading git status')]
@@ -181,32 +208,34 @@ const projectGitStatusChips = computed(() => {
   if (gitStatusError.value) {
     return [statusChip('error', 'error', 'Git status unavailable')]
   }
-  if (gitStatus.value && !gitStatus.value.isRepo) {
+  if (status && !status.isRepo) {
     return [statusChip('warning', 'warning', 'Not a git repository')]
   }
-  if (gitStatus.value?.isRepo) {
-    const branch = gitStatus.value.branch || '(detached)'
+  if (status?.isRepo) {
+    const branch = status.branch || '(detached)'
     const chips = [
       statusChip('branch', 'branch', branch),
-      statusChip('changed', 'changed', `${gitStatus.value.changedCount || 0} changed`)
+      statusChip('changed', 'changed', `${status.changedCount || 0} changed`)
     ]
-    addCountChip(chips, 'staged', gitStatus.value.stagedCount, 'staged')
-    addCountChip(chips, 'unstaged', gitStatus.value.unstagedCount, 'unstaged')
-    addCountChip(chips, 'untracked', gitStatus.value.untrackedCount, 'untracked')
-    addCountChip(chips, 'ahead', gitStatus.value.ahead, 'ahead')
-    addCountChip(chips, 'behind', gitStatus.value.behind, 'behind')
+    addCountChip(chips, 'staged', status.stagedCount, 'staged')
+    addCountChip(chips, 'unstaged', status.unstagedCount, 'unstaged')
+    addCountChip(chips, 'untracked', status.untrackedCount, 'untracked')
+    addCountChip(chips, 'ahead', status.ahead, 'ahead')
+    addCountChip(chips, 'behind', status.behind, 'behind')
     return chips
   }
   return [statusChip('error', 'error', 'Git status unavailable')]
 })
 
 const showInitializeGitRepository = computed(() => {
+  const status = currentGitStatus.value
   return Boolean(
     activeProject.value &&
     activeProject.value.available &&
-    gitStatus.value &&
-    !gitStatus.value.pathUnavailable &&
-    !gitStatus.value.isRepo &&
+    status &&
+    !status.pathUnavailable &&
+    !status.gitUnavailable &&
+    !status.isRepo &&
     !gitStatusLoading.value &&
     !gitStatusError.value
   )
@@ -280,7 +309,7 @@ onMounted(async () => {
     updateTerminalState(status.terminalId, status.state)
   })
   window.addEventListener('resize', fitActiveTerminal)
-  window.addEventListener('focus', refreshProjectGitStatus)
+  window.addEventListener('focus', refreshProjectGitStatusOnFocus)
   window.addEventListener('click', closeTerminalMenu)
 
   try {
@@ -301,13 +330,13 @@ onBeforeUnmount(() => {
   EventsOff('terminal-output')
   EventsOff('terminal-status')
   window.removeEventListener('resize', fitActiveTerminal)
-  window.removeEventListener('focus', refreshProjectGitStatus)
+  window.removeEventListener('focus', refreshProjectGitStatusOnFocus)
   window.removeEventListener('click', closeTerminalMenu)
   window.removeEventListener('mousemove', resizeSidebar)
   window.removeEventListener('mouseup', stopSidebarResize)
 })
 
-function applyState(state) {
+function applyState(state, options = {}) {
   const previousActiveProjectId = activeProjectId.value
   const previousTerminals = new Map(terminals.value.map((terminal) => [terminal.id, terminal]))
   projects.value = state?.projects || []
@@ -343,7 +372,11 @@ function applyState(state) {
     }
   }
   closeTerminalMenu()
-  syncGitStatusForActiveProject(previousActiveProjectId)
+  syncGitStatusForActiveProject(previousActiveProjectId, {
+    refresh: options.refreshGitStatus !== false,
+    dedupePending: options.dedupeGitStatus === true,
+    force: options.forceGitStatusRefresh === true
+  })
 }
 
 async function createProject() {
@@ -356,7 +389,7 @@ async function createProject() {
 
 async function importProjectsFromParentDirectory() {
   try {
-    applyState(await ImportProjectsFromParentDirectoryDialog())
+    applyState(await ImportProjectsFromParentDirectoryDialog(), { refreshGitStatus: false })
   } catch (error) {
     showError(error)
   }
@@ -548,7 +581,7 @@ function removeTodoFormProject(projectId) {
 
 async function selectTodoProject(todoProjectId) {
   try {
-    applyState(await SelectTodoProject(todoProjectId))
+    applyState(await SelectTodoProject(todoProjectId), { dedupeGitStatus: true, forceGitStatusRefresh: true })
     await activateActiveTerminal()
   } catch (error) {
     showError(error)
@@ -599,6 +632,15 @@ async function completeTodo(todoId) {
 async function deleteTodo(todoId) {
   try {
     applyState(await DeleteTodo(todoId))
+    await activateActiveTerminal()
+  } catch (error) {
+    showError(error)
+  }
+}
+
+async function changeTodoStatus(todoId, status) {
+  try {
+    applyState(await ChangeTodoStatus(todoId, status))
     await activateActiveTerminal()
   } catch (error) {
     showError(error)
@@ -854,9 +896,11 @@ function shellDisplay(shell) {
   return `${shell.displayName || 'shell'} ${shell.path || ''}`.trim()
 }
 
-function syncGitStatusForActiveProject(previousActiveProjectId = '') {
+function syncGitStatusForActiveProject(previousActiveProjectId = '', options = {}) {
   if (!activeProject.value) {
     gitStatusRequestId += 1
+    gitStatusInFlightProjectId = ''
+    gitStatusInFlightRequestId = 0
     gitStatus.value = null
     gitStatusLoading.value = false
     gitStatusError.value = ''
@@ -865,26 +909,33 @@ function syncGitStatusForActiveProject(previousActiveProjectId = '') {
   }
   if (!activeProject.value.available) {
     gitStatusRequestId += 1
+    gitStatusInFlightProjectId = ''
+    gitStatusInFlightRequestId = 0
     gitStatus.value = { projectId: activeProject.value.id, isRepo: false, pathUnavailable: true }
     gitStatusLoading.value = false
     gitStatusError.value = ''
     gitInitLoading.value = false
     return
   }
-  if (activeProject.value.id !== previousActiveProjectId) {
-    refreshProjectGitStatus()
+  if (options.refresh !== false && (options.force === true || activeProject.value.id !== previousActiveProjectId)) {
+    refreshProjectGitStatus({ dedupePending: options.dedupePending === true })
   }
 }
 
-async function refreshProjectGitStatus() {
+async function refreshProjectGitStatus(options = {}) {
   const project = activeProject.value
   if (!project || !project.available) {
     syncGitStatusForActiveProject(activeProjectId.value)
     return
   }
+  if (options.dedupePending === true && gitStatusInFlightProjectId === project.id) {
+    return
+  }
   const requestId = gitStatusRequestId + 1
   gitStatusRequestId = requestId
   const projectId = project.id
+  gitStatusInFlightProjectId = projectId
+  gitStatusInFlightRequestId = requestId
   gitStatusLoading.value = true
   gitStatusError.value = ''
   try {
@@ -900,10 +951,37 @@ async function refreshProjectGitStatus() {
     gitStatus.value = null
     gitStatusError.value = errorMessageFrom(error)
   } finally {
+    if (gitStatusInFlightProjectId === projectId && gitStatusInFlightRequestId === requestId) {
+      gitStatusInFlightProjectId = ''
+      gitStatusInFlightRequestId = 0
+    }
     if (requestId === gitStatusRequestId) {
       gitStatusLoading.value = false
     }
   }
+}
+
+function refreshProjectGitStatusOnFocus() {
+  const project = activeProject.value
+  const now = Date.now()
+  if (
+    project &&
+    lastFocusGitRefreshProjectId === project.id &&
+    now - lastFocusGitRefreshAt < focusGitRefreshDedupeMs
+  ) {
+    return
+  }
+  lastFocusGitRefreshProjectId = project?.id || ''
+  lastFocusGitRefreshAt = now
+  refreshProjectGitStatus({ dedupePending: true })
+}
+
+function handleTodoExpanded(todoId) {
+  const todoProject = activeTodoProject.value
+  if (!todoProject || todoProject.todoId !== todoId) {
+    return
+  }
+  refreshProjectGitStatus({ dedupePending: true })
 }
 
 async function initializeActiveProjectGitRepository() {
@@ -1135,7 +1213,9 @@ function showError(error) {
       @edit-todo="editTodo"
       @add-project-to-todo="addProjectToTodo"
       @select-todo-project="selectTodoProject"
+      @todo-expanded="handleTodoExpanded"
       @remove-todo-project="removeTodoProject"
+      @change-todo-status="changeTodoStatus"
       @complete-todo="completeTodo"
       @delete-todo="deleteTodo"
       @create-terminal="createTerminal"
@@ -1189,7 +1269,7 @@ function showError(error) {
         </div>
       </header>
 
-      <div class="terminal-surface">
+      <div class="terminal-surface" data-testid="terminal-surface">
         <div
           v-for="terminal in terminals"
           :key="terminal.id"
@@ -1223,6 +1303,9 @@ function showError(error) {
         <div v-if="!activeTodoProject || !activeTodoProjectProject" class="state-layer">Select a TODO project</div>
         <div v-else-if="!activeTodoProjectProject.available" class="state-layer warning">Project path unavailable</div>
         <div v-else-if="!activeTerminal" class="state-layer">Select a terminal</div>
+        <div v-else-if="activeTerminalState === 'unsupported'" class="state-layer warning">
+          Embedded terminal is not supported on Windows
+        </div>
         <div v-else-if="activeTerminalState === 'exited'" class="state-layer warning">Shell exited</div>
       </div>
 

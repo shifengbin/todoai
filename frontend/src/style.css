@@ -292,6 +292,13 @@ button {
     background: transparent;
 }
 
+.todo-view-tab {
+    overflow: hidden;
+    padding: 0 8px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .sidebar-tab:hover,
 .todo-view-tab:hover {
     color: var(--accent);
@@ -349,7 +356,7 @@ button {
 
 .todo-view-tabs {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 6px;
     margin-bottom: 8px;
 }
@@ -446,12 +453,16 @@ button {
 .todo-header-row {
     display: grid;
     min-width: 0;
-    grid-template-columns: 24px minmax(0, 1fr) 30px 30px 30px 30px;
-    align-items: stretch;
+    grid-template-columns: 24px minmax(0, 1fr) auto;
+    align-items: center;
     gap: 4px;
     padding: 4px;
     border: 1px solid transparent;
     background: var(--surface-bg);
+}
+
+.todo-header-row > .branch-toggle {
+    min-height: 36px;
 }
 
 .todo-row {
@@ -459,7 +470,7 @@ button {
     min-width: 0;
     grid-template-columns: 22px minmax(0, 1fr);
     align-items: start;
-    min-height: 44px;
+    min-height: 36px;
     gap: 8px;
     padding: 4px;
     border: 0;
@@ -501,9 +512,13 @@ button {
 .todo-title-line {
     display: grid;
     min-width: 0;
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
     gap: 6px;
+}
+
+.todo-activity {
+    justify-self: end;
 }
 
 .todo-priority-badge {
@@ -540,6 +555,16 @@ button {
     white-space: nowrap;
 }
 
+.todo-actions {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    gap: 2px;
+    justify-self: end;
+    min-width: max-content;
+}
+
 .todo-action-button {
     display: inline-flex;
     align-items: center;
@@ -552,6 +577,13 @@ button {
     cursor: pointer;
 }
 
+.todo-actions .todo-action-button,
+.todo-actions .delete-project-button {
+    width: 26px;
+    height: 30px;
+    min-height: 30px;
+}
+
 .todo-action-button:hover {
     background: var(--accent-soft);
     color: var(--accent);
@@ -561,6 +593,15 @@ button {
     position: relative;
     width: 30px;
     min-height: 52px;
+}
+
+.todo-actions .todo-action-confirm-control {
+    width: 26px;
+    min-height: 30px;
+}
+
+.todo-actions .todo-action-popover {
+    top: 34px;
 }
 
 .todo-action-popover {

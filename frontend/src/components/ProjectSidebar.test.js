@@ -51,6 +51,112 @@ describe('ProjectSidebar', () => {
     expect(wrapper.emitted('delete-todo')[0]).toEqual(['todo-a'])
   })
 
+  it('shows TODOs in not-started, in-progress, and completed views', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        todos: [
+          { id: 'todo-not-started', title: '整理文档', status: 'not-started', createdAt: '2026-06-10T09:00:00Z' },
+          { id: 'todo-in-progress', title: '修复登录问题', status: 'in-progress', createdAt: '2026-06-10T10:00:00Z' },
+          { id: 'todo-completed', title: '已完成任务', status: 'completed', completedAt: '2026-06-10T11:00:00Z' },
+          { id: 'todo-deleted', title: '已删除任务', status: 'deleted', archivedReason: 'deleted' }
+        ],
+        todoProjects: [],
+        terminals: [],
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      }
+    })
+
+    expect(wrapper.find('[data-testid="todo-view-not-started"]').classes()).toContain('active')
+    expect(visibleTodoTitles(wrapper, 'not-started-todos')).toEqual(['整理文档'])
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+    expect(visibleTodoTitles(wrapper, 'in-progress-todos')).toEqual(['修复登录问题'])
+
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
+    expect(completedTodoTitles(wrapper)).toEqual(['已完成任务'])
+    expect(wrapper.find('[data-testid="completed-todos"]').text()).not.toContain('已删除任务')
+  })
+
+  it('emits manual TODO status changes from TODO rows', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        todos: [
+          { id: 'todo-a', title: '修复登录问题', status: 'not-started' },
+          { id: 'todo-b', title: '升级依赖', status: 'in-progress' }
+        ],
+        todoProjects: [],
+        terminals: [],
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      }
+    })
+
+    await wrapper.find('[data-testid="mark-todo-in-progress-todo-a"]').trigger('click')
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+    await wrapper.find('[data-testid="mark-todo-not-started-todo-b"]').trigger('click')
+
+    expect(wrapper.emitted('change-todo-status')[0]).toEqual(['todo-a', 'in-progress'])
+    expect(wrapper.emitted('change-todo-status')[1]).toEqual(['todo-b', 'not-started'])
+  })
+
+  it('groups TODO workflow tabs and item actions into single rows', () => {
+    const wrapper = mountSidebar()
+    const workflowTabs = wrapper.find('[data-testid="todo-workflow-tabs"]')
+    const actionGroup = wrapper.find('[data-testid="todo-actions-todo-a"]')
+    const styles = readFileSync('src/style.css', 'utf8')
+    const tabsRule = styles.slice(styles.indexOf('.todo-view-tabs {'), styles.indexOf('.todo-tree-toolbar'))
+    const actionsRule = styles.slice(styles.indexOf('.todo-actions {'), styles.indexOf('.todo-action-button'))
+
+    expect(workflowTabs.exists()).toBe(true)
+    expect(Array.from(workflowTabs.element.children).map((node) => node.getAttribute('data-testid'))).toEqual([
+      'todo-view-not-started',
+      'todo-view-in-progress',
+      'todo-view-completed'
+    ])
+    expect(actionGroup.exists()).toBe(true)
+    const actionTestIds = Array.from(actionGroup.element.children).map((node) => {
+      return node.getAttribute('data-testid') || node.querySelector('[data-testid]')?.getAttribute('data-testid')
+    })
+    expect(actionTestIds).toEqual([
+      'mark-todo-in-progress-todo-a',
+      'edit-todo-todo-a',
+      'add-project-to-todo-todo-a',
+      'complete-todo-todo-a',
+      'delete-todo-todo-a'
+    ])
+    expect(tabsRule).toContain('grid-template-columns: repeat(3, minmax(0, 1fr));')
+    expect(actionsRule).toContain('display: inline-flex;')
+    expect(actionsRule).toContain('flex-wrap: nowrap;')
+  })
+
+  it('collapses only TODO branches in the current open status view', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        todos: [
+          { id: 'todo-not-started', title: '整理文档', status: 'not-started' },
+          { id: 'todo-in-progress', title: '修复登录问题', status: 'in-progress' }
+        ],
+        todoProjects: [
+          { id: 'todo-project-not-started', todoId: 'todo-not-started', projectId: 'project-a' },
+          { id: 'todo-project-in-progress', todoId: 'todo-in-progress', projectId: 'project-a' }
+        ],
+        terminals: [],
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      }
+    })
+
+    await wrapper.find('[data-testid="collapse-all-todos"]').trigger('click')
+    expect(wrapper.find('[data-testid="todo-project-list-todo-not-started"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+    expect(wrapper.find('[data-testid="todo-project-list-todo-in-progress"]').exists()).toBe(true)
+  })
+
   it('shows project library management without terminal actions', async () => {
     const wrapper = mountSidebar()
 
@@ -155,6 +261,17 @@ describe('ProjectSidebar', () => {
     expect(wrapper.find('[data-testid="toggle-todo-todo-a"]').attributes('aria-expanded')).toBe('true')
   })
 
+  it('emits todo-expanded only when a collapsed TODO branch expands', async () => {
+    const wrapper = mountSidebar()
+
+    await wrapper.find('[data-testid="toggle-todo-todo-a"]').trigger('click')
+    expect(wrapper.emitted('todo-expanded')).toBeUndefined()
+
+    await wrapper.find('[data-testid="toggle-todo-todo-a"]').trigger('click')
+
+    expect(wrapper.emitted('todo-expanded')).toEqual([['todo-a']])
+  })
+
   it('collapses all active TODO branches from the active list toolbar', async () => {
     const wrapper = mountSidebar({
       props: multiTodoProps()
@@ -195,11 +312,10 @@ describe('ProjectSidebar', () => {
       props: {
         todos: [
           {
-            id: 'todo-archived',
+            id: 'todo-completed',
             title: '已完成任务',
-            status: 'archived',
-            archivedReason: 'completed',
-            archivedAt: '2026-06-10T10:00:00Z'
+            status: 'completed',
+            completedAt: '2026-06-10T10:00:00Z'
           }
         ],
         todoProjects: [],
@@ -214,12 +330,12 @@ describe('ProjectSidebar', () => {
     expect(wrapper.find('[data-testid="expand-all-todos"]').attributes('disabled')).toBeDefined()
   })
 
-  it('shows archived TODO snapshots without terminal launch controls', async () => {
+  it('shows completed TODO snapshots without terminal launch controls', async () => {
     const wrapper = mountSidebar()
 
-    await wrapper.find('[data-testid="todo-view-archived"]').trigger('click')
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
 
-    expect(wrapper.find('[data-testid="archived-todos"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="completed-todos"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('已完成任务')
     expect(wrapper.text()).toContain('completed')
     expect(wrapper.text()).toContain('/work/archived-alpha')
@@ -251,6 +367,102 @@ describe('ProjectSidebar', () => {
     expect(terminalRow.attributes('data-activity-state')).toBe('needs-input')
     expect(terminalRow.attributes('aria-label')).toContain('Needs input')
     expect(activity.classes()).toContain('needs-input')
+  })
+
+  it('shows hidden terminal activity on a collapsed TODO', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        terminals: [
+          {
+            id: 'terminal-a',
+            projectId: 'project-a',
+            todoId: 'todo-a',
+            todoProjectId: 'todo-project-a',
+            shellName: 'zsh',
+            currentCommand: 'codex',
+            activityState: 'needs-input',
+            state: 'running'
+          }
+        ]
+      }
+    })
+
+    await wrapper.find('[data-testid="toggle-todo-todo-a"]').trigger('click')
+
+    const todoRow = wrapper.find('[data-testid="todo-todo-a"]')
+    const activity = wrapper.find('[data-testid="todo-activity-todo-a"]')
+    expect(todoRow.attributes('data-activity-state')).toBe('needs-input')
+    expect(activity.classes()).toContain('needs-input')
+    expect(activity.attributes('aria-label')).toBe('Needs input')
+  })
+
+  it('prioritizes needs input over busy for a collapsed TODO', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        terminals: [
+          {
+            id: 'terminal-busy',
+            projectId: 'project-a',
+            todoId: 'todo-a',
+            todoProjectId: 'todo-project-a',
+            shellName: 'zsh',
+            activityState: 'busy',
+            state: 'running'
+          },
+          {
+            id: 'terminal-needs-input',
+            projectId: 'project-a',
+            todoId: 'todo-a',
+            todoProjectId: 'todo-project-a',
+            shellName: 'zsh',
+            activityState: 'needs-input',
+            state: 'running'
+          }
+        ]
+      }
+    })
+
+    await wrapper.find('[data-testid="toggle-todo-todo-a"]').trigger('click')
+
+    expect(wrapper.find('[data-testid="todo-todo-a"]').attributes('data-activity-state')).toBe('needs-input')
+    expect(wrapper.find('[data-testid="todo-activity-todo-a"]').classes()).toContain('needs-input')
+  })
+
+  it('shows activity on terminal rows instead of the parent TODO while expanded', () => {
+    const wrapper = mountSidebar({
+      props: {
+        terminals: [
+          {
+            id: 'terminal-a',
+            projectId: 'project-a',
+            todoId: 'todo-a',
+            todoProjectId: 'todo-project-a',
+            shellName: 'zsh',
+            activityState: 'busy',
+            state: 'running'
+          }
+        ]
+      }
+    })
+
+    expect(wrapper.find('[data-testid="todo-activity-todo-a"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="todo-todo-a"]').attributes('data-activity-state')).toBeUndefined()
+    expect(wrapper.find('[data-testid="terminal-terminal-a"]').attributes('data-activity-state')).toBe('busy')
+  })
+
+  it('does not label a collapsed TODO without terminals as idle', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        terminals: []
+      }
+    })
+
+    await wrapper.find('[data-testid="toggle-todo-todo-a"]').trigger('click')
+
+    const todoRow = wrapper.find('[data-testid="todo-todo-a"]')
+    expect(todoRow.attributes('data-activity-state')).toBeUndefined()
+    expect(todoRow.attributes('title')).toBeUndefined()
+    expect(wrapper.find('[data-testid="todo-activity-todo-a"]').exists()).toBe(false)
   })
 
   it('renders TODO description and priority styling', () => {
@@ -394,7 +606,7 @@ describe('ProjectSidebar', () => {
     expect(activeTodoTitles(wrapper)).toEqual(['整理文档', '修复登录问题'])
   })
 
-  it('keeps archived TODOs in their existing order', async () => {
+  it('keeps completed TODOs in their existing order', async () => {
     const wrapper = mountSidebar({
       props: {
         todos: [
@@ -416,15 +628,15 @@ describe('ProjectSidebar', () => {
             id: 'todo-archived-low',
             title: '旧的低优先级归档',
             priority: 'low',
-            status: 'archived',
-            archivedAt: '2026-06-10T12:00:00Z'
+            status: 'completed',
+            completedAt: '2026-06-10T12:00:00Z'
           },
           {
             id: 'todo-archived-high',
             title: '旧的高优先级归档',
             priority: 'high',
-            status: 'archived',
-            archivedAt: '2026-06-10T11:00:00Z'
+            status: 'completed',
+            completedAt: '2026-06-10T11:00:00Z'
           }
         ],
         todoProjects: [],
@@ -435,9 +647,9 @@ describe('ProjectSidebar', () => {
       }
     })
 
-    await wrapper.find('[data-testid="todo-view-archived"]').trigger('click')
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
 
-    expect(archivedTodoTitles(wrapper)).toEqual(['旧的低优先级归档', '旧的高优先级归档'])
+    expect(completedTodoTitles(wrapper)).toEqual(['旧的低优先级归档', '旧的高优先级归档'])
   })
 
   it('opens TODO action confirmation popovers before emitting', async () => {
@@ -688,15 +900,22 @@ function multiTodoProps() {
 
 function activeTodoTitles(wrapper) {
   return wrapper
-    .find('[data-testid="active-todos"]')
+    .find('[data-testid="not-started-todos"]')
     .findAll('.todo-row .project-name')
     .map((node) => node.text())
 }
 
-function archivedTodoTitles(wrapper) {
+function visibleTodoTitles(wrapper, listTestId) {
   return wrapper
-    .find('[data-testid="archived-todos"]')
-    .findAll('.archived-todo-title span')
+    .find(`[data-testid="${listTestId}"]`)
+    .findAll('.todo-row .project-name')
+    .map((node) => node.text())
+}
+
+function completedTodoTitles(wrapper) {
+  return wrapper
+    .find('[data-testid="completed-todos"]')
+    .findAll('.completed-todo-title span')
     .map((node) => node.text())
 }
 
@@ -707,11 +926,10 @@ function mountSidebar(options = {}) {
       todos: [
         { id: 'todo-a', title: '修复登录问题', status: 'active' },
         {
-          id: 'todo-archived',
+          id: 'todo-completed',
           title: '已完成任务',
-          status: 'archived',
-          archivedReason: 'completed',
-          archivedAt: '2026-06-10T10:00:00Z',
+          status: 'completed',
+          completedAt: '2026-06-10T10:00:00Z',
           projectSnapshots: [{ projectId: 'project-a', name: 'archived-alpha', path: '/work/archived-alpha' }]
         }
       ],

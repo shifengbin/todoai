@@ -261,6 +261,14 @@ func (a *App) DeleteTodo(todoID string) (ProjectState, error) {
 	return a.withShellState(state), nil
 }
 
+func (a *App) ChangeTodoStatus(todoID string, status string) (ProjectState, error) {
+	state, err := a.projects.ChangeTodoStatus(todoID, status)
+	if err != nil {
+		return ProjectState{}, err
+	}
+	return a.withShellState(state), nil
+}
+
 func (a *App) StartShell(terminalID string, cols int, rows int) (ShellStatus, error) {
 	return a.shells.StartTerminal(terminalID, normalizeTerminalSize(cols, rows))
 }

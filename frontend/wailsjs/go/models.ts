@@ -29,6 +29,7 @@ export namespace main {
 	    ahead: number;
 	    behind: number;
 	    pathUnavailable?: boolean;
+	    gitUnavailable?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new GitStatus(source);
@@ -46,6 +47,7 @@ export namespace main {
 	        this.ahead = source["ahead"];
 	        this.behind = source["behind"];
 	        this.pathUnavailable = source["pathUnavailable"];
+	        this.gitUnavailable = source["gitUnavailable"];
 	    }
 	}
 	export class Project {

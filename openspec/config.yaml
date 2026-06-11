@@ -9,6 +9,7 @@ rules:
   tasks:
     - 要有自动review任务, 以确保代码质量和规范
     - 客户端要进行自动化测试任务
+    - 最后一个任务要添加wails打包任务, 以生成可执行文件
 
 # Project context (optional)
 # This is shown to AI when creating artifacts.

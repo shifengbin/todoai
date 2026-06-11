@@ -13,7 +13,9 @@ import {
   ListChevronsUpDown,
   ListTodo,
   LoaderCircle,
+  Play,
   Plus,
+  RotateCcw,
   TerminalSquare,
   Trash2
 } from '@lucide/vue'
@@ -72,17 +74,20 @@ const emit = defineEmits([
   'add-project-to-todo',
   'select-todo-project',
   'remove-todo-project',
+  'change-todo-status',
   'complete-todo',
   'delete-todo',
   'create-terminal',
   'select-terminal',
-  'delete-terminal'
+  'delete-terminal',
+  'todo-expanded'
 ])
 
 const activeTab = ref('todos')
-const todoView = ref('active')
+const todoView = ref('not-started')
 const activeTodoSortMode = ref('priority')
 const collapsedTodoIds = ref(new Set())
+const knownTodoIds = ref(new Set(props.todos.map((todo) => todo.id)))
 const openLaunchTodoProjectId = ref('')
 const confirmRemoveTodoProjectId = ref('')
 const todoActionConfirm = ref({ todoId: '', action: '' })
@@ -108,18 +113,32 @@ const todoPriorityOrder = {
   low: 2
 }
 
-const activeTodos = computed(() =>
-  props.todos
-    .map((todo, index) => ({ todo, index }))
-    .filter(({ todo }) => todo.status === 'active')
-    .sort(compareActiveTodoEntries)
-    .map(({ todo }) => todo)
-)
-const archivedTodos = computed(() => props.todos.filter((todo) => todo.status !== 'active'))
-const activeTodoIds = computed(() => activeTodos.value.map((todo) => todo.id))
+const notStartedTodos = computed(() => sortedOpenTodos('not-started'))
+const inProgressTodos = computed(() => sortedOpenTodos('in-progress'))
+const completedTodos = computed(() => props.todos.filter((todo) => todoWorkflowStatus(todo) === 'completed'))
+const currentOpenTodos = computed(() => (todoView.value === 'in-progress' ? inProgressTodos.value : notStartedTodos.value))
+const currentOpenTodoListTestId = computed(() => `${todoView.value}-todos`)
+const isOpenTodoView = computed(() => ['not-started', 'in-progress'].includes(todoView.value))
+const activeTodos = computed(() => currentOpenTodos.value)
+const activeTodoIds = computed(() => currentOpenTodos.value.map((todo) => todo.id))
 const hasActiveTodos = computed(() => activeTodoIds.value.length > 0)
 const selectedProjectCount = computed(() => selectedProjectIds.value.size)
 const selectedProjectIdsList = computed(() => props.projects.filter((project) => selectedProjectIds.value.has(project.id)).map((project) => project.id))
+
+function sortedOpenTodos(status) {
+  return props.todos
+    .map((todo, index) => ({ todo, index }))
+    .filter(({ todo }) => todoWorkflowStatus(todo) === status)
+    .sort(compareActiveTodoEntries)
+    .map(({ todo }) => todo)
+}
+
+function todoWorkflowStatus(todo) {
+  if (todo?.status === 'active') {
+    return 'not-started'
+  }
+  return todo?.status || 'not-started'
+}
 
 const projectsById = computed(() => {
   const projects = new Map()
@@ -199,6 +218,7 @@ function toggleTodoBranch(todoId) {
   const nextCollapsedTodoIds = new Set(collapsedTodoIds.value)
   if (nextCollapsedTodoIds.has(todoId)) {
     nextCollapsedTodoIds.delete(todoId)
+    emit('todo-expanded', todoId)
   } else {
     nextCollapsedTodoIds.add(todoId)
   }
@@ -223,10 +243,16 @@ function expandAllTodos() {
   }
 
   const nextCollapsedTodoIds = new Set(collapsedTodoIds.value)
+  const expandedTodoIds = []
   for (const todoId of activeTodoIds.value) {
-    nextCollapsedTodoIds.delete(todoId)
+    if (nextCollapsedTodoIds.delete(todoId)) {
+      expandedTodoIds.push(todoId)
+    }
   }
   collapsedTodoIds.value = nextCollapsedTodoIds
+  for (const todoId of expandedTodoIds) {
+    emit('todo-expanded', todoId)
+  }
 }
 
 function expandTodo(todoId) {
@@ -237,6 +263,7 @@ function expandTodo(todoId) {
   const nextCollapsedTodoIds = new Set(collapsedTodoIds.value)
   nextCollapsedTodoIds.delete(todoId)
   collapsedTodoIds.value = nextCollapsedTodoIds
+  emit('todo-expanded', todoId)
 }
 
 function selectTodoProject(todoProject) {
@@ -300,6 +327,11 @@ function confirmTodoAction(todoId, action) {
     emit('delete-todo', todoId)
   }
   closeTodoActionPopover()
+}
+
+function changeTodoStatus(todoId, status) {
+  todoView.value = status
+  emit('change-todo-status', todoId, status)
 }
 
 function openProjectDeletePopover(projectId) {
@@ -481,8 +513,7 @@ function terminalActivityState(terminal) {
   return terminal.activityState || 'idle'
 }
 
-function terminalActivityLabel(terminal) {
-  const state = terminalActivityState(terminal)
+function activityStateLabel(state) {
   if (state === 'busy') {
     return 'Running'
   }
@@ -492,10 +523,44 @@ function terminalActivityLabel(terminal) {
   return 'Idle'
 }
 
+function terminalActivityLabel(terminal) {
+  return activityStateLabel(terminalActivityState(terminal))
+}
+
 function terminalRowLabel(terminal) {
   const activityLabel = terminalActivityLabel(terminal)
   const displayName = terminalDisplayName(terminal)
   return activityLabel === 'Idle' ? displayName : `${displayName} - ${activityLabel}`
+}
+
+function todoActivityState(todo) {
+  let hasBusyTerminal = false
+  let hasTerminal = false
+  for (const terminal of props.terminals) {
+    if (terminal.todoId !== todo.id) {
+      continue
+    }
+    hasTerminal = true
+    const state = terminalActivityState(terminal)
+    if (state === 'needs-input') {
+      return 'needs-input'
+    }
+    if (state === 'busy') {
+      hasBusyTerminal = true
+    }
+  }
+  if (!hasTerminal) {
+    return ''
+  }
+  return hasBusyTerminal ? 'busy' : 'idle'
+}
+
+function collapsedTodoActivityState(todo) {
+  return isTodoCollapsed(todo.id) ? todoActivityState(todo) : ''
+}
+
+function collapsedTodoActivityLabel(todo) {
+  return activityStateLabel(collapsedTodoActivityState(todo))
 }
 
 function todoPriority(todo) {
@@ -506,8 +571,8 @@ function todoPriorityClass(todo) {
   return `todo-header-row-priority-${todoPriority(todo)}`
 }
 
-function archivedAtLabel(todo) {
-  return todo.archivedAt || 'No archive time'
+function completedAtLabel(todo) {
+  return todo.completedAt || todo.archivedAt || 'No completion time'
 }
 
 onMounted(() => {
@@ -517,6 +582,34 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('click', closeFloatingMenus)
 })
+
+watch(
+  () => props.todos,
+  (todos) => {
+    const nextKnownTodoIds = new Set(knownTodoIds.value)
+    const nextCollapsedTodoIds = new Set(collapsedTodoIds.value)
+    let changed = false
+    for (const todo of todos) {
+      if (nextKnownTodoIds.has(todo.id)) {
+        continue
+      }
+      nextKnownTodoIds.add(todo.id)
+      if (isOpenTodoStatus(todoWorkflowStatus(todo))) {
+        nextCollapsedTodoIds.add(todo.id)
+        changed = true
+      }
+    }
+    knownTodoIds.value = nextKnownTodoIds
+    if (changed) {
+      collapsedTodoIds.value = nextCollapsedTodoIds
+    }
+  },
+  { deep: true }
+)
+
+function isOpenTodoStatus(status) {
+  return status === 'not-started' || status === 'in-progress'
+}
 
 watch(
   [() => props.activeTodoId, () => props.activeTodoProjectId],
@@ -628,34 +721,43 @@ watch(
     </div>
 
     <div v-if="activeTab === 'todos'" class="project-list" data-testid="todo-workspace">
-      <div class="todo-view-tabs" role="tablist" aria-label="TODO views">
+      <div class="todo-view-tabs" data-testid="todo-workflow-tabs" role="tablist" aria-label="TODO views">
         <button
           type="button"
           class="todo-view-tab"
-          :class="{ active: todoView === 'active' }"
-          data-testid="todo-view-active"
-          @click="todoView = 'active'"
+          :class="{ active: todoView === 'not-started' }"
+          data-testid="todo-view-not-started"
+          @click="todoView = 'not-started'"
         >
-          Active
+          未执行
         </button>
         <button
           type="button"
           class="todo-view-tab"
-          :class="{ active: todoView === 'archived' }"
-          data-testid="todo-view-archived"
-          @click="todoView = 'archived'"
+          :class="{ active: todoView === 'in-progress' }"
+          data-testid="todo-view-in-progress"
+          @click="todoView = 'in-progress'"
         >
-          Archived
+          执行中
+        </button>
+        <button
+          type="button"
+          class="todo-view-tab"
+          :class="{ active: todoView === 'completed' }"
+          data-testid="todo-view-completed"
+          @click="todoView = 'completed'"
+        >
+          已完成
         </button>
       </div>
 
       <div
-        v-if="todoView === 'active'"
+        v-if="isOpenTodoView"
         class="todo-tree-toolbar"
         role="toolbar"
         aria-label="TODO tree controls"
       >
-        <div class="todo-sort-toggle" role="group" aria-label="Active TODO sort">
+        <div class="todo-sort-toggle" role="group" aria-label="TODO sort">
           <button
             type="button"
             class="todo-sort-option"
@@ -701,11 +803,13 @@ watch(
         </button>
       </div>
 
-      <div v-if="todoView === 'active'" class="todo-list" data-testid="active-todos">
-        <div v-if="activeTodos.length === 0" class="sidebar-empty">No active TODOs</div>
+      <div v-if="isOpenTodoView" class="todo-list" :data-testid="currentOpenTodoListTestId">
+        <div v-if="currentOpenTodos.length === 0" class="sidebar-empty">
+          {{ todoView === 'in-progress' ? 'No in-progress TODOs' : 'No not-started TODOs' }}
+        </div>
 
         <div
-          v-for="todo in activeTodos"
+          v-for="todo in currentOpenTodos"
           :key="todo.id"
           class="todo-node"
           :class="{
@@ -736,12 +840,25 @@ watch(
             <div
               class="todo-row"
               :class="{ active: todo.id === activeTodoId }"
+              :data-activity-state="collapsedTodoActivityState(todo) || null"
               :data-testid="`todo-${todo.id}`"
+              :title="collapsedTodoActivityState(todo) ? collapsedTodoActivityLabel(todo) : null"
             >
               <ListTodo class="project-icon" :size="17" />
               <span class="project-copy">
                 <span class="todo-title-line">
                   <span class="project-name">{{ todo.title }}</span>
+                  <span
+                    v-if="collapsedTodoActivityState(todo) && collapsedTodoActivityState(todo) !== 'idle'"
+                    class="terminal-activity todo-activity"
+                    :class="collapsedTodoActivityState(todo)"
+                    :data-testid="`todo-activity-${todo.id}`"
+                    :aria-label="collapsedTodoActivityLabel(todo)"
+                    role="img"
+                  >
+                    <LoaderCircle v-if="collapsedTodoActivityState(todo) === 'busy'" :size="13" aria-hidden="true" />
+                    <CircleAlert v-else-if="collapsedTodoActivityState(todo) === 'needs-input'" :size="13" aria-hidden="true" />
+                  </span>
                 </span>
                 <span
                   v-if="todo.description"
@@ -754,105 +871,134 @@ watch(
               </span>
             </div>
 
-            <button
-              type="button"
-              class="todo-action-button"
-              :data-testid="`edit-todo-${todo.id}`"
-              title="View and edit TODO"
-              @click.stop="emit('edit-todo', todo.id)"
+            <div
+              class="todo-actions"
+              :data-testid="`todo-actions-${todo.id}`"
+              role="group"
+              :aria-label="`${todo.title} actions`"
             >
-              <Eye :size="14" />
-            </button>
-            <button
-              type="button"
-              class="todo-action-button"
-              :data-testid="`add-project-to-todo-${todo.id}`"
-              title="Add project"
-              @click.stop="emit('add-project-to-todo', todo.id)"
-            >
-              <FolderPlus :size="14" />
-            </button>
-            <div class="todo-action-confirm-control">
+              <button
+                v-if="todoWorkflowStatus(todo) === 'not-started'"
+                type="button"
+                class="todo-action-button"
+                :data-testid="`mark-todo-in-progress-${todo.id}`"
+                title="Mark in progress"
+                aria-label="Mark TODO in progress"
+                @click.stop="changeTodoStatus(todo.id, 'in-progress')"
+              >
+                <Play :size="14" />
+              </button>
+              <button
+                v-else-if="todoWorkflowStatus(todo) === 'in-progress'"
+                type="button"
+                class="todo-action-button"
+                :data-testid="`mark-todo-not-started-${todo.id}`"
+                title="Mark not started"
+                aria-label="Mark TODO not started"
+                @click.stop="changeTodoStatus(todo.id, 'not-started')"
+              >
+                <RotateCcw :size="14" />
+              </button>
               <button
                 type="button"
                 class="todo-action-button"
-                :data-testid="`complete-todo-${todo.id}`"
-                title="Complete TODO"
-                :aria-expanded="isTodoActionPopoverOpen(todo.id, 'complete')"
-                :aria-controls="`complete-todo-popover-${todo.id}`"
-                @click.stop="openTodoActionPopover(todo.id, 'complete')"
+                :data-testid="`edit-todo-${todo.id}`"
+                title="View and edit TODO"
+                @click.stop="emit('edit-todo', todo.id)"
               >
-                <Check :size="14" />
+                <Eye :size="14" />
               </button>
-              <div
-                v-if="isTodoActionPopoverOpen(todo.id, 'complete')"
-                :id="`complete-todo-popover-${todo.id}`"
-                class="todo-action-popover"
-                :data-testid="`complete-todo-popover-${todo.id}`"
-                @click.stop
-              >
-                <span class="todo-action-confirm-copy">Complete TODO?</span>
-                <div class="todo-action-confirm-actions">
-                  <button
-                    type="button"
-                    class="todo-action-confirm-cancel"
-                    :data-testid="`cancel-complete-todo-${todo.id}`"
-                    aria-label="Cancel completing TODO"
-                    @click="closeTodoActionPopover"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    class="todo-action-confirm-button todo-action-confirm-button-complete"
-                    :data-testid="`confirm-complete-todo-${todo.id}`"
-                    aria-label="Confirm completing TODO"
-                    @click="confirmTodoAction(todo.id, 'complete')"
-                  >
-                    Complete
-                  </button>
-                </div>
-              </div>
-            </div>
-            <div class="todo-action-confirm-control">
               <button
                 type="button"
-                class="delete-project-button"
-                :data-testid="`delete-todo-${todo.id}`"
-                title="Delete TODO"
-                :aria-expanded="isTodoActionPopoverOpen(todo.id, 'delete')"
-                :aria-controls="`delete-todo-popover-${todo.id}`"
-                @click.stop="openTodoActionPopover(todo.id, 'delete')"
+                class="todo-action-button"
+                :data-testid="`add-project-to-todo-${todo.id}`"
+                title="Add project"
+                @click.stop="emit('add-project-to-todo', todo.id)"
               >
-                <Trash2 :size="14" />
+                <FolderPlus :size="14" />
               </button>
-              <div
-                v-if="isTodoActionPopoverOpen(todo.id, 'delete')"
-                :id="`delete-todo-popover-${todo.id}`"
-                class="todo-action-popover"
-                :data-testid="`delete-todo-popover-${todo.id}`"
-                @click.stop
-              >
-                <span class="todo-action-confirm-copy">Delete TODO?</span>
-                <div class="todo-action-confirm-actions">
-                  <button
-                    type="button"
-                    class="todo-action-confirm-cancel"
-                    :data-testid="`cancel-delete-todo-${todo.id}`"
-                    aria-label="Cancel deleting TODO"
-                    @click="closeTodoActionPopover"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    class="todo-action-confirm-button todo-action-confirm-button-delete"
-                    :data-testid="`confirm-delete-todo-${todo.id}`"
-                    aria-label="Confirm deleting TODO"
-                    @click="confirmTodoAction(todo.id, 'delete')"
-                  >
-                    Delete
-                  </button>
+              <div class="todo-action-confirm-control">
+                <button
+                  type="button"
+                  class="todo-action-button"
+                  :data-testid="`complete-todo-${todo.id}`"
+                  title="Complete TODO"
+                  :aria-expanded="isTodoActionPopoverOpen(todo.id, 'complete')"
+                  :aria-controls="`complete-todo-popover-${todo.id}`"
+                  @click.stop="openTodoActionPopover(todo.id, 'complete')"
+                >
+                  <Check :size="14" />
+                </button>
+                <div
+                  v-if="isTodoActionPopoverOpen(todo.id, 'complete')"
+                  :id="`complete-todo-popover-${todo.id}`"
+                  class="todo-action-popover"
+                  :data-testid="`complete-todo-popover-${todo.id}`"
+                  @click.stop
+                >
+                  <span class="todo-action-confirm-copy">Complete TODO?</span>
+                  <div class="todo-action-confirm-actions">
+                    <button
+                      type="button"
+                      class="todo-action-confirm-cancel"
+                      :data-testid="`cancel-complete-todo-${todo.id}`"
+                      aria-label="Cancel completing TODO"
+                      @click="closeTodoActionPopover"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      class="todo-action-confirm-button todo-action-confirm-button-complete"
+                      :data-testid="`confirm-complete-todo-${todo.id}`"
+                      aria-label="Confirm completing TODO"
+                      @click="confirmTodoAction(todo.id, 'complete')"
+                    >
+                      Complete
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div class="todo-action-confirm-control">
+                <button
+                  type="button"
+                  class="delete-project-button todo-action-button"
+                  :data-testid="`delete-todo-${todo.id}`"
+                  title="Delete TODO"
+                  :aria-expanded="isTodoActionPopoverOpen(todo.id, 'delete')"
+                  :aria-controls="`delete-todo-popover-${todo.id}`"
+                  @click.stop="openTodoActionPopover(todo.id, 'delete')"
+                >
+                  <Trash2 :size="14" />
+                </button>
+                <div
+                  v-if="isTodoActionPopoverOpen(todo.id, 'delete')"
+                  :id="`delete-todo-popover-${todo.id}`"
+                  class="todo-action-popover"
+                  :data-testid="`delete-todo-popover-${todo.id}`"
+                  @click.stop
+                >
+                  <span class="todo-action-confirm-copy">Delete TODO?</span>
+                  <div class="todo-action-confirm-actions">
+                    <button
+                      type="button"
+                      class="todo-action-confirm-cancel"
+                      :data-testid="`cancel-delete-todo-${todo.id}`"
+                      aria-label="Cancel deleting TODO"
+                      @click="closeTodoActionPopover"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      class="todo-action-confirm-button todo-action-confirm-button-delete"
+                      :data-testid="`confirm-delete-todo-${todo.id}`"
+                      aria-label="Confirm deleting TODO"
+                      @click="confirmTodoAction(todo.id, 'delete')"
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -862,6 +1008,7 @@ watch(
             v-if="!isTodoCollapsed(todo.id)"
             :id="todoProjectListId(todo.id)"
             class="todo-project-list"
+            :data-testid="`todo-project-list-${todo.id}`"
             role="group"
             :aria-label="`Projects for ${todo.title}`"
           >
@@ -1038,22 +1185,22 @@ watch(
         </div>
       </div>
 
-      <div v-else class="archived-todos" data-testid="archived-todos">
-        <div v-if="archivedTodos.length === 0" class="sidebar-empty">No archived TODOs</div>
+      <div v-else class="archived-todos completed-todos" data-testid="completed-todos">
+        <div v-if="completedTodos.length === 0" class="sidebar-empty">No completed TODOs</div>
 
         <div
-          v-for="todo in archivedTodos"
+          v-for="todo in completedTodos"
           :key="todo.id"
-          class="archived-todo"
-          :data-testid="`archived-todo-${todo.id}`"
+          class="archived-todo completed-todo"
+          :data-testid="`completed-todo-${todo.id}`"
         >
-          <div class="archived-todo-title">
+          <div class="archived-todo-title completed-todo-title">
             <Archive :size="15" />
             <span>{{ todo.title }}</span>
           </div>
           <div class="archived-todo-meta">
-            <span>{{ todo.archivedReason || todo.status }}</span>
-            <span>{{ archivedAtLabel(todo) }}</span>
+            <span>completed</span>
+            <span>{{ completedAtLabel(todo) }}</span>
           </div>
           <div v-if="todo.projectSnapshots?.length" class="archived-projects">
             <div

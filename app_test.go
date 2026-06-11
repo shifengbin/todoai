@@ -65,7 +65,7 @@ func TestAppCreatesAndSelectsTodoProjectTerminals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTodo() error = %v", err)
 	}
-	todoID := state.ActiveTodoID
+	todoID := state.Todos[0].ID
 	state, err = app.AddProjectToTodo(todoID, projectID)
 	if err != nil {
 		t.Fatalf("AddProjectToTodo() error = %v", err)
@@ -156,11 +156,38 @@ func TestAppCreateTodoAcceptsStructuredRequestAndOptionalProjects(t *testing.T) 
 	if len(state.TodoProjects) != 2 || state.TodoProjects[0].ProjectID != projectID || state.TodoProjects[1].ProjectID != otherProjectID {
 		t.Fatalf("TodoProjects = %#v, want optional project associations in request order", state.TodoProjects)
 	}
-	if state.ActiveTodoProjectID != state.TodoProjects[0].ID || state.ActiveProjectID != projectID {
-		t.Fatalf("active context = %q/%q, want first created todo project and project %q", state.ActiveTodoProjectID, state.ActiveProjectID, projectID)
+	if state.ActiveTodoID != "" || state.ActiveTodoProjectID != "" || state.ActiveProjectID != otherProjectID {
+		t.Fatalf("active context = %q/%q/%q, want unchanged project context %q", state.ActiveTodoID, state.ActiveTodoProjectID, state.ActiveProjectID, otherProjectID)
 	}
 	if len(state.Terminals) != 0 {
 		t.Fatalf("Terminals length = %d, want no terminal during TODO creation", len(state.Terminals))
+	}
+}
+
+func TestAppChangesTodoStatusThroughPublicAPI(t *testing.T) {
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+
+	state, err := app.CreateTodo(CreateTodoRequest{Title: "修复登录问题"})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	if len(state.Todos) != 1 {
+		t.Fatalf("Todos length = %d, want 1", len(state.Todos))
+	}
+
+	state, err = app.ChangeTodoStatus(state.Todos[0].ID, "in-progress")
+	if err != nil {
+		t.Fatalf("ChangeTodoStatus() error = %v", err)
+	}
+
+	if len(state.Todos) != 1 || state.Todos[0].Status != "in-progress" {
+		t.Fatalf("Todos = %#v, want in-progress todo", state.Todos)
+	}
+	if state.Terminals == nil {
+		t.Fatalf("Terminals = nil, want shell state included")
 	}
 }
 
@@ -186,7 +213,7 @@ func TestAppAddsMultipleProjectsToExistingTodo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTodo() error = %v", err)
 	}
-	todoID := state.ActiveTodoID
+	todoID := state.Todos[0].ID
 
 	state, err = app.AddProjectsToTodo(todoID, []string{projectID, otherProjectID})
 	if err != nil {
@@ -218,7 +245,7 @@ func TestAppCompletesTodoAndClosesOnlyOwnedTerminals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTodo(A) error = %v", err)
 	}
-	todoAID := state.ActiveTodoID
+	todoAID := state.Todos[0].ID
 	state, err = app.AddProjectToTodo(todoAID, projectID)
 	if err != nil {
 		t.Fatalf("AddProjectToTodo(A) error = %v", err)
@@ -231,7 +258,7 @@ func TestAppCompletesTodoAndClosesOnlyOwnedTerminals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTodo(B) error = %v", err)
 	}
-	todoBID := state.ActiveTodoID
+	todoBID := state.Todos[1].ID
 	state, err = app.AddProjectToTodo(todoBID, projectID)
 	if err != nil {
 		t.Fatalf("AddProjectToTodo(B) error = %v", err)
@@ -255,9 +282,9 @@ func TestAppCompletesTodoAndClosesOnlyOwnedTerminals(t *testing.T) {
 	if len(state.Terminals) != 1 || state.Terminals[0].TodoID != todoBID {
 		t.Fatalf("Terminals = %#v, want only todo B terminal", state.Terminals)
 	}
-	archived := findTodo(state.Todos, todoAID)
-	if archived == nil || archived.ArchivedReason != TodoArchiveReasonCompleted {
-		t.Fatalf("archived todo = %#v, want completed archive", archived)
+	completed := findTodo(state.Todos, todoAID)
+	if completed == nil || completed.Status != TodoStatusCompleted {
+		t.Fatalf("completed todo = %#v, want completed status", completed)
 	}
 }
 
@@ -284,7 +311,7 @@ func TestAppUpdateTodoRemovesProjectAndClosesOnlyThatTodoProjectTerminals(t *tes
 	if err != nil {
 		t.Fatalf("CreateTodo(A) error = %v", err)
 	}
-	todoAID := state.ActiveTodoID
+	todoAID := state.Todos[0].ID
 	todoProjectAProjectAID := state.TodoProjects[0].ID
 	todoProjectAProjectBID := state.TodoProjects[1].ID
 	if _, err := app.CreateTodoTerminal(todoProjectAProjectAID, 80, 24); err != nil {
@@ -297,7 +324,7 @@ func TestAppUpdateTodoRemovesProjectAndClosesOnlyThatTodoProjectTerminals(t *tes
 	if err != nil {
 		t.Fatalf("CreateTodo(B) error = %v", err)
 	}
-	todoProjectBProjectAID := state.ActiveTodoProjectID
+	todoProjectBProjectAID := state.TodoProjects[2].ID
 	if _, err := app.CreateTodoTerminal(todoProjectBProjectAID, 80, 24); err != nil {
 		t.Fatalf("CreateTodoTerminal(B/projectA) error = %v", err)
 	}
@@ -847,6 +874,37 @@ func TestAppGetsProjectGitStatusWithoutQueryingUnavailableProject(t *testing.T) 
 	}
 }
 
+func TestAppGetProjectGitStatusReturnsGitUnavailableStatus(t *testing.T) {
+	projectDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	projectID := state.Projects[0].ID
+	app.gitStatus = func(path string) (GitStatus, error) {
+		if path != projectDir {
+			t.Fatalf("git status path = %q, want %q", path, projectDir)
+		}
+		return GitStatus{GitUnavailable: true}, nil
+	}
+
+	status, err := app.GetProjectGitStatus(projectID)
+	if err != nil {
+		t.Fatalf("GetProjectGitStatus() error = %v", err)
+	}
+
+	if status.ProjectID != projectID {
+		t.Fatalf("ProjectID = %q, want %q", status.ProjectID, projectID)
+	}
+	if !status.GitUnavailable {
+		t.Fatal("GitUnavailable = false, want true")
+	}
+}
+
 func TestAppGetProjectGitStatusReturnsErrorWhenProjectIsMissing(t *testing.T) {
 	app := NewAppWithConfigAndShellStarter(
 		filepath.Join(t.TempDir(), "projects.json"),
@@ -953,7 +1011,7 @@ func createTodoProjectForApp(t *testing.T, app *App, title string, projectID str
 	if err != nil {
 		t.Fatalf("CreateTodo(%q) error = %v", title, err)
 	}
-	todoID := state.ActiveTodoID
+	todoID := state.Todos[len(state.Todos)-1].ID
 	state, err = app.AddProjectToTodo(todoID, projectID)
 	if err != nil {
 		t.Fatalf("AddProjectToTodo(%q, %q) error = %v", todoID, projectID, err)

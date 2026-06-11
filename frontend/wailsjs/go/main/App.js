@@ -14,6 +14,10 @@ export function AddProjectsToTodo(arg1, arg2) {
   return window['go']['main']['App']['AddProjectsToTodo'](arg1, arg2);
 }
 
+export function ChangeTodoStatus(arg1, arg2) {
+  return window['go']['main']['App']['ChangeTodoStatus'](arg1, arg2);
+}
+
 export function CompleteTodo(arg1) {
   return window['go']['main']['App']['CompleteTodo'](arg1);
 }

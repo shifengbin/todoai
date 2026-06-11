@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -11,6 +12,9 @@ import (
 
 const gitStatusTimeout = 2 * time.Second
 
+var errGitUnavailable = errors.New("Git is not installed")
+
+type gitCommandChecker func() error
 type gitStatusRunner func(context.Context, string) ([]byte, error)
 type gitInitRunner func(context.Context, string) ([]byte, error)
 
@@ -25,6 +29,7 @@ type GitStatus struct {
 	Ahead           int    `json:"ahead"`
 	Behind          int    `json:"behind"`
 	PathUnavailable bool   `json:"pathUnavailable,omitempty"`
+	GitUnavailable  bool   `json:"gitUnavailable,omitempty"`
 }
 
 func parseGitStatusPorcelainV2(output string) GitStatus {
@@ -64,14 +69,18 @@ func parseGitStatusPorcelainV2(output string) GitStatus {
 }
 
 func queryGitStatus(path string) (GitStatus, error) {
-	return gitStatusForPath(path, runGitStatusCommand)
+	return gitStatusForPath(path, gitCommandAvailable, runGitStatusCommand)
 }
 
 func initializeGitRepository(path string) error {
-	return initializeGitRepositoryForPath(path, runGitInitCommand)
+	return initializeGitRepositoryForPath(path, gitCommandAvailable, runGitInitCommand)
 }
 
-func gitStatusForPath(path string, runner gitStatusRunner) (GitStatus, error) {
+func gitStatusForPath(path string, checker gitCommandChecker, runner gitStatusRunner) (GitStatus, error) {
+	if err := checker(); err != nil {
+		return GitStatus{GitUnavailable: true}, nil
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), gitStatusTimeout)
 	defer cancel()
 
@@ -88,7 +97,11 @@ func gitStatusForPath(path string, runner gitStatusRunner) (GitStatus, error) {
 	return parseGitStatusPorcelainV2(string(output)), nil
 }
 
-func initializeGitRepositoryForPath(path string, runner gitInitRunner) error {
+func initializeGitRepositoryForPath(path string, checker gitCommandChecker, runner gitInitRunner) error {
+	if err := checker(); err != nil {
+		return gitUnavailableError(err)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), gitStatusTimeout)
 	defer cancel()
 
@@ -105,13 +118,25 @@ func initializeGitRepositoryForPath(path string, runner gitInitRunner) error {
 	return nil
 }
 
+func gitCommandAvailable() error {
+	_, err := exec.LookPath("git")
+	return err
+}
+
+func gitUnavailableError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: %v", errGitUnavailable, err)
+}
+
 func runGitStatusCommand(ctx context.Context, path string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "git", "-C", path, "status", "--porcelain=v2", "--branch")
+	cmd := newBackgroundCommand(ctx, "git", "-C", path, "status", "--porcelain=v2", "--branch")
 	return cmd.CombinedOutput()
 }
 
 func runGitInitCommand(ctx context.Context, path string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "git", "-C", path, "init")
+	cmd := newBackgroundCommand(ctx, "git", "-C", path, "init")
 	return cmd.CombinedOutput()
 }
 

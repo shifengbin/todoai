@@ -1,10 +1,11 @@
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App.vue'
 import {
   AddProjectToTodo,
   AddProjectsToTodo,
+  ChangeTodoStatus,
   CompleteTodo,
   CreateTodo,
   CreateTodoTerminal,
@@ -31,6 +32,7 @@ import { ClipboardGetText, ClipboardSetText } from '../wailsjs/runtime/runtime'
 const appApiMock = vi.hoisted(() => ({
   AddProjectToTodo: vi.fn(),
   AddProjectsToTodo: vi.fn(),
+  ChangeTodoStatus: vi.fn(),
   CompleteTodo: vi.fn(),
   CreateTodo: vi.fn(),
   CreateTodoTerminal: vi.fn(),
@@ -107,6 +109,7 @@ vi.mock('./xtermFactory', () => {
 const defaultCodexLaunchCommand =
   'codex --dangerously-bypass-hook-trust --dangerously-bypass-approvals-and-sandbox'
 const defaultClaudeLaunchCommand = 'claude --dangerously-skip-permissions'
+const mountedWrappers = []
 
 describe('App project terminal tree', () => {
   beforeEach(() => {
@@ -139,8 +142,9 @@ describe('App project terminal tree', () => {
     appApiMock.CreateTodo.mockResolvedValue(projectState({ todos: [todo({ id: 'todo-a' }), todo({ id: 'todo-b', title: 'Write tests' })] }))
     appApiMock.AddProjectToTodo.mockResolvedValue(projectState())
     appApiMock.AddProjectsToTodo.mockResolvedValue(projectState())
-    appApiMock.CompleteTodo.mockResolvedValue(projectState({ todos: [archivedTodo()], todoProjects: [], terminals: [], activeTodoId: '', activeTodoProjectId: '', activeTerminalId: '' }))
-    appApiMock.DeleteTodo.mockResolvedValue(projectState({ todos: [archivedTodo({ archivedReason: 'deleted' })], todoProjects: [], terminals: [], activeTodoId: '', activeTodoProjectId: '', activeTerminalId: '' }))
+    appApiMock.ChangeTodoStatus.mockResolvedValue(projectState({ todos: [todo({ status: 'in-progress' })] }))
+    appApiMock.CompleteTodo.mockResolvedValue(projectState({ todos: [completedTodo()], todoProjects: [], terminals: [], activeTodoId: '', activeTodoProjectId: '', activeTerminalId: '' }))
+    appApiMock.DeleteTodo.mockResolvedValue(projectState({ todos: [], todoProjects: [], terminals: [], activeTodoId: '', activeTodoProjectId: '', activeTerminalId: '' }))
     appApiMock.ImportProjectsFromParentDirectoryDialog.mockResolvedValue(
       projectState({
         importSummary: { parentPath: '/work', addedCount: 2, skippedCount: 1 }
@@ -177,6 +181,12 @@ describe('App project terminal tree', () => {
     runtimeMock.ClipboardSetText.mockResolvedValue(true)
     vi.stubGlobal('confirm', vi.fn(() => true))
     vi.stubGlobal('prompt', vi.fn(() => ''))
+  })
+
+  afterEach(() => {
+    for (const wrapper of mountedWrappers.splice(0)) {
+      wrapper.unmount()
+    }
   })
 
   it('shows terminal copy and paste actions on right click', async () => {
@@ -255,6 +265,26 @@ describe('App project terminal tree', () => {
     expect(CreateTodoTerminal).toHaveBeenCalledWith('todo-project-a', 100, 32)
     expect(xtermMock.sessions.has('terminal-b')).toBe(true)
     expect(wrapper.find('[data-testid="terminal-terminal-b"]').classes()).toContain('active')
+  })
+
+  it('shows unsupported embedded terminal state without restarting the shell', async () => {
+    appApiMock.CreateTodoTerminal.mockResolvedValue(
+      projectState({
+        terminals: [terminal({ id: 'terminal-unsupported', state: 'unsupported' })],
+        activeTerminalId: 'terminal-unsupported'
+      })
+    )
+    const wrapper = await mountReadyApp()
+    StartShell.mockClear()
+
+    await wrapper.find('[data-testid="add-terminal-todo-project-a"]').trigger('click')
+    await wrapper.find('[data-testid="terminal-launch-option-todo-project-a-0"]').trigger('click')
+    await flushPromises()
+    window.dispatchEvent(new Event('focus'))
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="terminal-surface"]').text()).toContain('not supported on Windows')
+    expect(StartShell).not.toHaveBeenCalled()
   })
 
   it('creates a terminal from a custom launch profile and submits its command', async () => {
@@ -678,7 +708,7 @@ describe('App project terminal tree', () => {
     expect(fitAddon.fit).toHaveBeenCalled()
   })
 
-  it('completes a TODO and shows its archived snapshot', async () => {
+  it('completes a TODO and shows its completed snapshot', async () => {
     const wrapper = await mountReadyApp()
 
     await wrapper.find('[data-testid="complete-todo-todo-a"]').trigger('click')
@@ -688,13 +718,13 @@ describe('App project terminal tree', () => {
 
     await wrapper.find('[data-testid="confirm-complete-todo-todo-a"]').trigger('click')
     await flushPromises()
-    await wrapper.find('[data-testid="todo-view-archived"]').trigger('click')
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
 
     expect(window.confirm).not.toHaveBeenCalled()
     expect(CompleteTodo).toHaveBeenCalledWith('todo-a')
     expect(wrapper.find('[data-testid="terminal-terminal-a"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="archived-todos"]').text()).toContain('completed')
-    expect(wrapper.find('[data-testid="archived-todos"]').text()).toContain('/work/alpha')
+    expect(wrapper.find('[data-testid="completed-todos"]').text()).toContain('completed')
+    expect(wrapper.find('[data-testid="completed-todos"]').text()).toContain('/work/alpha')
   })
 
   it('does not delete a TODO when the sidebar confirmation is cancelled', async () => {
@@ -712,6 +742,17 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="todo-todo-a"]').exists()).toBe(true)
   })
 
+  it('changes TODO workflow status from the sidebar', async () => {
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="mark-todo-in-progress-todo-a"]').trigger('click')
+    await flushPromises()
+
+    expect(ChangeTodoStatus).toHaveBeenCalledWith('todo-a', 'in-progress')
+    expect(wrapper.find('[data-testid="todo-view-in-progress"]').classes()).toContain('active')
+    expect(wrapper.find('[data-testid="todo-todo-a"]').exists()).toBe(true)
+  })
+
   it('imports projects from a parent directory and shows the summary', async () => {
     const wrapper = await mountReadyApp()
 
@@ -722,6 +763,33 @@ describe('App project terminal tree', () => {
     expect(ImportProjectsFromParentDirectoryDialog).toHaveBeenCalled()
     expect(wrapper.find('[data-testid="import-summary"]').text()).toContain('2 imported')
     expect(wrapper.find('[data-testid="import-summary"]').text()).toContain('1 skipped')
+  })
+
+  it('does not refresh git status immediately after importing projects', async () => {
+    appApiMock.ImportProjectsFromParentDirectoryDialog.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
+          { id: 'project-b', name: 'beta', path: '/work/beta', available: true }
+        ],
+        activeProjectId: 'project-b',
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        terminals: [],
+        activeTerminalId: '',
+        importSummary: { parentPath: '/work', addedCount: 2, skippedCount: 0 }
+      })
+    )
+    const wrapper = await mountReadyApp()
+    GetProjectGitStatus.mockClear()
+
+    await wrapper.find('[data-testid="sidebar-tab-projects"]').trigger('click')
+    await wrapper.find('[data-testid="import-parent-directory"]').trigger('click')
+    await flushPromises()
+
+    expect(ImportProjectsFromParentDirectoryDialog).toHaveBeenCalled()
+    expect(GetProjectGitStatus).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="project-git-status"]').text()).toContain('main')
   })
 
   it('selects a project from the project tab without creating a terminal', async () => {
@@ -982,6 +1050,26 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="initialize-git-repository"]').exists()).toBe(true)
   })
 
+  it('shows when git is not installed', async () => {
+    appApiMock.GetProjectGitStatus.mockResolvedValue(
+      gitStatus({ isRepo: false, branch: '', changedCount: 0, gitUnavailable: true })
+    )
+
+    const wrapper = await mountReadyApp()
+
+    expect(wrapper.find('[data-testid="project-git-status"]').text()).toContain('未安装 Git')
+  })
+
+  it('hides git initialization when git is not installed', async () => {
+    appApiMock.GetProjectGitStatus.mockResolvedValue(
+      gitStatus({ isRepo: false, branch: '', changedCount: 0, gitUnavailable: true })
+    )
+
+    const wrapper = await mountReadyApp()
+
+    expect(wrapper.find('[data-testid="initialize-git-repository"]').exists()).toBe(false)
+  })
+
   it('initializes a git repository from the status bar and refreshes status', async () => {
     appApiMock.GetProjectGitStatus
       .mockResolvedValueOnce(gitStatus({ isRepo: false, branch: '', changedCount: 0 }))
@@ -1104,6 +1192,131 @@ describe('App project terminal tree', () => {
     GetProjectGitStatus.mockClear()
 
     window.dispatchEvent(new Event('focus'))
+    await flushPromises()
+
+    expect(GetProjectGitStatus).toHaveBeenCalledWith('project-a')
+  })
+
+  it('deduplicates focus git refresh while the active project request is pending', async () => {
+    const resolvers = []
+    await mountReadyApp()
+    GetProjectGitStatus.mockClear()
+    GetProjectGitStatus.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvers.push(resolve)
+        })
+    )
+
+    window.dispatchEvent(new Event('focus'))
+    await nextTick()
+    window.dispatchEvent(new Event('focus'))
+    await nextTick()
+
+    expect(GetProjectGitStatus).toHaveBeenCalledTimes(1)
+    resolvers.forEach((resolve) => resolve(gitStatus()))
+    await flushPromises()
+  })
+
+  it('debounces repeated focus git refreshes in the same interval', async () => {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1000)
+    try {
+      await mountReadyApp()
+      GetProjectGitStatus.mockClear()
+
+      window.dispatchEvent(new Event('focus'))
+      await flushPromises()
+      window.dispatchEvent(new Event('focus'))
+      await flushPromises()
+
+      expect(GetProjectGitStatus).toHaveBeenCalledTimes(1)
+    } finally {
+      nowSpy.mockRestore()
+    }
+  })
+
+  it('refreshes git status when the active TODO branch is expanded', async () => {
+    const wrapper = await mountReadyApp()
+    GetProjectGitStatus.mockClear()
+
+    await wrapper.find('[data-testid="toggle-todo-todo-a"]').trigger('click')
+    await wrapper.find('[data-testid="toggle-todo-todo-a"]').trigger('click')
+    await flushPromises()
+
+    expect(GetProjectGitStatus).toHaveBeenCalledWith('project-a')
+  })
+
+  it('does not refresh git status when an unrelated TODO branch expands', async () => {
+    const twoTodoState = projectState({
+      projects: [
+        { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
+        { id: 'project-b', name: 'beta', path: '/work/beta', available: true }
+      ],
+      todos: [todo({ id: 'todo-a' }), todo({ id: 'todo-b', title: 'Write tests' })],
+      todoProjects: [
+        todoProject({ id: 'todo-project-a', todoId: 'todo-a', projectId: 'project-a' }),
+        todoProject({ id: 'todo-project-b', todoId: 'todo-b', projectId: 'project-b' })
+      ],
+      terminals: [
+        terminal({ id: 'terminal-a', todoId: 'todo-a', todoProjectId: 'todo-project-a', projectId: 'project-a' }),
+        terminal({ id: 'terminal-b', todoId: 'todo-b', todoProjectId: 'todo-project-b', projectId: 'project-b' })
+      ]
+    })
+    appApiMock.ListProjects.mockResolvedValue(twoTodoState)
+    const wrapper = await mountReadyApp()
+    GetProjectGitStatus.mockClear()
+
+    await wrapper.find('[data-testid="toggle-todo-todo-b"]').trigger('click')
+    await wrapper.find('[data-testid="toggle-todo-todo-b"]').trigger('click')
+    await flushPromises()
+
+    expect(GetProjectGitStatus).not.toHaveBeenCalled()
+  })
+
+  it('refreshes git status when selecting a TODO project changes the active project', async () => {
+    const twoProjectState = projectState({
+      projects: [
+        { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
+        { id: 'project-b', name: 'beta', path: '/work/beta', available: true }
+      ],
+      todos: [todo({ id: 'todo-a' }), todo({ id: 'todo-b', title: 'Write tests' })],
+      todoProjects: [
+        todoProject({ id: 'todo-project-a', todoId: 'todo-a', projectId: 'project-a' }),
+        todoProject({ id: 'todo-project-b', todoId: 'todo-b', projectId: 'project-b' })
+      ],
+      terminals: [
+        terminal({ id: 'terminal-a', todoId: 'todo-a', todoProjectId: 'todo-project-a', projectId: 'project-a' }),
+        terminal({ id: 'terminal-b', todoId: 'todo-b', todoProjectId: 'todo-project-b', projectId: 'project-b' })
+      ]
+    })
+    appApiMock.ListProjects.mockResolvedValue(twoProjectState)
+    appApiMock.SelectTodoProject.mockResolvedValue(
+      projectState({
+        ...twoProjectState,
+        activeProjectId: 'project-b',
+        activeTodoId: 'todo-b',
+        activeTodoProjectId: 'todo-project-b',
+        activeTerminalId: 'terminal-b'
+      })
+    )
+    const wrapper = await mountReadyApp()
+    GetProjectGitStatus.mockClear()
+
+    if (!wrapper.find('[data-testid="todo-project-todo-project-b"]').exists()) {
+      await wrapper.find('[data-testid="toggle-todo-todo-b"]').trigger('click')
+      await flushPromises()
+    }
+    await wrapper.find('[data-testid="todo-project-todo-project-b"]').trigger('click')
+    await flushPromises()
+
+    expect(GetProjectGitStatus).toHaveBeenCalledWith('project-b')
+  })
+
+  it('refreshes git status when selecting the current TODO project', async () => {
+    const wrapper = await mountReadyApp()
+    GetProjectGitStatus.mockClear()
+
+    await wrapper.find('[data-testid="todo-project-todo-project-a"]').trigger('click')
     await flushPromises()
 
     expect(GetProjectGitStatus).toHaveBeenCalledWith('project-a')
@@ -1399,6 +1612,7 @@ describe('App project terminal tree', () => {
 
 async function mountReadyApp() {
   const wrapper = mount(App)
+  mountedWrappers.push(wrapper)
   await flushPromises()
   return wrapper
 }
@@ -1448,12 +1662,11 @@ function todo(overrides = {}) {
   }
 }
 
-function archivedTodo(overrides = {}) {
+function completedTodo(overrides = {}) {
   return {
     ...todo({
-      status: 'archived',
-      archivedReason: 'completed',
-      archivedAt: '2026-06-10T10:00:00Z',
+      status: 'completed',
+      completedAt: '2026-06-10T10:00:00Z',
       projectSnapshots: [{ projectId: 'project-a', name: 'alpha', path: '/work/alpha' }]
     }),
     ...overrides

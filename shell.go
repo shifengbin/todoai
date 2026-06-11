@@ -16,9 +16,12 @@ import (
 )
 
 const (
-	ShellStateRunning = "running"
-	ShellStateExited  = "exited"
+	ShellStateRunning     = "running"
+	ShellStateExited      = "exited"
+	ShellStateUnsupported = "unsupported"
 )
+
+var ErrEmbeddedShellUnsupported = errors.New("embedded terminal is not supported on this platform")
 
 type TerminalSize struct {
 	Cols int `json:"cols"`
@@ -290,6 +293,11 @@ func (manager *ShellSessionManager) StartTerminal(terminalID string, size Termin
 	process, err := manager.starter(request)
 	if err != nil {
 		launch.Cleanup()
+		if errors.Is(err, ErrEmbeddedShellUnsupported) {
+			terminal.State = ShellStateUnsupported
+			manager.touchTerminalLocked(terminal)
+			return shellStatusFromTerminal(*terminal), nil
+		}
 		terminal.State = ShellStateExited
 		return ShellStatus{}, err
 	}
@@ -886,9 +894,16 @@ func NewPtyProcess(request ShellStartRequest) (PtyProcess, error) {
 		Rows: uint16(request.Size.Rows),
 	})
 	if err != nil {
-		return nil, err
+		return nil, normalizePtyStartError(err)
 	}
 	return &realPtyProcess{file: file, cmd: cmd}, nil
+}
+
+func normalizePtyStartError(err error) error {
+	if errors.Is(err, pty.ErrUnsupported) {
+		return ErrEmbeddedShellUnsupported
+	}
+	return err
 }
 
 type realPtyProcess struct {

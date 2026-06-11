@@ -15,6 +15,10 @@ import (
 const projectConfigVersion = 1
 
 const (
+	TodoStatusNotStarted = "not-started"
+	TodoStatusInProgress = "in-progress"
+	TodoStatusCompleted  = "completed"
+
 	TodoStatusActive   = "active"
 	TodoStatusArchived = "archived"
 
@@ -288,14 +292,11 @@ func (manager *ProjectManager) CreateTodo(request CreateTodoRequest) (ProjectSta
 		Title:       normalizedTitle,
 		Description: normalizedDescription,
 		Priority:    normalizedPriority,
-		Status:      TodoStatusActive,
+		Status:      TodoStatusNotStarted,
 		CreatedAt:   now,
 	}
 	state.Todos = append(state.Todos, todo)
-	state.ActiveTodoID = todo.ID
-	state.ActiveTodoProjectID = ""
-	state.ActiveTerminalID = ""
-	for index, projectID := range projectIDs {
+	for _, projectID := range projectIDs {
 		todoProject := TodoProject{
 			ID:             manager.newID(),
 			TodoID:         todo.ID,
@@ -304,10 +305,6 @@ func (manager *ProjectManager) CreateTodo(request CreateTodoRequest) (ProjectSta
 			LastSelectedAt: now,
 		}
 		state.TodoProjects = append(state.TodoProjects, todoProject)
-		if index == 0 {
-			state.ActiveTodoProjectID = todoProject.ID
-			state.ActiveProjectID = projectID
-		}
 	}
 	if err := manager.saveLocked(state); err != nil {
 		return ProjectState{}, err
@@ -329,7 +326,7 @@ func (manager *ProjectManager) AssociateProjectsWithTodo(todoID string, projectI
 	if err != nil {
 		return ProjectState{}, err
 	}
-	if _, ok := activeTodoByID(state.Todos, todoID); !ok {
+	if _, ok := openTodoByID(state.Todos, todoID); !ok {
 		return ProjectState{}, errors.New("todo not found")
 	}
 	if len(projectIDs) == 0 {
@@ -400,7 +397,7 @@ func (manager *ProjectManager) UpdateTodo(request UpdateTodoRequest) (ProjectSta
 	}
 	todoIndex := -1
 	for index := range state.Todos {
-		if state.Todos[index].ID == request.ID && state.Todos[index].Status == TodoStatusActive {
+		if state.Todos[index].ID == request.ID && isOpenTodoStatus(state.Todos[index].Status) {
 			todoIndex = index
 			break
 		}
@@ -477,7 +474,7 @@ func (manager *ProjectManager) RemoveTodoProject(todoProjectID string) (ProjectS
 	if !found {
 		return ProjectState{}, nil, errors.New("todo project not found")
 	}
-	if _, ok := activeTodoByID(state.Todos, removedTodoProject.TodoID); !ok {
+	if _, ok := openTodoByID(state.Todos, removedTodoProject.TodoID); !ok {
 		return ProjectState{}, nil, errors.New("todo not found")
 	}
 	state.TodoProjects = nextTodoProjects
@@ -501,7 +498,7 @@ func (manager *ProjectManager) SelectTodoProject(todoProjectID string) (ProjectS
 		if state.TodoProjects[index].ID != todoProjectID {
 			continue
 		}
-		if _, ok := activeTodoByID(state.Todos, state.TodoProjects[index].TodoID); !ok {
+		if _, ok := openTodoByID(state.Todos, state.TodoProjects[index].TodoID); !ok {
 			return ProjectState{}, TodoProject{}, Project{}, errors.New("todo not found")
 		}
 		project, ok := projectByIDFromProjects(state.Projects, state.TodoProjects[index].ProjectID)
@@ -521,11 +518,88 @@ func (manager *ProjectManager) SelectTodoProject(todoProjectID string) (ProjectS
 }
 
 func (manager *ProjectManager) CompleteTodo(todoID string) (ProjectState, error) {
-	return manager.archiveTodo(todoID, TodoArchiveReasonCompleted)
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	state, err := manager.loadLocked()
+	if err != nil {
+		return ProjectState{}, err
+	}
+	now := manager.now().UTC().Format(time.RFC3339)
+	todoIndex := -1
+	for index := range state.Todos {
+		if state.Todos[index].ID == todoID && isOpenTodoStatus(state.Todos[index].Status) {
+			todoIndex = index
+			break
+		}
+	}
+	if todoIndex < 0 {
+		return ProjectState{}, errors.New("todo not found")
+	}
+	snapshots := todoProjectSnapshots(state.Projects, state.TodoProjects, todoID)
+	state.Todos[todoIndex].Status = TodoStatusCompleted
+	state.Todos[todoIndex].ArchivedReason = ""
+	state.Todos[todoIndex].ArchivedAt = now
+	state.Todos[todoIndex].CompletedAt = now
+	state.Todos[todoIndex].ProjectSnapshots = snapshots
+	state.TodoProjects = removeTodoProjectsForTodo(state.TodoProjects, todoID)
+	clearActiveTodoContext(&state, todoID)
+	if err := manager.saveLocked(state); err != nil {
+		return ProjectState{}, err
+	}
+	return state, nil
 }
 
 func (manager *ProjectManager) DeleteTodo(todoID string) (ProjectState, error) {
-	return manager.archiveTodo(todoID, TodoArchiveReasonDeleted)
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	state, err := manager.loadLocked()
+	if err != nil {
+		return ProjectState{}, err
+	}
+	todoIndex := -1
+	for index := range state.Todos {
+		if state.Todos[index].ID == todoID && isOpenTodoStatus(state.Todos[index].Status) {
+			todoIndex = index
+			break
+		}
+	}
+	if todoIndex < 0 {
+		return ProjectState{}, errors.New("todo not found")
+	}
+	state.Todos = append(state.Todos[:todoIndex], state.Todos[todoIndex+1:]...)
+	state.TodoProjects = removeTodoProjectsForTodo(state.TodoProjects, todoID)
+	clearActiveTodoContext(&state, todoID)
+	if err := manager.saveLocked(state); err != nil {
+		return ProjectState{}, err
+	}
+	return state, nil
+}
+
+func (manager *ProjectManager) ChangeTodoStatus(todoID string, status string) (ProjectState, error) {
+	status = strings.TrimSpace(status)
+	if !isOpenTodoStatus(status) {
+		return ProjectState{}, errors.New("invalid todo status")
+	}
+
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	state, err := manager.loadLocked()
+	if err != nil {
+		return ProjectState{}, err
+	}
+	for index := range state.Todos {
+		if state.Todos[index].ID == todoID && isOpenTodoStatus(state.Todos[index].Status) {
+			state.Todos[index].Status = status
+			if err := manager.saveLocked(state); err != nil {
+				return ProjectState{}, err
+			}
+			return state, nil
+		}
+	}
+	return ProjectState{}, errors.New("todo not found")
 }
 
 func (manager *ProjectManager) DeleteProject(projectID string) (ProjectState, error) {
@@ -654,45 +728,6 @@ func (manager *ProjectManager) TodoProject(todoProjectID string) (TodoProject, P
 	return TodoProject{}, Project{}, errors.New("todo project not found")
 }
 
-func (manager *ProjectManager) archiveTodo(todoID string, reason string) (ProjectState, error) {
-	manager.mu.Lock()
-	defer manager.mu.Unlock()
-
-	state, err := manager.loadLocked()
-	if err != nil {
-		return ProjectState{}, err
-	}
-	now := manager.now().UTC().Format(time.RFC3339)
-	todoIndex := -1
-	for index := range state.Todos {
-		if state.Todos[index].ID == todoID && state.Todos[index].Status == TodoStatusActive {
-			todoIndex = index
-			break
-		}
-	}
-	if todoIndex < 0 {
-		return ProjectState{}, errors.New("todo not found")
-	}
-	snapshots := todoProjectSnapshots(state.Projects, state.TodoProjects, todoID)
-	state.Todos[todoIndex].Status = TodoStatusArchived
-	state.Todos[todoIndex].ArchivedReason = reason
-	state.Todos[todoIndex].ArchivedAt = now
-	state.Todos[todoIndex].ProjectSnapshots = snapshots
-	if reason == TodoArchiveReasonCompleted {
-		state.Todos[todoIndex].CompletedAt = now
-	}
-	state.TodoProjects = removeTodoProjectsForTodo(state.TodoProjects, todoID)
-	if state.ActiveTodoID == todoID {
-		state.ActiveTodoID = ""
-		state.ActiveTodoProjectID = ""
-		state.ActiveTerminalID = ""
-	}
-	if err := manager.saveLocked(state); err != nil {
-		return ProjectState{}, err
-	}
-	return state, nil
-}
-
 func (manager *ProjectManager) loadLocked() (ProjectState, error) {
 	state := ProjectState{
 		Version:      projectConfigVersion,
@@ -724,10 +759,13 @@ func (manager *ProjectManager) loadLocked() (ProjectState, error) {
 	}
 	for index := range state.Todos {
 		state.Todos[index].Priority = normalizeTodoPriority(state.Todos[index].Priority)
+		state.Todos[index] = normalizeTodoForWorkflow(state.Todos[index])
 	}
+	state.Todos = filterVisibleTodos(state.Todos)
 	if state.TodoProjects == nil {
 		state.TodoProjects = []TodoProject{}
 	}
+	state.TodoProjects = filterTodoProjectsForOpenTodos(state.Todos, state.TodoProjects)
 	for index := range state.Projects {
 		state.Projects[index].Available = directoryAvailable(state.Projects[index].Path)
 	}
@@ -737,6 +775,7 @@ func (manager *ProjectManager) loadLocked() (ProjectState, error) {
 	if state.ActiveTodoID != "" && !containsActiveTodo(state.Todos, state.ActiveTodoID) {
 		state.ActiveTodoID = ""
 		state.ActiveTodoProjectID = ""
+		state.ActiveTerminalID = ""
 	}
 	if state.ActiveTodoProjectID != "" && !containsTodoProject(state.TodoProjects, state.ActiveTodoProjectID) {
 		state.ActiveTodoProjectID = ""
@@ -783,6 +822,77 @@ func normalizeTodoPriority(priority string) string {
 	}
 }
 
+func normalizeTodoWorkflowStatus(status string) string {
+	switch strings.TrimSpace(status) {
+	case TodoStatusInProgress:
+		return TodoStatusInProgress
+	case TodoStatusCompleted:
+		return TodoStatusCompleted
+	case TodoStatusArchived:
+		return TodoStatusArchived
+	case TodoStatusActive, TodoStatusNotStarted:
+		return TodoStatusNotStarted
+	default:
+		return TodoStatusNotStarted
+	}
+}
+
+func normalizeTodoForWorkflow(todo Todo) Todo {
+	switch todo.Status {
+	case TodoStatusActive:
+		todo.Status = TodoStatusNotStarted
+	case TodoStatusArchived:
+		if todo.ArchivedReason == TodoArchiveReasonCompleted {
+			todo.Status = TodoStatusCompleted
+			todo.ArchivedReason = ""
+			if todo.CompletedAt == "" {
+				todo.CompletedAt = todo.ArchivedAt
+			}
+			break
+		}
+		if todo.ArchivedReason == TodoArchiveReasonDeleted {
+			return Todo{ID: todo.ID, Status: TodoArchiveReasonDeleted}
+		}
+		todo.Status = TodoStatusCompleted
+		todo.ArchivedReason = ""
+	case TodoStatusInProgress, TodoStatusCompleted, TodoStatusNotStarted:
+	default:
+		todo.Status = TodoStatusNotStarted
+	}
+	return todo
+}
+
+func filterVisibleTodos(todos []Todo) []Todo {
+	filtered := make([]Todo, 0, len(todos))
+	for _, todo := range todos {
+		if todo.Status == TodoArchiveReasonDeleted {
+			continue
+		}
+		filtered = append(filtered, todo)
+	}
+	return filtered
+}
+
+func filterTodoProjectsForOpenTodos(todos []Todo, todoProjects []TodoProject) []TodoProject {
+	openTodoIDs := map[string]bool{}
+	for _, todo := range todos {
+		if isOpenTodoStatus(todo.Status) {
+			openTodoIDs[todo.ID] = true
+		}
+	}
+	filtered := make([]TodoProject, 0, len(todoProjects))
+	for _, todoProject := range todoProjects {
+		if openTodoIDs[todoProject.TodoID] {
+			filtered = append(filtered, todoProject)
+		}
+	}
+	return filtered
+}
+
+func isOpenTodoStatus(status string) bool {
+	return status == TodoStatusNotStarted || status == TodoStatusInProgress
+}
+
 func directoryAvailable(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
@@ -816,17 +926,29 @@ func containsProjectAbsolutePath(projects []Project, path string) bool {
 }
 
 func containsActiveTodo(todos []Todo, todoID string) bool {
-	_, ok := activeTodoByID(todos, todoID)
+	_, ok := openTodoByID(todos, todoID)
 	return ok
 }
 
 func activeTodoByID(todos []Todo, todoID string) (Todo, bool) {
+	return openTodoByID(todos, todoID)
+}
+
+func openTodoByID(todos []Todo, todoID string) (Todo, bool) {
 	for _, todo := range todos {
-		if todo.ID == todoID && todo.Status == TodoStatusActive {
+		if todo.ID == todoID && isOpenTodoStatus(todo.Status) {
 			return todo, true
 		}
 	}
 	return Todo{}, false
+}
+
+func clearActiveTodoContext(state *ProjectState, todoID string) {
+	if state.ActiveTodoID == todoID {
+		state.ActiveTodoID = ""
+		state.ActiveTodoProjectID = ""
+		state.ActiveTerminalID = ""
+	}
 }
 
 func containsTodoProject(todoProjects []TodoProject, todoProjectID string) bool {

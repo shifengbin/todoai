@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -61,8 +62,12 @@ func TestParseGitStatusPorcelainV2HandlesCleanDetachedRepository(t *testing.T) {
 	}
 }
 
+func gitAvailable() error {
+	return nil
+}
+
 func TestGitStatusForPathReturnsNonRepoStatus(t *testing.T) {
-	status, err := gitStatusForPath("/work/not-repo", func(ctx context.Context, path string) ([]byte, error) {
+	status, err := gitStatusForPath("/work/not-repo", gitAvailable, func(ctx context.Context, path string) ([]byte, error) {
 		return []byte("fatal: not a git repository (or any of the parent directories): .git"), errors.New("exit status 128")
 	})
 
@@ -74,8 +79,28 @@ func TestGitStatusForPathReturnsNonRepoStatus(t *testing.T) {
 	}
 }
 
+func TestGitStatusForPathReturnsGitUnavailableWithoutRunningStatus(t *testing.T) {
+	called := false
+	status, err := gitStatusForPath("/work/repo", func() error {
+		return exec.ErrNotFound
+	}, func(ctx context.Context, path string) ([]byte, error) {
+		called = true
+		return []byte("should not run"), nil
+	})
+
+	if err != nil {
+		t.Fatalf("gitStatusForPath() error = %v, want nil", err)
+	}
+	if called {
+		t.Fatal("git status runner was called, want skipped")
+	}
+	if !status.GitUnavailable {
+		t.Fatal("GitUnavailable = false, want true")
+	}
+}
+
 func TestGitStatusForPathReturnsCommandFailure(t *testing.T) {
-	_, err := gitStatusForPath("/work/repo", func(ctx context.Context, path string) ([]byte, error) {
+	_, err := gitStatusForPath("/work/repo", gitAvailable, func(ctx context.Context, path string) ([]byte, error) {
 		return []byte("git: command not found"), errors.New("exec: git not found")
 	})
 
@@ -90,7 +115,7 @@ func TestGitStatusForPathReturnsCommandFailure(t *testing.T) {
 func TestInitializeGitRepositoryForPathRunsGitInit(t *testing.T) {
 	called := false
 	gotPath := ""
-	err := initializeGitRepositoryForPath("/work/new-repo", func(ctx context.Context, path string) ([]byte, error) {
+	err := initializeGitRepositoryForPath("/work/new-repo", gitAvailable, func(ctx context.Context, path string) ([]byte, error) {
 		called = true
 		gotPath = path
 		return []byte("Initialized empty Git repository"), nil
@@ -107,8 +132,28 @@ func TestInitializeGitRepositoryForPathRunsGitInit(t *testing.T) {
 	}
 }
 
+func TestInitializeGitRepositoryForPathReturnsGitUnavailableWithoutRunningInit(t *testing.T) {
+	called := false
+	err := initializeGitRepositoryForPath("/work/new-repo", func() error {
+		return exec.ErrNotFound
+	}, func(ctx context.Context, path string) ([]byte, error) {
+		called = true
+		return []byte("should not run"), nil
+	})
+
+	if err == nil {
+		t.Fatal("initializeGitRepositoryForPath() error = nil, want error")
+	}
+	if called {
+		t.Fatal("git init runner was called, want skipped")
+	}
+	if !strings.Contains(err.Error(), "Git is not installed") {
+		t.Fatalf("error = %q, want Git is not installed", err.Error())
+	}
+}
+
 func TestInitializeGitRepositoryForPathReturnsCommandFailure(t *testing.T) {
-	err := initializeGitRepositoryForPath("/work/new-repo", func(ctx context.Context, path string) ([]byte, error) {
+	err := initializeGitRepositoryForPath("/work/new-repo", gitAvailable, func(ctx context.Context, path string) ([]byte, error) {
 		return []byte("fatal: could not create work tree dir"), errors.New("exit status 128")
 	})
 

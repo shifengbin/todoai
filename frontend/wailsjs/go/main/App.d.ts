@@ -8,6 +8,8 @@ export function AddProjectToTodo(arg1:string,arg2:string):Promise<main.ProjectSt
 
 export function AddProjectsToTodo(arg1:string,arg2:Array<string>):Promise<main.ProjectState>;
 
+export function ChangeTodoStatus(arg1:string,arg2:string):Promise<main.ProjectState>;
+
 export function CompleteTodo(arg1:string):Promise<main.ProjectState>;
 
 export function CreateProjectFromDialog():Promise<main.ProjectState>;
