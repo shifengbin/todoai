@@ -666,6 +666,55 @@ button {
     color: var(--delete-hover-text);
 }
 
+.todo-context-menu {
+    position: fixed;
+    z-index: 25;
+    display: grid;
+    min-width: 148px;
+    overflow: hidden;
+    border: 1px solid var(--control-border);
+    background: var(--surface-bg);
+    box-shadow: 0 8px 22px var(--shadow);
+    padding: 4px;
+    gap: 1px;
+}
+
+.todo-context-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 30px;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    text-align: left;
+    padding: 0 8px;
+}
+
+.todo-context-menu-item:hover {
+    background: var(--accent-soft);
+    color: var(--accent);
+}
+
+.todo-context-menu-item-danger {
+    color: var(--delete-text);
+}
+
+.todo-context-menu-item-danger:hover {
+    background: var(--delete-hover-bg);
+    color: var(--delete-hover-text);
+}
+
+.todo-context-menu-separator {
+    height: 1px;
+    margin: 2px 6px;
+    background: var(--control-border);
+}
+
 .todo-project-list {
     position: relative;
     display: grid;

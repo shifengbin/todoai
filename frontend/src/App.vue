@@ -638,6 +638,11 @@ async function deleteTodo(todoId) {
   }
 }
 
+function copyTodoDescription(todoId) {
+  const todo = todos.value.find((candidate) => candidate.id === todoId)
+  ClipboardSetText(todo?.description || '')
+}
+
 async function changeTodoStatus(todoId, status) {
   try {
     applyState(await ChangeTodoStatus(todoId, status))
@@ -1217,6 +1222,7 @@ function showError(error) {
       @remove-todo-project="removeTodoProject"
       @change-todo-status="changeTodoStatus"
       @complete-todo="completeTodo"
+      @copy-todo-description="copyTodoDescription"
       @delete-todo="deleteTodo"
       @create-terminal="createTerminal"
       @select-terminal="selectTerminal"
@@ -1336,7 +1342,7 @@ function showError(error) {
       </footer>
     </section>
 
-    <div v-if="todoForm.visible" class="settings-overlay" @click="closeTodoForm">
+    <div v-if="todoForm.visible" class="settings-overlay">
       <section class="settings-dialog todo-dialog" data-testid="todo-create-dialog" @click.stop>
         <header class="settings-header">
           <div>
@@ -1455,7 +1461,7 @@ function showError(error) {
       </section>
     </div>
 
-    <div v-if="todoDetail.visible" class="settings-overlay" @click="closeTodoDetail">
+    <div v-if="todoDetail.visible" class="settings-overlay">
       <section class="settings-dialog todo-dialog" data-testid="todo-detail-dialog" @click.stop>
         <header class="settings-header">
           <div>
@@ -1576,7 +1582,7 @@ function showError(error) {
       </section>
     </div>
 
-    <div v-if="projectPicker.visible" class="settings-overlay" @click="closeProjectPicker">
+    <div v-if="projectPicker.visible" class="settings-overlay">
       <section class="settings-dialog todo-dialog" data-testid="todo-project-picker-dialog" @click.stop>
         <header class="settings-header">
           <div>

@@ -542,7 +542,7 @@ describe('App project terminal tree', () => {
     )
     const wrapper = await mountReadyApp()
 
-    await wrapper.find('[data-testid="add-project-to-todo-todo-a"]').trigger('click')
+    await selectTodoMenuAction(wrapper, 'add-project', 'todo-a')
     await nextTick()
     await wrapper.find('[data-testid="todo-project-picker-filter"]').setValue('api')
     await nextTick()
@@ -577,7 +577,7 @@ describe('App project terminal tree', () => {
     )
     const wrapper = await mountReadyApp()
 
-    await wrapper.find('[data-testid="add-project-to-todo-todo-a"]').trigger('click')
+    await selectTodoMenuAction(wrapper, 'add-project', 'todo-a')
     await nextTick()
     await wrapper.find('[data-testid="todo-project-picker-filter"]').setValue('api')
     await nextTick()
@@ -629,7 +629,7 @@ describe('App project terminal tree', () => {
     )
     const wrapper = await mountReadyApp()
 
-    await wrapper.find('[data-testid="edit-todo-todo-a"]').trigger('click')
+    await selectTodoMenuAction(wrapper, 'edit', 'todo-a')
     await nextTick()
 
     expect(wrapper.find('[data-testid="todo-detail-dialog"]').exists()).toBe(true)
@@ -669,7 +669,7 @@ describe('App project terminal tree', () => {
     )
     const wrapper = await mountReadyApp()
 
-    await wrapper.find('[data-testid="edit-todo-todo-a"]').trigger('click')
+    await selectTodoMenuAction(wrapper, 'edit', 'todo-a')
     await wrapper.find('[data-testid="todo-detail-selected-project-remove-project-a"]').trigger('click')
     await wrapper.find('[data-testid="todo-detail-submit"]').trigger('click')
     await flushPromises()
@@ -740,7 +740,7 @@ describe('App project terminal tree', () => {
   it('does not delete a TODO when the sidebar confirmation is cancelled', async () => {
     const wrapper = await mountReadyApp()
 
-    await wrapper.find('[data-testid="delete-todo-todo-a"]').trigger('click')
+    await selectTodoMenuAction(wrapper, 'delete', 'todo-a')
     await nextTick()
 
     expect(wrapper.find('[data-testid="delete-todo-popover-todo-a"]').exists()).toBe(true)
@@ -757,12 +757,17 @@ describe('App project terminal tree', () => {
     const wrapper = await mountReadyApp()
 
     expect(wrapper.find('[data-testid="mark-todo-in-progress-todo-a"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="delete-todo-todo-a"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="edit-todo-todo-a"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="add-project-to-todo-todo-a"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="delete-todo-todo-a"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="edit-todo-todo-a"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="add-project-to-todo-todo-a"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="complete-todo-todo-a"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="mark-todo-not-started-todo-a"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="add-terminal-todo-project-a"]').exists()).toBe(false)
+
+    await openTodoContextMenu(wrapper, 'todo-a')
+    expect(wrapper.find('[data-testid="todo-menu-edit-todo-a"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="todo-menu-add-project-todo-a"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="todo-menu-delete-todo-a"]').exists()).toBe(true)
   })
 
   it('shows complete and terminal actions for in-progress TODOs', async () => {
@@ -772,12 +777,17 @@ describe('App project terminal tree', () => {
     await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
 
     expect(wrapper.find('[data-testid="complete-todo-todo-a"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="delete-todo-todo-a"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="edit-todo-todo-a"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="add-project-to-todo-todo-a"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="delete-todo-todo-a"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="edit-todo-todo-a"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="add-project-to-todo-todo-a"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="add-terminal-todo-project-a"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="mark-todo-not-started-todo-a"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="mark-todo-in-progress-todo-a"]').exists()).toBe(false)
+
+    await openTodoContextMenu(wrapper, 'todo-a')
+    expect(wrapper.find('[data-testid="todo-menu-edit-todo-a"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="todo-menu-add-project-todo-a"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="todo-menu-delete-todo-a"]').exists()).toBe(true)
   })
 
   it('changes TODO workflow status from the sidebar', async () => {
@@ -1665,6 +1675,30 @@ async function openTerminalMenu(wrapper) {
     clientX: 48,
     clientY: 64
   })
+  await nextTick()
+}
+
+async function openTodoContextMenu(wrapper, todoId) {
+  await wrapper.find(`[data-testid="todo-${todoId}"]`).trigger('contextmenu', {
+    clientX: 48,
+    clientY: 64
+  })
+  await nextTick()
+}
+
+async function selectTodoMenuAction(wrapper, action, todoId) {
+  await openTodoContextMenu(wrapper, todoId)
+  const actionMap = {
+    edit: `todo-menu-edit-${todoId}`,
+    'add-project': `todo-menu-add-project-${todoId}`,
+    'copy-description': `todo-menu-copy-description-${todoId}`,
+    delete: `todo-menu-delete-${todoId}`
+  }
+  const testId = actionMap[action]
+  if (!testId) {
+    throw new Error(`Unknown todo menu action: ${action}`)
+  }
+  await wrapper.find(`[data-testid="${testId}"]`).trigger('click')
   await nextTick()
 }
 

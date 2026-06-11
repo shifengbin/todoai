@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronRight,
   CircleAlert,
+  Copy,
   FolderInput,
   FolderPlus,
   Eye,
@@ -75,6 +76,7 @@ const emit = defineEmits([
   'remove-todo-project',
   'change-todo-status',
   'complete-todo',
+  'copy-todo-description',
   'delete-todo',
   'create-terminal',
   'select-terminal',
@@ -93,6 +95,7 @@ const todoActionConfirm = ref({ todoId: '', action: '' })
 const confirmDeleteProjectId = ref('')
 const selectedProjectIds = ref(new Set())
 const confirmBulkDeleteProjects = ref(false)
+const todoContextMenu = ref({ todoId: '', x: 0, y: 0 })
 const launchMenuPlacement = ref('down')
 const launchMenuMaxHeight = ref('')
 
@@ -274,6 +277,7 @@ function toggleTerminalLaunchMenu(todoProject, event) {
   expandTodo(todoProject.todoId)
   closeTodoProjectRemovePopover()
   closeTodoActionPopover()
+  closeTodoContextMenu()
   if (openLaunchTodoProjectId.value === todoProject.id) {
     closeTerminalLaunchMenu()
     return
@@ -292,6 +296,7 @@ function openTodoProjectRemovePopover(todoProjectId) {
   closeTerminalLaunchMenu()
   closeTodoActionPopover()
   closeProjectDeletePopover()
+  closeTodoContextMenu()
   confirmRemoveTodoProjectId.value = todoProjectId
 }
 
@@ -308,11 +313,30 @@ function openTodoActionPopover(todoId, action) {
   closeTerminalLaunchMenu()
   closeTodoProjectRemovePopover()
   closeProjectDeletePopover()
+  closeTodoContextMenu()
   todoActionConfirm.value = { todoId, action }
 }
 
 function closeTodoActionPopover() {
   todoActionConfirm.value = { todoId: '', action: '' }
+}
+
+function openTodoContextMenu(todoId, event) {
+  event.preventDefault()
+  closeTerminalLaunchMenu()
+  closeTodoProjectRemovePopover()
+  closeTodoActionPopover()
+  closeProjectDeletePopover()
+  closeBulkProjectDeletePopover()
+  todoContextMenu.value = { todoId, x: event.clientX, y: event.clientY }
+}
+
+function closeTodoContextMenu() {
+  todoContextMenu.value = { todoId: '', x: 0, y: 0 }
+}
+
+function isTodoContextMenuOpen(todoId) {
+  return todoContextMenu.value.todoId === todoId
 }
 
 function isTodoActionPopoverOpen(todoId, action) {
@@ -338,6 +362,7 @@ function openProjectDeletePopover(projectId) {
   closeTodoProjectRemovePopover()
   closeTodoActionPopover()
   closeBulkProjectDeletePopover()
+  closeTodoContextMenu()
   confirmDeleteProjectId.value = projectId
 }
 
@@ -375,6 +400,7 @@ function openBulkProjectDeletePopover() {
   closeTodoProjectRemovePopover()
   closeTodoActionPopover()
   closeProjectDeletePopover()
+  closeTodoContextMenu()
   confirmBulkDeleteProjects.value = true
 }
 
@@ -403,6 +429,7 @@ function closeFloatingMenus() {
   closeTodoActionPopover()
   closeProjectDeletePopover()
   closeBulkProjectDeletePopover()
+  closeTodoContextMenu()
 }
 
 function selectTerminalLaunchOption(todoProject, option) {
@@ -842,6 +869,7 @@ watch(
               :data-activity-state="collapsedTodoActivityState(todo) || null"
               :data-testid="`todo-${todo.id}`"
               :title="collapsedTodoActivityState(todo) ? collapsedTodoActivityLabel(todo) : null"
+              @contextmenu.prevent.stop="openTodoContextMenu(todo.id, $event)"
             >
               <ListTodo class="project-icon" :size="17" />
               <span class="project-copy">
@@ -887,24 +915,6 @@ watch(
               >
                 <Play :size="14" />
               </button>
-              <button
-                type="button"
-                class="todo-action-button"
-                :data-testid="`edit-todo-${todo.id}`"
-                title="View and edit TODO"
-                @click.stop="emit('edit-todo', todo.id)"
-              >
-                <Eye :size="14" />
-              </button>
-              <button
-                type="button"
-                class="todo-action-button"
-                :data-testid="`add-project-to-todo-${todo.id}`"
-                title="Add project"
-                @click.stop="emit('add-project-to-todo', todo.id)"
-              >
-                <FolderPlus :size="14" />
-              </button>
               <div v-if="todoWorkflowStatus(todo) === 'in-progress'" class="todo-action-confirm-control">
                 <button
                   type="button"
@@ -947,48 +957,82 @@ watch(
                   </div>
                 </div>
               </div>
-              <div class="todo-action-confirm-control">
-                <button
-                  type="button"
-                  class="delete-project-button todo-action-button"
-                  :data-testid="`delete-todo-${todo.id}`"
-                  title="Delete TODO"
-                  :aria-expanded="isTodoActionPopoverOpen(todo.id, 'delete')"
-                  :aria-controls="`delete-todo-popover-${todo.id}`"
-                  @click.stop="openTodoActionPopover(todo.id, 'delete')"
-                >
-                  <Trash2 :size="14" />
-                </button>
-                <div
-                  v-if="isTodoActionPopoverOpen(todo.id, 'delete')"
-                  :id="`delete-todo-popover-${todo.id}`"
-                  class="todo-action-popover"
-                  :data-testid="`delete-todo-popover-${todo.id}`"
-                  @click.stop
-                >
-                  <span class="todo-action-confirm-copy">Delete TODO?</span>
-                  <div class="todo-action-confirm-actions">
-                    <button
-                      type="button"
-                      class="todo-action-confirm-cancel"
-                      :data-testid="`cancel-delete-todo-${todo.id}`"
-                      aria-label="Cancel deleting TODO"
-                      @click="closeTodoActionPopover"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      class="todo-action-confirm-button todo-action-confirm-button-delete"
-                      :data-testid="`confirm-delete-todo-${todo.id}`"
-                      aria-label="Confirm deleting TODO"
-                      @click="confirmTodoAction(todo.id, 'delete')"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              </div>
+            </div>
+          </div>
+
+          <div
+            v-if="isTodoContextMenuOpen(todo.id)"
+            class="todo-context-menu"
+            :style="{ left: todoContextMenu.x + 'px', top: todoContextMenu.y + 'px' }"
+            :data-testid="`todo-context-menu-${todo.id}`"
+            @click.stop
+          >
+            <button
+              type="button"
+              class="todo-context-menu-item"
+              :data-testid="`todo-menu-edit-${todo.id}`"
+              @click="emit('edit-todo', todo.id); closeTodoContextMenu()"
+            >
+              <Eye :size="14" />
+              <span>View details</span>
+            </button>
+            <button
+              type="button"
+              class="todo-context-menu-item"
+              :data-testid="`todo-menu-add-project-${todo.id}`"
+              @click="emit('add-project-to-todo', todo.id); closeTodoContextMenu()"
+            >
+              <FolderPlus :size="14" />
+              <span>Add project</span>
+            </button>
+            <button
+              type="button"
+              class="todo-context-menu-item"
+              :data-testid="`todo-menu-copy-description-${todo.id}`"
+              @click="emit('copy-todo-description', todo.id); closeTodoContextMenu()"
+            >
+              <Copy :size="14" />
+              <span>Copy description</span>
+            </button>
+            <div class="todo-context-menu-separator"></div>
+            <button
+              type="button"
+              class="todo-context-menu-item todo-context-menu-item-danger"
+              :data-testid="`todo-menu-delete-${todo.id}`"
+              @click="openTodoActionPopover(todo.id, 'delete'); closeTodoContextMenu()"
+            >
+              <Trash2 :size="14" />
+              <span>Delete TODO</span>
+            </button>
+          </div>
+
+          <div
+            v-if="isTodoActionPopoverOpen(todo.id, 'delete')"
+            :id="`delete-todo-popover-${todo.id}`"
+            class="todo-action-popover"
+            :data-testid="`delete-todo-popover-${todo.id}`"
+            @click.stop
+          >
+            <span class="todo-action-confirm-copy">Delete TODO?</span>
+            <div class="todo-action-confirm-actions">
+              <button
+                type="button"
+                class="todo-action-confirm-cancel"
+                :data-testid="`cancel-delete-todo-${todo.id}`"
+                aria-label="Cancel deleting TODO"
+                @click="closeTodoActionPopover"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                class="todo-action-confirm-button todo-action-confirm-button-delete"
+                :data-testid="`confirm-delete-todo-${todo.id}`"
+                aria-label="Confirm deleting TODO"
+                @click="confirmTodoAction(todo.id, 'delete')"
+              >
+                Delete
+              </button>
             </div>
           </div>
 

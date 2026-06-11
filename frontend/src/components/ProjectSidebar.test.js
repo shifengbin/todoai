@@ -32,15 +32,18 @@ describe('ProjectSidebar', () => {
     expect(wrapper.find('[data-testid="terminal-terminal-a"]').classes()).toContain('active')
 
     await wrapper.find('[data-testid="new-todo"]').trigger('click')
-    await wrapper.find('[data-testid="edit-todo-todo-a"]').trigger('click')
-    await wrapper.find('[data-testid="add-project-to-todo-todo-a"]').trigger('click')
+    await openTodoContextMenu(wrapper, 'todo-a')
+    await wrapper.find('[data-testid="todo-menu-edit-todo-a"]').trigger('click')
+    await openTodoContextMenu(wrapper, 'todo-a')
+    await wrapper.find('[data-testid="todo-menu-add-project-todo-a"]').trigger('click')
     await wrapper.find('[data-testid="todo-project-todo-project-a"]').trigger('click')
     await wrapper.find('[data-testid="add-terminal-todo-project-a"]').trigger('click')
     await wrapper.find('[data-testid="terminal-launch-option-todo-project-a-1"]').trigger('click')
     await wrapper.find('[data-testid="terminal-terminal-a"]').trigger('click')
     await wrapper.find('[data-testid="complete-todo-todo-a"]').trigger('click')
     await wrapper.find('[data-testid="confirm-complete-todo-todo-a"]').trigger('click')
-    await wrapper.find('[data-testid="delete-todo-todo-a"]').trigger('click')
+    await openTodoContextMenu(wrapper, 'todo-a')
+    await wrapper.find('[data-testid="todo-menu-delete-todo-a"]').trigger('click')
     await wrapper.find('[data-testid="confirm-delete-todo-todo-a"]').trigger('click')
 
     expect(wrapper.emitted('create-todo')).toHaveLength(1)
@@ -103,7 +106,68 @@ describe('ProjectSidebar', () => {
     expect(wrapper.find('[data-testid="mark-todo-not-started-todo-b"]').exists()).toBe(false)
   })
 
-  it('groups TODO workflow tabs and item actions into single rows', () => {
+  it('shows TODO management actions in the context menu', async () => {
+    const wrapper = mountSidebar()
+
+    await openTodoContextMenu(wrapper, 'todo-a')
+
+    const menu = wrapper.find('[data-testid="todo-context-menu-todo-a"]')
+    expect(menu.exists()).toBe(true)
+    expect(menu.text()).toContain('View details')
+    expect(menu.text()).toContain('Add project')
+    expect(menu.text()).toContain('Copy description')
+    expect(menu.text()).toContain('Delete TODO')
+
+    await wrapper.find('[data-testid="todo-menu-copy-description-todo-a"]').trigger('click')
+
+    expect(wrapper.emitted('copy-todo-description')[0]).toEqual(['todo-a'])
+    expect(wrapper.find('[data-testid="todo-context-menu-todo-a"]').exists()).toBe(false)
+  })
+
+  it('emits TODO management actions from the context menu', async () => {
+    const wrapper = mountSidebar()
+
+    await openTodoContextMenu(wrapper, 'todo-a')
+    await wrapper.find('[data-testid="todo-menu-edit-todo-a"]').trigger('click')
+    await openTodoContextMenu(wrapper, 'todo-a')
+    await wrapper.find('[data-testid="todo-menu-add-project-todo-a"]').trigger('click')
+    await openTodoContextMenu(wrapper, 'todo-a')
+    await wrapper.find('[data-testid="todo-menu-delete-todo-a"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.emitted('edit-todo')[0]).toEqual(['todo-a'])
+    expect(wrapper.emitted('add-project-to-todo')[0]).toEqual(['todo-a'])
+    expect(wrapper.find('[data-testid="todo-context-menu-todo-a"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="delete-todo-popover-todo-a"]').exists()).toBe(true)
+    expect(wrapper.emitted('delete-todo')).toBeUndefined()
+  })
+
+  it('closes TODO context menus from outside clicks and other sidebar popovers', async () => {
+    const wrapper = mountInProgressSidebar({
+      props: {
+        launchProfiles: [{ name: 'codex', command: 'codex' }]
+      }
+    })
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+    await openTodoContextMenu(wrapper, 'todo-a')
+    window.dispatchEvent(new MouseEvent('click'))
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="todo-context-menu-todo-a"]').exists()).toBe(false)
+    expect(wrapper.emitted('edit-todo')).toBeUndefined()
+    expect(wrapper.emitted('add-project-to-todo')).toBeUndefined()
+    expect(wrapper.emitted('copy-todo-description')).toBeUndefined()
+
+    await openTodoContextMenu(wrapper, 'todo-a')
+    await wrapper.find('[data-testid="add-terminal-todo-project-a"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="todo-context-menu-todo-a"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="terminal-launch-menu-todo-project-a"]').exists()).toBe(true)
+  })
+
+  it('groups TODO workflow tabs and status item actions into single rows', () => {
     const wrapper = mountSidebar()
     const workflowTabs = wrapper.find('[data-testid="todo-workflow-tabs"]')
     const actionGroup = wrapper.find('[data-testid="todo-actions-todo-a"]')
@@ -121,12 +185,10 @@ describe('ProjectSidebar', () => {
     const actionTestIds = Array.from(actionGroup.element.children).map((node) => {
       return node.getAttribute('data-testid') || node.querySelector('[data-testid]')?.getAttribute('data-testid')
     })
-    expect(actionTestIds).toEqual([
-      'mark-todo-in-progress-todo-a',
-      'edit-todo-todo-a',
-      'add-project-to-todo-todo-a',
-      'delete-todo-todo-a'
-    ])
+    expect(actionTestIds).toEqual(['mark-todo-in-progress-todo-a'])
+    expect(wrapper.find('[data-testid="edit-todo-todo-a"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="add-project-to-todo-todo-a"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="delete-todo-todo-a"]').exists()).toBe(false)
     expect(tabsRule).toContain('grid-template-columns: repeat(3, minmax(0, 1fr));')
     expect(actionsRule).toContain('display: inline-flex;')
     expect(actionsRule).toContain('flex-wrap: nowrap;')
@@ -664,7 +726,8 @@ describe('ProjectSidebar', () => {
     expect(wrapper.emitted('complete-todo')).toBeUndefined()
 
     await wrapper.find('[data-testid="cancel-complete-todo-todo-a"]').trigger('click')
-    await wrapper.find('[data-testid="delete-todo-todo-a"]').trigger('click')
+    await openTodoContextMenu(wrapper, 'todo-a')
+    await wrapper.find('[data-testid="todo-menu-delete-todo-a"]').trigger('click')
     await nextTick()
 
     expect(wrapper.find('[data-testid="delete-todo-popover-todo-a"]').exists()).toBe(true)
@@ -689,7 +752,8 @@ describe('ProjectSidebar', () => {
     expect(wrapper.emitted('complete-todo')[0]).toEqual(['todo-a'])
     expect(wrapper.find('[data-testid="complete-todo-popover-todo-a"]').exists()).toBe(false)
 
-    await wrapper.find('[data-testid="delete-todo-todo-a"]').trigger('click')
+    await openTodoContextMenu(wrapper, 'todo-a')
+    await wrapper.find('[data-testid="todo-menu-delete-todo-a"]').trigger('click')
     await wrapper.find('[data-testid="confirm-delete-todo-todo-a"]').trigger('click')
 
     expect(wrapper.emitted('delete-todo')[0]).toEqual(['todo-a'])
@@ -705,7 +769,8 @@ describe('ProjectSidebar', () => {
 
     await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
 
-    await wrapper.find('[data-testid="delete-todo-todo-a"]').trigger('click')
+    await openTodoContextMenu(wrapper, 'todo-a')
+    await wrapper.find('[data-testid="todo-menu-delete-todo-a"]').trigger('click')
     window.dispatchEvent(new MouseEvent('click'))
     await nextTick()
 
@@ -719,7 +784,8 @@ describe('ProjectSidebar', () => {
     expect(wrapper.find('[data-testid="complete-todo-popover-todo-a"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="terminal-launch-menu-todo-project-a"]').exists()).toBe(true)
 
-    await wrapper.find('[data-testid="delete-todo-todo-a"]').trigger('click')
+    await openTodoContextMenu(wrapper, 'todo-a')
+    await wrapper.find('[data-testid="todo-menu-delete-todo-a"]').trigger('click')
     await wrapper.find('[data-testid="remove-todo-project-todo-project-a"]').trigger('click')
     await nextTick()
 
@@ -923,6 +989,14 @@ function completedTodoTitles(wrapper) {
     .find('[data-testid="completed-todos"]')
     .findAll('.completed-todo-title span')
     .map((node) => node.text())
+}
+
+async function openTodoContextMenu(wrapper, todoId) {
+  await wrapper.find(`[data-testid="todo-${todoId}"]`).trigger('contextmenu', {
+    clientX: 48,
+    clientY: 64
+  })
+  await nextTick()
 }
 
 function mountSidebar(options = {}) {
