@@ -9,6 +9,8 @@ import {
   FolderInput,
   FolderPlus,
   Eye,
+  ListChevronsDownUp,
+  ListChevronsUpDown,
   ListTodo,
   LoaderCircle,
   Plus,
@@ -64,6 +66,7 @@ const emit = defineEmits([
   'import-projects',
   'select-project',
   'delete-project',
+  'delete-projects',
   'create-todo',
   'edit-todo',
   'add-project-to-todo',
@@ -78,10 +81,14 @@ const emit = defineEmits([
 
 const activeTab = ref('todos')
 const todoView = ref('active')
+const activeTodoSortMode = ref('priority')
 const collapsedTodoIds = ref(new Set())
 const openLaunchTodoProjectId = ref('')
 const confirmRemoveTodoProjectId = ref('')
 const todoActionConfirm = ref({ todoId: '', action: '' })
+const confirmDeleteProjectId = ref('')
+const selectedProjectIds = ref(new Set())
+const confirmBulkDeleteProjects = ref(false)
 const launchMenuPlacement = ref('down')
 const launchMenuMaxHeight = ref('')
 
@@ -95,8 +102,24 @@ const terminalLaunchOptions = computed(() => [
   ...props.launchProfiles
 ])
 
-const activeTodos = computed(() => props.todos.filter((todo) => todo.status === 'active'))
+const todoPriorityOrder = {
+  high: 0,
+  medium: 1,
+  low: 2
+}
+
+const activeTodos = computed(() =>
+  props.todos
+    .map((todo, index) => ({ todo, index }))
+    .filter(({ todo }) => todo.status === 'active')
+    .sort(compareActiveTodoEntries)
+    .map(({ todo }) => todo)
+)
 const archivedTodos = computed(() => props.todos.filter((todo) => todo.status !== 'active'))
+const activeTodoIds = computed(() => activeTodos.value.map((todo) => todo.id))
+const hasActiveTodos = computed(() => activeTodoIds.value.length > 0)
+const selectedProjectCount = computed(() => selectedProjectIds.value.size)
+const selectedProjectIdsList = computed(() => props.projects.filter((project) => selectedProjectIds.value.has(project.id)).map((project) => project.id))
 
 const projectsById = computed(() => {
   const projects = new Map()
@@ -182,6 +205,30 @@ function toggleTodoBranch(todoId) {
   collapsedTodoIds.value = nextCollapsedTodoIds
 }
 
+function collapseAllTodos() {
+  if (!hasActiveTodos.value) {
+    return
+  }
+
+  const nextCollapsedTodoIds = new Set(collapsedTodoIds.value)
+  for (const todoId of activeTodoIds.value) {
+    nextCollapsedTodoIds.add(todoId)
+  }
+  collapsedTodoIds.value = nextCollapsedTodoIds
+}
+
+function expandAllTodos() {
+  if (!hasActiveTodos.value) {
+    return
+  }
+
+  const nextCollapsedTodoIds = new Set(collapsedTodoIds.value)
+  for (const todoId of activeTodoIds.value) {
+    nextCollapsedTodoIds.delete(todoId)
+  }
+  collapsedTodoIds.value = nextCollapsedTodoIds
+}
+
 function expandTodo(todoId) {
   if (!todoId || !collapsedTodoIds.value.has(todoId)) {
     return
@@ -218,6 +265,7 @@ function closeTerminalLaunchMenu() {
 function openTodoProjectRemovePopover(todoProjectId) {
   closeTerminalLaunchMenu()
   closeTodoActionPopover()
+  closeProjectDeletePopover()
   confirmRemoveTodoProjectId.value = todoProjectId
 }
 
@@ -233,6 +281,7 @@ function confirmTodoProjectRemoval(todoProjectId) {
 function openTodoActionPopover(todoId, action) {
   closeTerminalLaunchMenu()
   closeTodoProjectRemovePopover()
+  closeProjectDeletePopover()
   todoActionConfirm.value = { todoId, action }
 }
 
@@ -253,10 +302,76 @@ function confirmTodoAction(todoId, action) {
   closeTodoActionPopover()
 }
 
+function openProjectDeletePopover(projectId) {
+  closeTerminalLaunchMenu()
+  closeTodoProjectRemovePopover()
+  closeTodoActionPopover()
+  closeBulkProjectDeletePopover()
+  confirmDeleteProjectId.value = projectId
+}
+
+function closeProjectDeletePopover() {
+  confirmDeleteProjectId.value = ''
+}
+
+function confirmProjectDeletion(projectId) {
+  emit('delete-project', projectId)
+  closeProjectDeletePopover()
+}
+
+function isProjectSelected(projectId) {
+  return selectedProjectIds.value.has(projectId)
+}
+
+function toggleProjectSelection(projectId) {
+  const nextSelectedProjectIds = new Set(selectedProjectIds.value)
+  if (nextSelectedProjectIds.has(projectId)) {
+    nextSelectedProjectIds.delete(projectId)
+  } else {
+    nextSelectedProjectIds.add(projectId)
+  }
+  selectedProjectIds.value = nextSelectedProjectIds
+  if (nextSelectedProjectIds.size === 0) {
+    closeBulkProjectDeletePopover()
+  }
+}
+
+function openBulkProjectDeletePopover() {
+  if (selectedProjectCount.value === 0) {
+    return
+  }
+  closeTerminalLaunchMenu()
+  closeTodoProjectRemovePopover()
+  closeTodoActionPopover()
+  closeProjectDeletePopover()
+  confirmBulkDeleteProjects.value = true
+}
+
+function closeBulkProjectDeletePopover() {
+  confirmBulkDeleteProjects.value = false
+}
+
+function clearProjectSelection() {
+  selectedProjectIds.value = new Set()
+  closeBulkProjectDeletePopover()
+}
+
+function confirmBulkProjectDeletion() {
+  const projectIds = selectedProjectIdsList.value
+  if (projectIds.length === 0) {
+    closeBulkProjectDeletePopover()
+    return
+  }
+  emit('delete-projects', projectIds)
+  clearProjectSelection()
+}
+
 function closeFloatingMenus() {
   closeTerminalLaunchMenu()
   closeTodoProjectRemovePopover()
   closeTodoActionPopover()
+  closeProjectDeletePopover()
+  closeBulkProjectDeletePopover()
 }
 
 function selectTerminalLaunchOption(todoProject, option) {
@@ -306,6 +421,60 @@ function terminalLaunchMenuStyle() {
 
 function terminalDisplayName(terminal) {
   return terminal.currentCommand || terminal.shellName || 'shell'
+}
+
+function compareActiveTodoEntries(left, right) {
+  if (activeTodoSortMode.value === 'time') {
+    return compareActiveTodosByTime(left, right)
+  }
+  return compareActiveTodosByPriority(left, right)
+}
+
+function compareActiveTodosByPriority(left, right) {
+  const priorityDiff = todoPriorityRank(left.todo) - todoPriorityRank(right.todo)
+  if (priorityDiff !== 0) {
+    return priorityDiff
+  }
+
+  return compareActiveTodosByTime(left, right)
+}
+
+function compareActiveTodosByTime(left, right) {
+  const createdAtDiff = compareTodoCreatedAt(left.todo, right.todo)
+  if (createdAtDiff !== 0) {
+    return createdAtDiff
+  }
+
+  return left.index - right.index
+}
+
+function setActiveTodoSortMode(mode) {
+  if (!['priority', 'time'].includes(mode)) {
+    return
+  }
+  activeTodoSortMode.value = mode
+}
+
+
+function todoPriorityRank(todo) {
+  return todoPriorityOrder[todoPriority(todo)]
+}
+
+function todoCreatedAtTimestamp(todo) {
+  const timestamp = Date.parse(todo?.createdAt || '')
+  return Number.isNaN(timestamp) ? Number.POSITIVE_INFINITY : timestamp
+}
+
+function compareTodoCreatedAt(left, right) {
+  const leftTimestamp = todoCreatedAtTimestamp(left)
+  const rightTimestamp = todoCreatedAtTimestamp(right)
+  if (leftTimestamp < rightTimestamp) {
+    return -1
+  }
+  if (leftTimestamp > rightTimestamp) {
+    return 1
+  }
+  return 0
 }
 
 function terminalActivityState(terminal) {
@@ -385,6 +554,22 @@ watch(
   },
   { immediate: true }
 )
+
+watch(
+  () => props.projects,
+  (projects) => {
+    const projectIds = new Set(projects.map((project) => project.id))
+    const nextSelectedProjectIds = new Set(
+      [...selectedProjectIds.value].filter((projectId) => projectIds.has(projectId))
+    )
+    if (nextSelectedProjectIds.size !== selectedProjectIds.value.size) {
+      selectedProjectIds.value = nextSelectedProjectIds
+    }
+    if (nextSelectedProjectIds.size === 0) {
+      closeBulkProjectDeletePopover()
+    }
+  }
+)
 </script>
 
 <template>
@@ -461,6 +646,58 @@ watch(
           @click="todoView = 'archived'"
         >
           Archived
+        </button>
+      </div>
+
+      <div
+        v-if="todoView === 'active'"
+        class="todo-tree-toolbar"
+        role="toolbar"
+        aria-label="TODO tree controls"
+      >
+        <div class="todo-sort-toggle" role="group" aria-label="Active TODO sort">
+          <button
+            type="button"
+            class="todo-sort-option"
+            :class="{ active: activeTodoSortMode === 'priority' }"
+            data-testid="sort-active-todos-priority"
+            :aria-pressed="activeTodoSortMode === 'priority'"
+            @click="setActiveTodoSortMode('priority')"
+          >
+            Priority
+          </button>
+          <button
+            type="button"
+            class="todo-sort-option"
+            :class="{ active: activeTodoSortMode === 'time' }"
+            data-testid="sort-active-todos-time"
+            :aria-pressed="activeTodoSortMode === 'time'"
+            @click="setActiveTodoSortMode('time')"
+          >
+            Time
+          </button>
+        </div>
+        <button
+          type="button"
+          class="todo-tree-action"
+          data-testid="collapse-all-todos"
+          :disabled="!hasActiveTodos"
+          aria-label="Collapse all TODOs"
+          title="Collapse all TODOs"
+          @click="collapseAllTodos"
+        >
+          <ListChevronsDownUp :size="15" />
+        </button>
+        <button
+          type="button"
+          class="todo-tree-action"
+          data-testid="expand-all-todos"
+          :disabled="!hasActiveTodos"
+          aria-label="Expand all TODOs"
+          title="Expand all TODOs"
+          @click="expandAllTodos"
+        >
+          <ListChevronsUpDown :size="15" />
         </button>
       </div>
 
@@ -843,6 +1080,47 @@ watch(
           <FolderInput :size="15" />
           <span>Import parent</span>
         </button>
+        <div class="bulk-project-delete-control">
+          <button
+            type="button"
+            class="library-action-button library-action-button-delete"
+            data-testid="bulk-delete-projects"
+            :disabled="selectedProjectCount === 0"
+            :aria-expanded="confirmBulkDeleteProjects"
+            aria-controls="bulk-delete-projects-popover"
+            @click.stop="openBulkProjectDeletePopover"
+          >
+            <Trash2 :size="15" />
+            <span>Delete selected ({{ selectedProjectCount }})</span>
+          </button>
+          <div
+            v-if="confirmBulkDeleteProjects"
+            id="bulk-delete-projects-popover"
+            class="bulk-project-delete-popover"
+            data-testid="bulk-delete-projects-popover"
+            @click.stop
+          >
+            <span class="project-delete-copy">Delete {{ selectedProjectCount }} projects?</span>
+            <div class="project-delete-actions">
+              <button
+                type="button"
+                class="project-delete-cancel"
+                data-testid="cancel-bulk-delete-projects"
+                @click="closeBulkProjectDeletePopover"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                class="project-delete-confirm"
+                data-testid="confirm-bulk-delete-projects"
+                @click="confirmBulkProjectDeletion"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div v-if="importSummary" class="import-summary" data-testid="import-summary">
@@ -862,6 +1140,14 @@ watch(
         }"
       >
         <div class="project-header-row library-project-header-row">
+          <input
+            type="checkbox"
+            class="project-select-checkbox"
+            :checked="isProjectSelected(project.id)"
+            :data-testid="`select-project-${project.id}`"
+            :aria-label="`Select ${project.name}`"
+            @click.stop="toggleProjectSelection(project.id)"
+          />
           <button
             type="button"
             class="project-row"
@@ -877,15 +1163,46 @@ watch(
             </span>
           </button>
 
-          <button
-            type="button"
-            class="delete-project-button"
-            :data-testid="`delete-project-${project.id}`"
-            title="Delete project"
-            @click.stop="emit('delete-project', project.id)"
-          >
-            <Trash2 :size="14" />
-          </button>
+          <div class="project-delete-control">
+            <button
+              type="button"
+              class="delete-project-button"
+              :data-testid="`delete-project-${project.id}`"
+              title="Delete project"
+              :aria-expanded="confirmDeleteProjectId === project.id"
+              :aria-controls="`delete-project-popover-${project.id}`"
+              @click.stop="openProjectDeletePopover(project.id)"
+            >
+              <Trash2 :size="14" />
+            </button>
+            <div
+              v-if="confirmDeleteProjectId === project.id"
+              :id="`delete-project-popover-${project.id}`"
+              class="project-delete-popover"
+              :data-testid="`delete-project-popover-${project.id}`"
+              @click.stop
+            >
+              <span class="project-delete-copy">Delete project?</span>
+              <div class="project-delete-actions">
+                <button
+                  type="button"
+                  class="project-delete-cancel"
+                  :data-testid="`cancel-delete-project-${project.id}`"
+                  @click="closeProjectDeletePopover"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  class="project-delete-confirm"
+                  :data-testid="`confirm-delete-project-${project.id}`"
+                  @click="confirmProjectDeletion(project.id)"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

@@ -5,17 +5,23 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 )
 
 const (
-	settingsConfigVersion = 1
-	ShellSourceDetected   = "detected"
-	ShellSourceManual     = "manual"
-	AppearanceThemeLight  = "light"
-	AppearanceThemeDark   = "dark"
+	settingsConfigVersion      = 1
+	ShellSourceDetected        = "detected"
+	ShellSourceManual          = "manual"
+	AppearanceThemeLight       = "light"
+	AppearanceThemeDark        = "dark"
+	legacyCodexLaunchCommand   = "codex"
+	legacyClaudeLaunchCommand  = "claude"
+	defaultCodexLaunchCommand  = "codex --dangerously-bypass-hook-trust --dangerously-bypass-approvals-and-sandbox"
+	defaultClaudeLaunchCommand = "claude --dangerously-skip-permissions"
 )
 
 type TerminalShellSetting struct {
@@ -42,9 +48,10 @@ type TerminalSettingsState struct {
 type SettingsManagerOption func(*SettingsManager)
 
 type SettingsManager struct {
-	mu         sync.Mutex
-	configPath string
-	detect     func() (TerminalShellSetting, error)
+	mu             sync.Mutex
+	configPath     string
+	detect         func() (TerminalShellSetting, error)
+	shellAvailable func(string) bool
 }
 
 type persistedSettings struct {
@@ -57,8 +64,9 @@ type persistedSettings struct {
 func NewSettingsManager(configPath string, opts ...SettingsManagerOption) *SettingsManager {
 	detector := NewShellDetector()
 	manager := &SettingsManager{
-		configPath: configPath,
-		detect:     detector.Detect,
+		configPath:     configPath,
+		detect:         detector.Detect,
+		shellAvailable: shellPathAvailable,
 	}
 	for _, opt := range opts {
 		opt(manager)
@@ -69,6 +77,12 @@ func NewSettingsManager(configPath string, opts ...SettingsManagerOption) *Setti
 func WithSettingsShellDetector(detect func() (TerminalShellSetting, error)) SettingsManagerOption {
 	return func(manager *SettingsManager) {
 		manager.detect = detect
+	}
+}
+
+func WithSettingsShellPathAvailable(available func(string) bool) SettingsManagerOption {
+	return func(manager *SettingsManager) {
+		manager.shellAvailable = available
 	}
 }
 
@@ -121,7 +135,7 @@ func (manager *SettingsManager) SaveShellPath(path string, source string) (Termi
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 
-	if !executablePath(path) {
+	if !manager.shellAvailable(path) {
 		state, _ := manager.loadExistingLocked()
 		return state, fmt.Errorf("terminal shell path is not executable: %s", path)
 	}
@@ -181,7 +195,13 @@ func (manager *SettingsManager) loadLocked() (TerminalSettingsState, error) {
 
 	state.Selected = normalizeShellSetting(state.Selected)
 	state.Theme = normalizeAppearanceTheme(state.Theme)
-	state.Selected.Available = executablePath(state.Selected.Path)
+	if launchProfiles, migrated := migrateDefaultTerminalLaunchProfileCommands(state.LaunchProfiles); migrated {
+		state.LaunchProfiles = launchProfiles
+		if saveErr := manager.saveLocked(state); saveErr != nil {
+			return TerminalSettingsState{}, saveErr
+		}
+	}
+	state.Selected.Available = manager.shellAvailable(state.Selected.Path)
 	if !state.Selected.Available {
 		fallback, fallbackErr := manager.detectShell()
 		if fallbackErr == nil {
@@ -254,7 +274,7 @@ func (manager *SettingsManager) detectShell() (TerminalShellSetting, error) {
 	}
 	detected = normalizeShellSetting(detected)
 	detected.Source = ShellSourceDetected
-	detected.Available = executablePath(detected.Path)
+	detected.Available = manager.shellAvailable(detected.Path)
 	if !detected.Available {
 		return TerminalShellSetting{}, fmt.Errorf("detected terminal shell is not executable: %s", detected.Path)
 	}
@@ -288,9 +308,29 @@ func normalizeTerminalLaunchProfiles(profiles []TerminalLaunchProfileSetting) ([
 
 func defaultTerminalLaunchProfiles() []TerminalLaunchProfileSetting {
 	return []TerminalLaunchProfileSetting{
-		{Name: "codex", Command: "codex"},
-		{Name: "claude", Command: "claude"},
+		{Name: "codex", Command: defaultCodexLaunchCommand},
+		{Name: "claude", Command: defaultClaudeLaunchCommand},
 	}
+}
+
+func migrateDefaultTerminalLaunchProfileCommands(profiles []TerminalLaunchProfileSetting) ([]TerminalLaunchProfileSetting, bool) {
+	migrated := append([]TerminalLaunchProfileSetting{}, profiles...)
+	changed := false
+	for index := range migrated {
+		profile := &migrated[index]
+		switch {
+		case profile.Name == "codex" && profile.Command == legacyCodexLaunchCommand:
+			profile.Command = defaultCodexLaunchCommand
+			changed = true
+		case profile.Name == "claude" && profile.Command == legacyClaudeLaunchCommand:
+			profile.Command = defaultClaudeLaunchCommand
+			changed = true
+		}
+	}
+	if !changed {
+		return profiles, false
+	}
+	return migrated, true
 }
 
 func normalizeShellSetting(setting TerminalShellSetting) TerminalShellSetting {
@@ -329,23 +369,22 @@ func supportedAppearanceTheme(theme string) bool {
 type ShellDetectorOption func(*ShellDetector)
 
 type ShellDetector struct {
-	getenv     func(string) string
-	candidates []string
+	goos           string
+	getenv         func(string) string
+	lookPath       func(string) (string, error)
+	candidates     []string
+	candidatesSet  bool
+	shellAvailable func(string) bool
 }
 
 func NewShellDetector(opts ...ShellDetectorOption) ShellDetector {
 	detector := ShellDetector{
-		getenv: os.Getenv,
-		candidates: []string{
-			"/bin/zsh",
-			"/usr/bin/zsh",
-			"/bin/bash",
-			"/usr/bin/bash",
-			"/bin/fish",
-			"/usr/bin/fish",
-			"/bin/sh",
-			"/usr/bin/sh",
-		},
+		goos:     runtime.GOOS,
+		getenv:   os.Getenv,
+		lookPath: exec.LookPath,
+	}
+	detector.shellAvailable = func(path string) bool {
+		return shellPathAvailableForOS(detector.goos, path, detector.getenv)
 	}
 	for _, opt := range opts {
 		opt(&detector)
@@ -359,21 +398,40 @@ func WithShellDetectorEnv(getenv func(string) string) ShellDetectorOption {
 	}
 }
 
+func WithShellDetectorPlatform(goos string) ShellDetectorOption {
+	return func(detector *ShellDetector) {
+		detector.goos = goos
+	}
+}
+
+func WithShellDetectorLookup(lookPath func(string) (string, error)) ShellDetectorOption {
+	return func(detector *ShellDetector) {
+		detector.lookPath = lookPath
+	}
+}
+
+func WithShellDetectorPathAvailable(available func(string) bool) ShellDetectorOption {
+	return func(detector *ShellDetector) {
+		detector.shellAvailable = available
+	}
+}
+
 func WithShellDetectorCandidates(candidates []string) ShellDetectorOption {
 	return func(detector *ShellDetector) {
 		detector.candidates = candidates
+		detector.candidatesSet = true
 	}
 }
 
 func (detector ShellDetector) Detect() (TerminalShellSetting, error) {
 	seen := map[string]bool{}
-	for _, path := range append([]string{detector.getenv("SHELL")}, detector.candidates...) {
-		path = filepath.Clean(path)
-		if path == "." || path == "" || seen[path] {
+	for _, path := range detector.candidatePaths() {
+		path = normalizeShellPath(path)
+		if path == "" || seen[path] {
 			continue
 		}
 		seen[path] = true
-		if executablePath(path) {
+		if detector.shellAvailable(path) {
 			return TerminalShellSetting{
 				Path:        path,
 				DisplayName: shellNameFromPath(path),
@@ -385,10 +443,142 @@ func (detector ShellDetector) Detect() (TerminalShellSetting, error) {
 	return TerminalShellSetting{}, errors.New("no executable terminal shell found")
 }
 
+func (detector ShellDetector) candidatePaths() []string {
+	if detector.goos == "windows" {
+		return detector.windowsCandidatePaths()
+	}
+	candidates := detector.candidates
+	if !detector.candidatesSet {
+		candidates = defaultUnixShellCandidates()
+	}
+	return append([]string{detector.getenv("SHELL")}, candidates...)
+}
+
+func (detector ShellDetector) windowsCandidatePaths() []string {
+	paths := []string{}
+	addLookup := func(name string) {
+		if path, err := detector.lookPath(name); err == nil {
+			paths = append(paths, path)
+		}
+	}
+	addLookup("pwsh.exe")
+	addLookup("pwsh")
+	addLookup("powershell.exe")
+	addLookup("powershell")
+	if systemRoot := detector.windowsRoot(); systemRoot != "" {
+		paths = append(paths, windowsPathJoin(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"))
+	}
+	if comspec := detector.getenv("COMSPEC"); comspec != "" {
+		paths = append(paths, comspec)
+	}
+	if systemRoot := detector.windowsRoot(); systemRoot != "" {
+		paths = append(paths, windowsPathJoin(systemRoot, "System32", "cmd.exe"))
+	}
+	addLookup("cmd.exe")
+	addLookup("cmd")
+	if shell := detector.getenv("SHELL"); shell != "" {
+		paths = append(paths, shell)
+	}
+	if detector.candidatesSet {
+		paths = append(paths, detector.candidates...)
+	}
+	return paths
+}
+
+func (detector ShellDetector) windowsRoot() string {
+	if root := detector.getenv("SystemRoot"); root != "" {
+		return root
+	}
+	return detector.getenv("WINDIR")
+}
+
+func defaultUnixShellCandidates() []string {
+	return []string{
+		"/bin/zsh",
+		"/usr/bin/zsh",
+		"/bin/bash",
+		"/usr/bin/bash",
+		"/bin/fish",
+		"/usr/bin/fish",
+		"/bin/sh",
+		"/usr/bin/sh",
+	}
+}
+
+func windowsPathJoin(base string, parts ...string) string {
+	path := strings.TrimRight(base, `\/`)
+	for _, part := range parts {
+		path += `\` + strings.Trim(part, `\/`)
+	}
+	return path
+}
+
+func normalizeShellPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	path = filepath.Clean(path)
+	if path == "." {
+		return ""
+	}
+	return path
+}
+
 func executablePath(path string) bool {
+	return shellPathAvailable(path)
+}
+
+func shellPathAvailable(path string) bool {
+	return shellPathAvailableForOS(runtime.GOOS, path, os.Getenv)
+}
+
+func shellPathAvailableForOS(goos string, path string, getenv func(string) string) bool {
 	info, err := os.Stat(path)
 	if err != nil || info.IsDir() {
 		return false
 	}
+	if goos == "windows" {
+		return hasWindowsExecutableExtension(path, getenv)
+	}
 	return info.Mode().Perm()&0o111 != 0
+}
+
+func hasWindowsExecutableExtension(path string, getenv func(string) string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext == "" {
+		return false
+	}
+	for _, candidate := range windowsExecutableExtensions(getenv) {
+		if ext == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func windowsExecutableExtensions(getenv func(string) string) []string {
+	extensions := []string{".exe", ".cmd", ".bat", ".com"}
+	pathext := getenv("PATHEXT")
+	if pathext == "" {
+		return extensions
+	}
+	seen := map[string]bool{}
+	for _, ext := range extensions {
+		seen[ext] = true
+	}
+	for _, ext := range strings.FieldsFunc(pathext, func(r rune) bool { return r == ';' || r == ':' }) {
+		ext = strings.ToLower(strings.TrimSpace(ext))
+		if ext == "" {
+			continue
+		}
+		if !strings.HasPrefix(ext, ".") {
+			ext = "." + ext
+		}
+		if !seen[ext] {
+			extensions = append(extensions, ext)
+			seen[ext] = true
+		}
+	}
+	return extensions
 }

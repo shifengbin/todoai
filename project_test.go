@@ -840,6 +840,151 @@ func TestProjectManagerDeleteProjectReturnsErrorWhenProjectIsMissing(t *testing.
 	}
 }
 
+func TestProjectManagerDeleteProjectsRemovesProjectsAndAssociationsSelectsFallback(t *testing.T) {
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+	dirC := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	now := time.Date(2026, 6, 10, 9, 0, 0, 0, time.UTC)
+	manager := NewProjectManager(
+		configPath,
+		WithProjectIDGenerator(sequenceIDs("project-a", "project-b", "project-c", "todo-a", "todo-project-a", "todo-b", "todo-project-b")),
+		WithProjectClock(func() time.Time { return now }),
+	)
+	if _, _, err := manager.AddProjectPath(dirA); err != nil {
+		t.Fatalf("AddProjectPath(dirA) error = %v", err)
+	}
+	now = now.Add(time.Minute)
+	if _, _, err := manager.AddProjectPath(dirB); err != nil {
+		t.Fatalf("AddProjectPath(dirB) error = %v", err)
+	}
+	now = now.Add(time.Minute)
+	if _, _, err := manager.AddProjectPath(dirC); err != nil {
+		t.Fatalf("AddProjectPath(dirC) error = %v", err)
+	}
+	now = now.Add(time.Minute)
+	if _, err := manager.CreateTodo(CreateTodoRequest{Title: "修复登录问题", ProjectIDs: []string{"project-a"}}); err != nil {
+		t.Fatalf("CreateTodo(project-a) error = %v", err)
+	}
+	now = now.Add(time.Minute)
+	if _, err := manager.CreateTodo(CreateTodoRequest{Title: "升级依赖", ProjectIDs: []string{"project-b"}}); err != nil {
+		t.Fatalf("CreateTodo(project-b) error = %v", err)
+	}
+	now = now.Add(time.Minute)
+	if _, err := manager.SelectProject("project-b"); err != nil {
+		t.Fatalf("SelectProject(project-b) error = %v", err)
+	}
+	now = now.Add(time.Minute)
+	if _, err := manager.SelectProject("project-c"); err != nil {
+		t.Fatalf("SelectProject(project-c) error = %v", err)
+	}
+	now = now.Add(time.Minute)
+	if _, _, _, err := manager.SelectTodoProject("todo-project-a"); err != nil {
+		t.Fatalf("SelectTodoProject(todo-project-a) error = %v", err)
+	}
+
+	state, err := manager.DeleteProjects([]string{"project-a", "project-c"})
+	if err != nil {
+		t.Fatalf("DeleteProjects() error = %v", err)
+	}
+
+	if len(state.Projects) != 1 || state.Projects[0].ID != "project-b" {
+		t.Fatalf("Projects = %#v, want only project-b", state.Projects)
+	}
+	if state.ActiveProjectID != "project-b" {
+		t.Fatalf("ActiveProjectID = %q, want project-b", state.ActiveProjectID)
+	}
+	if state.ActiveTodoID != "" || state.ActiveTodoProjectID != "" || state.ActiveTerminalID != "" {
+		t.Fatalf("active TODO/terminal context = %q/%q/%q, want empty", state.ActiveTodoID, state.ActiveTodoProjectID, state.ActiveTerminalID)
+	}
+	if countTodoProjectAssociations(state.TodoProjects, "project-a") != 0 || countTodoProjectAssociations(state.TodoProjects, "project-c") != 0 {
+		t.Fatalf("TodoProjects = %#v, want deleted project associations removed", state.TodoProjects)
+	}
+	if countTodoProjectAssociations(state.TodoProjects, "project-b") != 1 {
+		t.Fatalf("TodoProjects = %#v, want project-b association preserved", state.TodoProjects)
+	}
+	if _, err := os.Stat(dirA); err != nil {
+		t.Fatalf("project A directory should remain on disk: %v", err)
+	}
+	if _, err := os.Stat(dirC); err != nil {
+		t.Fatalf("project C directory should remain on disk: %v", err)
+	}
+}
+
+func TestProjectManagerDeleteProjectsClearsActiveWhenNoProjectsRemain(t *testing.T) {
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	manager := NewProjectManager(configPath, WithProjectIDGenerator(sequenceIDs("project-a", "project-b")))
+	if _, _, err := manager.AddProjectPath(dirA); err != nil {
+		t.Fatalf("AddProjectPath(dirA) error = %v", err)
+	}
+	if _, _, err := manager.AddProjectPath(dirB); err != nil {
+		t.Fatalf("AddProjectPath(dirB) error = %v", err)
+	}
+
+	state, err := manager.DeleteProjects([]string{"project-a", "project-b"})
+	if err != nil {
+		t.Fatalf("DeleteProjects() error = %v", err)
+	}
+
+	if len(state.Projects) != 0 {
+		t.Fatalf("Projects = %#v, want empty", state.Projects)
+	}
+	if state.ActiveProjectID != "" {
+		t.Fatalf("ActiveProjectID = %q, want empty", state.ActiveProjectID)
+	}
+}
+
+func TestProjectManagerDeleteProjectsNormalizesDuplicateIDs(t *testing.T) {
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	manager := NewProjectManager(configPath, WithProjectIDGenerator(sequenceIDs("project-a", "project-b")))
+	if _, _, err := manager.AddProjectPath(dirA); err != nil {
+		t.Fatalf("AddProjectPath(dirA) error = %v", err)
+	}
+	if _, _, err := manager.AddProjectPath(dirB); err != nil {
+		t.Fatalf("AddProjectPath(dirB) error = %v", err)
+	}
+
+	state, err := manager.DeleteProjects([]string{" project-a ", "project-a"})
+	if err != nil {
+		t.Fatalf("DeleteProjects() error = %v", err)
+	}
+
+	if len(state.Projects) != 1 || state.Projects[0].ID != "project-b" {
+		t.Fatalf("Projects = %#v, want only project-b", state.Projects)
+	}
+}
+
+func TestProjectManagerDeleteProjectsRejectsInvalidInputWithoutChangingState(t *testing.T) {
+	projectDir := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	manager := NewProjectManager(configPath, WithProjectIDGenerator(func() string { return "project-a" }))
+	if _, _, err := manager.AddProjectPath(projectDir); err != nil {
+		t.Fatalf("AddProjectPath() error = %v", err)
+	}
+
+	if _, err := manager.DeleteProjects([]string{" "}); err == nil {
+		t.Fatal("DeleteProjects(empty) error = nil, want error")
+	}
+	if _, err := manager.DeleteProjects([]string{"project-a", "missing-project"}); err == nil {
+		t.Fatal("DeleteProjects(missing) error = nil, want error")
+	}
+
+	state, err := manager.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(state.Projects) != 1 || state.Projects[0].ID != "project-a" {
+		t.Fatalf("projects after invalid bulk delete = %#v, want project-a unchanged", state.Projects)
+	}
+	if state.ActiveProjectID != "project-a" {
+		t.Fatalf("ActiveProjectID = %q, want project-a", state.ActiveProjectID)
+	}
+}
+
 func sequenceIDs(ids ...string) func() string {
 	index := 0
 	return func() string {

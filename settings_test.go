@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -84,9 +85,42 @@ func TestSettingsManagerAddsDefaultLaunchProfilesOnFirstLoad(t *testing.T) {
 	}
 
 	assertLaunchProfiles(t, state.LaunchProfiles, []TerminalLaunchProfileSetting{
-		{Name: "codex", Command: "codex"},
-		{Name: "claude", Command: "claude"},
+		{Name: "codex", Command: "codex --dangerously-bypass-hook-trust --dangerously-bypass-approvals-and-sandbox"},
+		{Name: "claude", Command: "claude --dangerously-skip-permissions"},
 	})
+}
+
+func TestSettingsManagerMigratesLegacyDefaultLaunchProfileCommands(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "settings.json")
+	shellPath := executableFile(t, "zsh")
+	writeSettingsFileWithLaunchProfiles(t, configPath, shellPath, "manual", `[
+    {"name": "codex", "command": "codex"},
+    {"name": "claude", "command": "claude"},
+    {"name": "Codex Custom", "command": "codex"}
+  ]`)
+	manager := NewSettingsManager(configPath)
+
+	state, err := manager.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	wantProfiles := []TerminalLaunchProfileSetting{
+		{Name: "codex", Command: "codex --dangerously-bypass-hook-trust --dangerously-bypass-approvals-and-sandbox"},
+		{Name: "claude", Command: "claude --dangerously-skip-permissions"},
+		{Name: "Codex Custom", Command: "codex"},
+	}
+	assertLaunchProfiles(t, state.LaunchProfiles, wantProfiles)
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile(settings) error = %v", err)
+	}
+	var saved persistedSettings
+	if err := json.Unmarshal(data, &saved); err != nil {
+		t.Fatalf("Unmarshal(settings) error = %v", err)
+	}
+	assertLaunchProfiles(t, saved.LaunchProfiles, wantProfiles)
 }
 
 func TestSettingsManagerUsesLightThemeWhenSavedThemeIsMissing(t *testing.T) {
@@ -401,6 +435,210 @@ func TestShellDetectorSkipsUnavailableEnvShell(t *testing.T) {
 	}
 }
 
+func TestShellDetectorWindowsPrefersNativeShellsInOrder(t *testing.T) {
+	cases := []struct {
+		name      string
+		lookPath  map[string]string
+		env       map[string]string
+		available map[string]bool
+		wantPath  string
+		wantName  string
+	}{
+		{
+			name: "prefers PowerShell 7",
+			lookPath: map[string]string{
+				"pwsh.exe":       `C:\Program Files\PowerShell\7\pwsh.exe`,
+				"powershell.exe": `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`,
+			},
+			env: map[string]string{"COMSPEC": `C:\Windows\System32\cmd.exe`},
+			available: map[string]bool{
+				`C:\Program Files\PowerShell\7\pwsh.exe`:                    true,
+				`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`: true,
+				`C:\Windows\System32\cmd.exe`:                               true,
+			},
+			wantPath: `C:\Program Files\PowerShell\7\pwsh.exe`,
+			wantName: "pwsh",
+		},
+		{
+			name:     "falls back to Windows PowerShell",
+			lookPath: map[string]string{"powershell.exe": `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`},
+			env:      map[string]string{"COMSPEC": `C:\Windows\System32\cmd.exe`},
+			available: map[string]bool{
+				`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`: true,
+				`C:\Windows\System32\cmd.exe`:                               true,
+			},
+			wantPath: `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`,
+			wantName: "powershell",
+		},
+		{
+			name: "falls back to COMSPEC Cmd",
+			env:  map[string]string{"COMSPEC": `C:\Windows\System32\cmd.exe`},
+			available: map[string]bool{
+				`C:\Windows\System32\cmd.exe`: true,
+			},
+			wantPath: `C:\Windows\System32\cmd.exe`,
+			wantName: "cmd",
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			detector := NewShellDetector(
+				WithShellDetectorPlatform("windows"),
+				WithShellDetectorEnv(mapGetenv(tt.env)),
+				WithShellDetectorLookup(mapLookPath(tt.lookPath)),
+				WithShellDetectorPathAvailable(mapPathAvailable(tt.available)),
+			)
+
+			shell, err := detector.Detect()
+			if err != nil {
+				t.Fatalf("Detect() error = %v", err)
+			}
+			if shell.Path != tt.wantPath {
+				t.Fatalf("Path = %q, want %q", shell.Path, tt.wantPath)
+			}
+			if shell.DisplayName != tt.wantName {
+				t.Fatalf("DisplayName = %q, want %q", shell.DisplayName, tt.wantName)
+			}
+			if shell.Source != ShellSourceDetected {
+				t.Fatalf("Source = %q, want %q", shell.Source, ShellSourceDetected)
+			}
+			if !shell.Available {
+				t.Fatal("Available = false, want true")
+			}
+		})
+	}
+}
+
+func TestShellDetectorWindowsDoesNotFallBackToUnixOnlyShell(t *testing.T) {
+	detector := NewShellDetector(
+		WithShellDetectorPlatform("windows"),
+		WithShellDetectorEnv(mapGetenv(nil)),
+		WithShellDetectorLookup(mapLookPath(nil)),
+		WithShellDetectorPathAvailable(mapPathAvailable(map[string]bool{
+			"/bin/sh": true,
+		})),
+	)
+
+	if shell, err := detector.Detect(); err == nil {
+		t.Fatalf("Detect() = %#v, nil error; want no shell", shell)
+	}
+}
+
+func TestShellDetectorUnixStillPrefersEnvShellAndCandidates(t *testing.T) {
+	envShell := executableFile(t, "fish")
+	candidateShell := executableFile(t, "zsh")
+	detector := NewShellDetector(
+		WithShellDetectorPlatform("linux"),
+		WithShellDetectorEnv(func(key string) string {
+			if key == "SHELL" {
+				return envShell
+			}
+			return ""
+		}),
+		WithShellDetectorCandidates([]string{candidateShell}),
+	)
+
+	shell, err := detector.Detect()
+	if err != nil {
+		t.Fatalf("Detect() error = %v", err)
+	}
+	if shell.Path != envShell {
+		t.Fatalf("Path = %q, want env shell %q", shell.Path, envShell)
+	}
+}
+
+func TestWindowsShellPathAvailabilityUsesExecutableExtensions(t *testing.T) {
+	tempDir := t.TempDir()
+	exePath := writeFileMode(t, filepath.Join(tempDir, "pwsh.exe"), 0o600)
+	cmdPath := writeFileMode(t, filepath.Join(tempDir, "launch.cmd"), 0o600)
+	ps1Path := writeFileMode(t, filepath.Join(tempDir, "profile.ps1"), 0o600)
+	txtPath := writeFileMode(t, filepath.Join(tempDir, "notes.txt"), 0o600)
+	dirPath := filepath.Join(tempDir, "folder.exe")
+	if err := os.Mkdir(dirPath, 0o755); err != nil {
+		t.Fatalf("Mkdir(%s) error = %v", dirPath, err)
+	}
+
+	getenv := mapGetenv(map[string]string{"PATHEXT": ".PS1;.EXE"})
+	cases := []struct {
+		name string
+		path string
+		want bool
+	}{
+		{name: "exe without Unix execute bit", path: exePath, want: true},
+		{name: "cmd default extension", path: cmdPath, want: true},
+		{name: "PATHEXT extension", path: ps1Path, want: true},
+		{name: "missing path", path: filepath.Join(tempDir, "missing.exe"), want: false},
+		{name: "directory", path: dirPath, want: false},
+		{name: "non executable extension", path: txtPath, want: false},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shellPathAvailableForOS("windows", tt.path, getenv); got != tt.want {
+				t.Fatalf("shellPathAvailableForOS(windows, %q) = %v, want %v", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUnixShellPathAvailabilityRequiresExecutePermission(t *testing.T) {
+	tempDir := t.TempDir()
+	plainPath := writeFileMode(t, filepath.Join(tempDir, "plain-sh"), 0o600)
+	executablePath := writeFileMode(t, filepath.Join(tempDir, "run-sh"), 0o755)
+
+	if shellPathAvailableForOS("linux", plainPath, os.Getenv) {
+		t.Fatalf("shellPathAvailableForOS(linux, %q) = true, want false", plainPath)
+	}
+	if !shellPathAvailableForOS("linux", executablePath, os.Getenv) {
+		t.Fatalf("shellPathAvailableForOS(linux, %q) = false, want true", executablePath)
+	}
+}
+
+func TestDefaultShellPathUsesWindowsFallback(t *testing.T) {
+	cmdPath := `C:\Windows\System32\cmd.exe`
+	detector := NewShellDetector(
+		WithShellDetectorPlatform("windows"),
+		WithShellDetectorEnv(mapGetenv(map[string]string{"COMSPEC": cmdPath})),
+		WithShellDetectorLookup(mapLookPath(nil)),
+		WithShellDetectorPathAvailable(mapPathAvailable(map[string]bool{cmdPath: true})),
+	)
+
+	if got := defaultShellPath(detector); got != cmdPath {
+		t.Fatalf("defaultShellPath(windows) = %q, want %q", got, cmdPath)
+	}
+}
+
+func TestSettingsManagerResolveShellPathUsesDetectedWindowsFallback(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "settings.json")
+	savedPath := `C:/OldShell/missing.exe`
+	fallbackPath := `C:\Windows\System32\cmd.exe`
+	writeSettingsFile(t, configPath, savedPath, ShellSourceManual)
+	manager := NewSettingsManager(
+		configPath,
+		WithSettingsShellDetector(func() (TerminalShellSetting, error) {
+			return TerminalShellSetting{
+				Path:        fallbackPath,
+				DisplayName: "cmd",
+				Source:      ShellSourceDetected,
+				Available:   true,
+			}, nil
+		}),
+		WithSettingsShellPathAvailable(mapPathAvailable(map[string]bool{fallbackPath: true})),
+	)
+
+	state, err := manager.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if state.Fallback == nil || state.Fallback.Path != fallbackPath {
+		t.Fatalf("Fallback = %#v, want path %q", state.Fallback, fallbackPath)
+	}
+	if got := manager.ResolveShellPath(); got != fallbackPath {
+		t.Fatalf("ResolveShellPath() = %q, want fallback %q", got, fallbackPath)
+	}
+}
+
 func assertLaunchProfiles(t *testing.T, got []TerminalLaunchProfileSetting, want []TerminalLaunchProfileSetting) {
 	t.Helper()
 	if len(got) != len(want) {
@@ -420,6 +658,35 @@ func executableFile(t *testing.T, name string) string {
 		t.Fatalf("WriteFile(%s) error = %v", path, err)
 	}
 	return path
+}
+
+func writeFileMode(t *testing.T, path string, mode os.FileMode) string {
+	t.Helper()
+	if err := os.WriteFile(path, []byte("test"), mode); err != nil {
+		t.Fatalf("WriteFile(%s) error = %v", path, err)
+	}
+	return path
+}
+
+func mapGetenv(values map[string]string) func(string) string {
+	return func(key string) string {
+		return values[key]
+	}
+}
+
+func mapLookPath(values map[string]string) func(string) (string, error) {
+	return func(file string) (string, error) {
+		if path, ok := values[file]; ok {
+			return path, nil
+		}
+		return "", os.ErrNotExist
+	}
+}
+
+func mapPathAvailable(values map[string]bool) func(string) bool {
+	return func(path string) bool {
+		return values[path]
+	}
 }
 
 func writeSettingsFileWithLaunchProfiles(t *testing.T, configPath string, shellPath string, source string, launchProfilesJSON string) {

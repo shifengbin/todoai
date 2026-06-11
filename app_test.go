@@ -644,6 +644,79 @@ func TestAppDeletesProjectAndOwnedTerminals(t *testing.T) {
 	}
 }
 
+func TestAppDeletesProjectsAndOwnedTerminals(t *testing.T) {
+	projectDirA := t.TempDir()
+	projectDirB := t.TempDir()
+	projectDirC := t.TempDir()
+	starter := newFakeShellStarter()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		starter.Start,
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-a1", "terminal-b1", "terminal-c1")),
+	)
+
+	state, err := app.AddProjectFromPath(projectDirA)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath(A) error = %v", err)
+	}
+	projectAID := state.Projects[0].ID
+	_, todoProjectAID := createTodoProjectForApp(t, app, "修复登录问题", projectAID)
+	if _, err := app.CreateTodoTerminal(todoProjectAID, 80, 24); err != nil {
+		t.Fatalf("CreateTodoTerminal(A) error = %v", err)
+	}
+
+	state, err = app.AddProjectFromPath(projectDirB)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath(B) error = %v", err)
+	}
+	projectBID := state.ActiveProjectID
+	_, todoProjectBID := createTodoProjectForApp(t, app, "升级依赖", projectBID)
+	if _, err := app.CreateTodoTerminal(todoProjectBID, 80, 24); err != nil {
+		t.Fatalf("CreateTodoTerminal(B) error = %v", err)
+	}
+
+	state, err = app.AddProjectFromPath(projectDirC)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath(C) error = %v", err)
+	}
+	projectCID := state.ActiveProjectID
+	_, todoProjectCID := createTodoProjectForApp(t, app, "整理项目", projectCID)
+	if _, err := app.CreateTodoTerminal(todoProjectCID, 80, 24); err != nil {
+		t.Fatalf("CreateTodoTerminal(C) error = %v", err)
+	}
+	state, err = app.SelectTerminal("terminal-b1")
+	if err != nil {
+		t.Fatalf("SelectTerminal(terminal-b1) error = %v", err)
+	}
+	if state.ActiveTerminalID != "terminal-b1" {
+		t.Fatalf("ActiveTerminalID setup = %q, want terminal-b1", state.ActiveTerminalID)
+	}
+
+	state, err = app.DeleteProjects([]string{projectAID, projectCID})
+	if err != nil {
+		t.Fatalf("DeleteProjects() error = %v", err)
+	}
+
+	if len(state.Projects) != 1 || state.Projects[0].ID != projectBID {
+		t.Fatalf("Projects = %#v, want only project B", state.Projects)
+	}
+	if state.ActiveProjectID != projectBID {
+		t.Fatalf("ActiveProjectID = %q, want %q", state.ActiveProjectID, projectBID)
+	}
+	if state.ActiveTerminalID != "terminal-b1" {
+		t.Fatalf("ActiveTerminalID = %q, want terminal-b1", state.ActiveTerminalID)
+	}
+	if len(state.Terminals) != 1 || state.Terminals[0].ID != "terminal-b1" {
+		t.Fatalf("Terminals = %#v, want only terminal-b1", state.Terminals)
+	}
+	if !starter.processes[0].closed || !starter.processes[2].closed {
+		t.Fatal("deleted project terminal processes were not closed")
+	}
+	if starter.processes[1].closed {
+		t.Fatal("remaining project terminal process was closed")
+	}
+}
+
 func TestAppDeletesTerminalAndReturnsUpdatedState(t *testing.T) {
 	projectDir := t.TempDir()
 	starter := newFakeShellStarter()

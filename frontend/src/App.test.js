@@ -9,6 +9,7 @@ import {
   CreateTodo,
   CreateTodoTerminal,
   DeleteProject,
+  DeleteProjects,
   DeleteTerminal,
   DeleteTodo,
   DetectTerminalShell,
@@ -35,6 +36,7 @@ const appApiMock = vi.hoisted(() => ({
   CreateTodoTerminal: vi.fn(),
   CreateProjectFromDialog: vi.fn(),
   DeleteProject: vi.fn(),
+  DeleteProjects: vi.fn(),
   DeleteTerminal: vi.fn(),
   DeleteTodo: vi.fn(),
   DetectTerminalShell: vi.fn(),
@@ -102,6 +104,10 @@ vi.mock('./xtermFactory', () => {
   }
 })
 
+const defaultCodexLaunchCommand =
+  'codex --dangerously-bypass-hook-trust --dangerously-bypass-approvals-and-sandbox'
+const defaultClaudeLaunchCommand = 'claude --dangerously-skip-permissions'
+
 describe('App project terminal tree', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -141,6 +147,16 @@ describe('App project terminal tree', () => {
       })
     )
     appApiMock.DeleteProject.mockResolvedValue(
+      projectState({
+        projects: [],
+        todoProjects: [],
+        activeProjectId: '',
+        activeTodoProjectId: '',
+        terminals: [],
+        activeTerminalId: ''
+      })
+    )
+    appApiMock.DeleteProjects.mockResolvedValue(
       projectState({
         projects: [],
         todoProjects: [],
@@ -283,23 +299,69 @@ describe('App project terminal tree', () => {
 
     await wrapper.find('[data-testid="sidebar-tab-projects"]').trigger('click')
     await wrapper.find('[data-testid="delete-project-project-a"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="delete-project-popover-project-a"]').exists()).toBe(true)
+    expect(window.confirm).not.toHaveBeenCalled()
+    expect(DeleteProject).not.toHaveBeenCalled()
+
+    await wrapper.find('[data-testid="confirm-delete-project-project-a"]').trigger('click')
     await flushPromises()
 
-    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('alpha'))
+    expect(window.confirm).not.toHaveBeenCalled()
     expect(DeleteProject).toHaveBeenCalledWith('project-a')
     expect(wrapper.find('[data-testid="project-project-a"]').exists()).toBe(false)
   })
 
-  it('does not delete a project when confirmation is cancelled', async () => {
-    window.confirm.mockReturnValue(false)
+  it('does not delete a project when the popover confirmation is cancelled', async () => {
     const wrapper = await mountReadyApp()
 
     await wrapper.find('[data-testid="sidebar-tab-projects"]').trigger('click')
     await wrapper.find('[data-testid="delete-project-project-a"]').trigger('click')
+    await wrapper.find('[data-testid="cancel-delete-project-project-a"]').trigger('click')
     await flushPromises()
 
+    expect(window.confirm).not.toHaveBeenCalled()
     expect(DeleteProject).not.toHaveBeenCalled()
     expect(wrapper.find('[data-testid="project-project-a"]').exists()).toBe(true)
+  })
+
+  it('deletes selected projects after bulk popover confirmation', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
+          { id: 'project-b', name: 'beta', path: '/work/beta', available: true }
+        ]
+      })
+    )
+    appApiMock.DeleteProjects.mockResolvedValue(
+      projectState({
+        projects: [],
+        todoProjects: [],
+        activeProjectId: '',
+        activeTodoProjectId: '',
+        terminals: [],
+        activeTerminalId: ''
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="sidebar-tab-projects"]').trigger('click')
+    await wrapper.find('[data-testid="select-project-project-a"]').trigger('click')
+    await wrapper.find('[data-testid="select-project-project-b"]').trigger('click')
+    await wrapper.find('[data-testid="bulk-delete-projects"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="bulk-delete-projects-popover"]').exists()).toBe(true)
+    expect(DeleteProjects).not.toHaveBeenCalled()
+
+    await wrapper.find('[data-testid="confirm-bulk-delete-projects"]').trigger('click')
+    await flushPromises()
+
+    expect(DeleteProjects).toHaveBeenCalledWith(['project-a', 'project-b'])
+    expect(wrapper.find('[data-testid="project-project-a"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="project-project-b"]').exists()).toBe(false)
   })
 
   it('creates a TODO with details, priority, and searched optional projects', async () => {
@@ -1193,6 +1255,18 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="terminal-launch-profile-name-1"]').element.value).toBe('Claude Plan')
   })
 
+  it('uses default terminal launch profile commands when settings omit launch profiles', async () => {
+    appApiMock.LoadTerminalSettings.mockResolvedValue(settingsState({ launchProfiles: undefined }))
+    const wrapper = await mountReadyApp()
+
+    await openSettings(wrapper)
+
+    expect(wrapper.find('[data-testid="terminal-launch-profile-name-0"]').element.value).toBe('codex')
+    expect(wrapper.find('[data-testid="terminal-launch-profile-command-0"]').element.value).toBe(defaultCodexLaunchCommand)
+    expect(wrapper.find('[data-testid="terminal-launch-profile-name-1"]').element.value).toBe('claude')
+    expect(wrapper.find('[data-testid="terminal-launch-profile-command-1"]').element.value).toBe(defaultClaudeLaunchCommand)
+  })
+
   it('re-detects a terminal shell from settings', async () => {
     const wrapper = await mountReadyApp()
 
@@ -1401,8 +1475,8 @@ function settingsState(overrides = {}) {
     selected: shellSetting(),
     theme: 'light',
     launchProfiles: [
-      { name: 'codex', command: 'codex' },
-      { name: 'claude', command: 'claude' }
+      { name: 'codex', command: defaultCodexLaunchCommand },
+      { name: 'claude', command: defaultClaudeLaunchCommand }
     ],
     ...overrides
   }

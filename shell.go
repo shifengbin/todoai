@@ -826,21 +826,51 @@ PROMPT_COMMAND="__tui_helper_prompt_command"
 }
 
 func shellNameFromPath(shellPath string) string {
-	name := filepath.Base(shellPath)
+	name := strings.TrimRight(shellPath, `\/`)
+	if index := strings.LastIndexAny(name, `\/`); index >= 0 {
+		name = name[index+1:]
+	} else {
+		name = filepath.Base(name)
+	}
 	if name == "" || name == "." || name == string(filepath.Separator) {
 		return "shell"
+	}
+	if isWindowsExecutableExtension(filepath.Ext(name)) {
+		name = strings.TrimSuffix(name, filepath.Ext(name))
 	}
 	return name
 }
 
 func DefaultShellPath() string {
-	if shell := os.Getenv("SHELL"); shell != "" {
-		return shell
+	return defaultShellPath(NewShellDetector())
+}
+
+func defaultShellPath(detector ShellDetector) string {
+	if shell, err := detector.Detect(); err == nil && shell.Path != "" {
+		return shell.Path
+	}
+	if detector.goos == "windows" {
+		if comspec := detector.getenv("COMSPEC"); comspec != "" {
+			return comspec
+		}
+		if systemRoot := detector.windowsRoot(); systemRoot != "" {
+			return windowsPathJoin(systemRoot, "System32", "cmd.exe")
+		}
+		return "cmd.exe"
 	}
 	if fileExists("/bin/bash") {
 		return "/bin/bash"
 	}
 	return "/bin/sh"
+}
+
+func isWindowsExecutableExtension(ext string) bool {
+	switch strings.ToLower(ext) {
+	case ".exe", ".cmd", ".bat", ".com":
+		return true
+	default:
+		return false
+	}
 }
 
 func NewPtyProcess(request ShellStartRequest) (PtyProcess, error) {

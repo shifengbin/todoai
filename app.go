@@ -202,6 +202,17 @@ func (a *App) DeleteProject(projectID string) (ProjectState, error) {
 	return a.withShellState(state), nil
 }
 
+func (a *App) DeleteProjects(projectIDs []string) (ProjectState, error) {
+	state, err := a.projects.DeleteProjects(projectIDs)
+	if err != nil {
+		return ProjectState{}, err
+	}
+	for _, projectID := range normalizeProjectIDs(projectIDs) {
+		a.shells.DeleteProjectTerminals(projectID)
+	}
+	return a.withShellState(state), nil
+}
+
 func (a *App) SelectTerminal(terminalID string) (ProjectState, error) {
 	terminal, err := a.shells.SelectTerminal(terminalID)
 	if err != nil {

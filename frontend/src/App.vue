@@ -11,6 +11,7 @@ import {
   CreateTodo,
   CreateTodoTerminal,
   DeleteProject,
+  DeleteProjects,
   DeleteTerminal,
   DeleteTodo,
   DetectTerminalShell,
@@ -61,8 +62,8 @@ const sidebarResize = reactive({
 const sidebarMinWidth = 220
 const sidebarMaxWidth = 520
 const defaultTerminalLaunchProfiles = [
-  { name: 'codex', command: 'codex' },
-  { name: 'claude', command: 'claude' }
+  { name: 'codex', command: 'codex --dangerously-bypass-hook-trust --dangerously-bypass-approvals-and-sandbox' },
+  { name: 'claude', command: 'claude --dangerously-skip-permissions' }
 ]
 const todoPriorities = [
   { value: 'high', label: '高' },
@@ -605,13 +606,20 @@ async function deleteTodo(todoId) {
 }
 
 async function deleteProject(projectId) {
-  const project = projects.value.find((candidate) => candidate.id === projectId)
-  const projectName = project?.name || 'this project'
-  if (!window.confirm(`Delete project "${projectName}" from this app? Files on disk will not be deleted.`)) {
+  try {
+    applyState(await DeleteProject(projectId))
+    await activateActiveTerminal()
+  } catch (error) {
+    showError(error)
+  }
+}
+
+async function deleteProjects(projectIds) {
+  if (!Array.isArray(projectIds) || projectIds.length === 0) {
     return
   }
   try {
-    applyState(await DeleteProject(projectId))
+    applyState(await DeleteProjects(projectIds))
     await activateActiveTerminal()
   } catch (error) {
     showError(error)
@@ -1133,6 +1141,7 @@ function showError(error) {
       @create-terminal="createTerminal"
       @select-terminal="selectTerminal"
       @delete-project="deleteProject"
+      @delete-projects="deleteProjects"
       @delete-terminal="deleteTerminal"
     />
 

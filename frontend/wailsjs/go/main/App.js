@@ -38,6 +38,10 @@ export function DeleteProject(arg1) {
   return window['go']['main']['App']['DeleteProject'](arg1);
 }
 
+export function DeleteProjects(arg1) {
+  return window['go']['main']['App']['DeleteProjects'](arg1);
+}
+
 export function DeleteTerminal(arg1) {
   return window['go']['main']['App']['DeleteTerminal'](arg1);
 }

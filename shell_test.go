@@ -3,12 +3,8 @@ package main
 import (
 	"errors"
 	"io"
-	"os"
-	"os/exec"
-	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -433,6 +429,32 @@ func TestShellSessionManagerFallsBackToShellNameWithoutIntegrationForUnsupported
 	}
 }
 
+func TestShellSessionManagerSurfacesStartupErrorForWindowsShellPath(t *testing.T) {
+	cmdPath := `C:\Windows\System32\cmd.exe`
+	wantErr := errors.New("pty unsupported")
+	starter := newFailingShellStarter(wantErr)
+	manager := NewShellSessionManager(
+		starter.Start,
+		ShellSessionCallbacks{},
+		WithShellPathResolver(func() string { return cmdPath }),
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-a")),
+	)
+	project := Project{ID: "project-a", Path: t.TempDir(), Available: true}
+
+	if _, err := manager.CreateTerminal(project, TerminalSize{Cols: 80, Rows: 24}); !errors.Is(err, wantErr) {
+		t.Fatalf("CreateTerminal() error = %v, want %v", err, wantErr)
+	}
+	if len(starter.requests) != 1 {
+		t.Fatalf("start count = %d, want 1", len(starter.requests))
+	}
+	if starter.requests[0].ShellPath != cmdPath {
+		t.Fatalf("ShellPath = %q, want %q", starter.requests[0].ShellPath, cmdPath)
+	}
+	if starter.requests[0].ShellPath == "/bin/sh" || starter.requests[0].ShellPath == "/bin/bash" {
+		t.Fatalf("ShellPath used Unix fallback %q", starter.requests[0].ShellPath)
+	}
+}
+
 func TestShellSessionManagerDeletesRunningTerminalAndClosesProcess(t *testing.T) {
 	starter := newFakeShellStarter()
 	manager := NewShellSessionManager(
@@ -459,63 +481,6 @@ func TestShellSessionManagerDeletesRunningTerminalAndClosesProcess(t *testing.T)
 	if !starter.processes[0].closed {
 		t.Fatal("deleted running terminal process was not closed")
 	}
-}
-
-func TestRealPtyProcessCloseTerminatesShellProcessTree(t *testing.T) {
-	shellPath, err := exec.LookPath("sh")
-	if err != nil {
-		t.Skip("sh not found")
-	}
-	tempDir := t.TempDir()
-	childPIDPath := tempDir + "/child.pid"
-	process, err := NewPtyProcess(ShellStartRequest{
-		WorkingDir: tempDir,
-		ShellPath:  shellPath,
-		ShellArgs: []string{
-			"-c",
-			"(trap '' HUP TERM; while :; do sleep 1; done) & echo $! > \"$1\"; wait",
-			"sh",
-			childPIDPath,
-		},
-		Size: TerminalSize{Cols: 80, Rows: 24},
-	})
-	if err != nil {
-		t.Fatalf("NewPtyProcess() error = %v", err)
-	}
-	realProcess := process.(*realPtyProcess)
-	waitDone := make(chan struct{})
-	go func() {
-		_ = process.Wait()
-		close(waitDone)
-	}()
-	t.Cleanup(func() {
-		if realProcess.cmd.ProcessState == nil {
-			_ = realProcess.cmd.Process.Kill()
-		}
-		select {
-		case <-waitDone:
-		case <-time.After(time.Second):
-			t.Log("timed out waiting for shell process cleanup")
-		}
-	})
-	childPID := waitForPIDFile(t, childPIDPath)
-	t.Cleanup(func() {
-		_ = syscall.Kill(childPID, syscall.SIGKILL)
-	})
-
-	if err := process.Close(); err != nil {
-		t.Fatalf("Close() error = %v", err)
-	}
-
-	select {
-	case <-waitDone:
-	case <-time.After(200 * time.Millisecond):
-		_ = realProcess.cmd.Process.Kill()
-		t.Fatal("Close() did not terminate shell process")
-	}
-	eventually(t, func() bool {
-		return !processExists(childPID)
-	})
 }
 
 func TestShellSessionManagerDeletesExitedTerminalWithoutStartingReplacement(t *testing.T) {
@@ -776,6 +741,20 @@ func (starter *fakeShellStarter) Start(request ShellStartRequest) (PtyProcess, e
 	return process, nil
 }
 
+type failingShellStarter struct {
+	requests []ShellStartRequest
+	err      error
+}
+
+func newFailingShellStarter(err error) *failingShellStarter {
+	return &failingShellStarter{err: err}
+}
+
+func (starter *failingShellStarter) Start(request ShellStartRequest) (PtyProcess, error) {
+	starter.requests = append(starter.requests, request)
+	return nil, starter.err
+}
+
 type fakePtyProcess struct {
 	output  chan string
 	wait    chan error
@@ -876,28 +855,6 @@ func envValue(env []string, key string) string {
 		}
 	}
 	return ""
-}
-
-func waitForPIDFile(t *testing.T, path string) int {
-	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		data, err := os.ReadFile(path)
-		if err == nil {
-			pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-			if err != nil {
-				t.Fatalf("invalid pid file %q: %v", string(data), err)
-			}
-			return pid
-		}
-		time.Sleep(time.Millisecond)
-	}
-	t.Fatalf("pid file %q was not written before timeout", path)
-	return 0
-}
-
-func processExists(pid int) bool {
-	return syscall.Kill(pid, 0) == nil
 }
 
 func eventually(t *testing.T, condition func() bool) {

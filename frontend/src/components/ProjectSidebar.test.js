@@ -64,13 +64,77 @@ describe('ProjectSidebar', () => {
     await wrapper.find('[data-testid="new-project"]').trigger('click')
     await wrapper.find('[data-testid="import-parent-directory"]').trigger('click')
     await wrapper.find('[data-testid="project-project-a"]').trigger('click')
-    await wrapper.find('[data-testid="delete-project-project-a"]').trigger('click')
 
     expect(wrapper.emitted('create-project')).toHaveLength(1)
     expect(wrapper.emitted('import-projects')).toHaveLength(1)
     expect(wrapper.emitted('select-project')[0]).toEqual(['project-a'])
-    expect(wrapper.emitted('delete-project')[0]).toEqual(['project-a'])
     expect(wrapper.emitted('create-terminal')).toBeUndefined()
+  })
+
+  it('confirms direct project removal from a popover', async () => {
+    const wrapper = mountSidebar()
+
+    await wrapper.find('[data-testid="sidebar-tab-projects"]').trigger('click')
+    await wrapper.find('[data-testid="delete-project-project-a"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="delete-project-popover-project-a"]').exists()).toBe(true)
+    expect(wrapper.emitted('delete-project')).toBeUndefined()
+
+    await wrapper.find('[data-testid="cancel-delete-project-project-a"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="delete-project-popover-project-a"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="delete-project-project-a"]').trigger('click')
+    await wrapper.find('[data-testid="confirm-delete-project-project-a"]').trigger('click')
+
+    expect(wrapper.emitted('delete-project')[0]).toEqual(['project-a'])
+    expect(wrapper.find('[data-testid="delete-project-popover-project-a"]').exists()).toBe(false)
+  })
+
+  it('selects projects and confirms bulk deletion from a popover', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        projects: [
+          { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
+          { id: 'project-b', name: 'beta', path: '/work/beta', available: true }
+        ]
+      }
+    })
+
+    await wrapper.find('[data-testid="sidebar-tab-projects"]').trigger('click')
+
+    const bulkDelete = wrapper.find('[data-testid="bulk-delete-projects"]')
+    expect(bulkDelete.attributes('disabled')).toBeDefined()
+    await bulkDelete.trigger('click')
+    expect(wrapper.find('[data-testid="bulk-delete-projects-popover"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="select-project-project-a"]').trigger('click')
+    await wrapper.find('[data-testid="select-project-project-b"]').trigger('click')
+
+    expect(wrapper.emitted('select-project')).toBeUndefined()
+    expect(wrapper.find('[data-testid="select-project-project-a"]').element.checked).toBe(true)
+    expect(wrapper.find('[data-testid="select-project-project-b"]').element.checked).toBe(true)
+    expect(wrapper.find('[data-testid="bulk-delete-projects"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('[data-testid="bulk-delete-projects"]').text()).toContain('2')
+
+    await wrapper.find('[data-testid="bulk-delete-projects"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="bulk-delete-projects-popover"]').exists()).toBe(true)
+    expect(wrapper.emitted('delete-projects')).toBeUndefined()
+
+    await wrapper.find('[data-testid="cancel-bulk-delete-projects"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="bulk-delete-projects-popover"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="bulk-delete-projects"]').trigger('click')
+    await wrapper.find('[data-testid="confirm-bulk-delete-projects"]').trigger('click')
+
+    expect(wrapper.emitted('delete-projects')[0]).toEqual([['project-a', 'project-b']])
+    expect(wrapper.find('[data-testid="bulk-delete-projects-popover"]').exists()).toBe(false)
   })
 
   it('collapses and expands a TODO branch independently', async () => {
@@ -89,6 +153,65 @@ describe('ProjectSidebar', () => {
 
     expect(wrapper.find('[data-testid="todo-project-todo-project-a"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="toggle-todo-todo-a"]').attributes('aria-expanded')).toBe('true')
+  })
+
+  it('collapses all active TODO branches from the active list toolbar', async () => {
+    const wrapper = mountSidebar({
+      props: multiTodoProps()
+    })
+
+    const collapseAll = wrapper.find('[data-testid="collapse-all-todos"]')
+    expect(collapseAll.attributes('aria-label')).toBe('Collapse all TODOs')
+    expect(collapseAll.attributes('title')).toBe('Collapse all TODOs')
+
+    await collapseAll.trigger('click')
+
+    expect(wrapper.find('[data-testid="todo-todo-a"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="todo-todo-b"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="todo-project-todo-project-a"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="todo-project-todo-project-b"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="terminal-terminal-a"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="terminal-terminal-b"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="toggle-todo-todo-a"]').attributes('aria-expanded')).toBe('false')
+    expect(wrapper.find('[data-testid="toggle-todo-todo-b"]').attributes('aria-expanded')).toBe('false')
+  })
+
+  it('expands all active TODO branches from the active list toolbar', async () => {
+    const wrapper = mountSidebar({
+      props: multiTodoProps()
+    })
+
+    await wrapper.find('[data-testid="collapse-all-todos"]').trigger('click')
+    await wrapper.find('[data-testid="expand-all-todos"]').trigger('click')
+
+    expect(wrapper.find('[data-testid="todo-project-todo-project-a"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="todo-project-todo-project-b"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="toggle-todo-todo-a"]').attributes('aria-expanded')).toBe('true')
+    expect(wrapper.find('[data-testid="toggle-todo-todo-b"]').attributes('aria-expanded')).toBe('true')
+  })
+
+  it('disables bulk TODO branch controls when there are no active TODOs', () => {
+    const wrapper = mountSidebar({
+      props: {
+        todos: [
+          {
+            id: 'todo-archived',
+            title: '已完成任务',
+            status: 'archived',
+            archivedReason: 'completed',
+            archivedAt: '2026-06-10T10:00:00Z'
+          }
+        ],
+        todoProjects: [],
+        terminals: [],
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      }
+    })
+
+    expect(wrapper.find('[data-testid="collapse-all-todos"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-testid="expand-all-todos"]').attributes('disabled')).toBeDefined()
   })
 
   it('shows archived TODO snapshots without terminal launch controls', async () => {
@@ -151,6 +274,170 @@ describe('ProjectSidebar', () => {
     expect(wrapper.find('[data-testid="todo-priority-todo-a"]').exists()).toBe(false)
     expect(todoHeader.textContent).not.toContain('高')
     expect(wrapper.find('[data-testid="todo-description-todo-a"]').text()).toBe('登录后跳回首页')
+  })
+
+  it('orders active TODOs by priority from high to low', () => {
+    const wrapper = mountSidebar({
+      props: {
+        todos: [
+          {
+            id: 'todo-low',
+            title: '整理文档',
+            priority: 'low',
+            status: 'active',
+            createdAt: '2026-06-10T09:00:00Z'
+          },
+          {
+            id: 'todo-high',
+            title: '修复登录问题',
+            priority: 'high',
+            status: 'active',
+            createdAt: '2026-06-10T10:00:00Z'
+          },
+          {
+            id: 'todo-medium',
+            title: '升级依赖',
+            priority: 'medium',
+            status: 'active',
+            createdAt: '2026-06-10T08:00:00Z'
+          }
+        ],
+        todoProjects: [],
+        terminals: [],
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      }
+    })
+
+    expect(activeTodoTitles(wrapper)).toEqual(['修复登录问题', '升级依赖', '整理文档'])
+  })
+
+  it('shows active TODO sort controls with priority selected by default', () => {
+    const wrapper = mountSidebar()
+
+    expect(wrapper.find('[data-testid="sort-active-todos-priority"]').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.find('[data-testid="sort-active-todos-time"]').attributes('aria-pressed')).toBe('false')
+  })
+
+  it('orders active TODOs with the same priority by creation time', () => {
+    const wrapper = mountSidebar({
+      props: {
+        todos: [
+          {
+            id: 'todo-newer-high',
+            title: '排查线上报警',
+            priority: 'high',
+            status: 'active',
+            createdAt: '2026-06-10T11:00:00Z'
+          },
+          {
+            id: 'todo-older-high',
+            title: '修复登录问题',
+            priority: 'high',
+            status: 'active',
+            createdAt: '2026-06-10T09:00:00Z'
+          },
+          {
+            id: 'todo-low',
+            title: '整理文档',
+            priority: 'low',
+            status: 'active',
+            createdAt: '2026-06-10T08:00:00Z'
+          }
+        ],
+        todoProjects: [],
+        terminals: [],
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      }
+    })
+
+    expect(activeTodoTitles(wrapper)).toEqual(['修复登录问题', '排查线上报警', '整理文档'])
+  })
+
+  it('switches active TODOs to creation time order', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        todos: [
+          {
+            id: 'todo-high-newer',
+            title: '修复登录问题',
+            priority: 'high',
+            status: 'active',
+            createdAt: '2026-06-10T11:00:00Z'
+          },
+          {
+            id: 'todo-low-older',
+            title: '整理文档',
+            priority: 'low',
+            status: 'active',
+            createdAt: '2026-06-10T08:00:00Z'
+          }
+        ],
+        todoProjects: [],
+        terminals: [],
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      }
+    })
+
+    expect(activeTodoTitles(wrapper)).toEqual(['修复登录问题', '整理文档'])
+
+    await wrapper.find('[data-testid="sort-active-todos-time"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="sort-active-todos-priority"]').attributes('aria-pressed')).toBe('false')
+    expect(wrapper.find('[data-testid="sort-active-todos-time"]').attributes('aria-pressed')).toBe('true')
+    expect(activeTodoTitles(wrapper)).toEqual(['整理文档', '修复登录问题'])
+  })
+
+  it('keeps archived TODOs in their existing order', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        todos: [
+          {
+            id: 'todo-low',
+            title: '整理文档',
+            priority: 'low',
+            status: 'active',
+            createdAt: '2026-06-10T08:00:00Z'
+          },
+          {
+            id: 'todo-high',
+            title: '修复登录问题',
+            priority: 'high',
+            status: 'active',
+            createdAt: '2026-06-10T09:00:00Z'
+          },
+          {
+            id: 'todo-archived-low',
+            title: '旧的低优先级归档',
+            priority: 'low',
+            status: 'archived',
+            archivedAt: '2026-06-10T12:00:00Z'
+          },
+          {
+            id: 'todo-archived-high',
+            title: '旧的高优先级归档',
+            priority: 'high',
+            status: 'archived',
+            archivedAt: '2026-06-10T11:00:00Z'
+          }
+        ],
+        todoProjects: [],
+        terminals: [],
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      }
+    })
+
+    await wrapper.find('[data-testid="todo-view-archived"]').trigger('click')
+
+    expect(archivedTodoTitles(wrapper)).toEqual(['旧的低优先级归档', '旧的高优先级归档'])
   })
 
   it('opens TODO action confirmation popovers before emitting', async () => {
@@ -290,6 +577,25 @@ describe('ProjectSidebar', () => {
     expect(wrapper.find('[data-testid="toggle-todo-todo-b"]').attributes('aria-expanded')).toBe('true')
   })
 
+  it('expands only the active TODO after bulk collapse when active context changes', async () => {
+    const wrapper = mountSidebar({
+      props: multiTodoProps()
+    })
+
+    await wrapper.find('[data-testid="collapse-all-todos"]').trigger('click')
+    await wrapper.setProps({
+      activeTodoId: 'todo-b',
+      activeTodoProjectId: 'todo-project-b',
+      activeTerminalId: 'terminal-b'
+    })
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="todo-project-todo-project-a"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="todo-project-todo-project-b"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="toggle-todo-todo-a"]').attributes('aria-expanded')).toBe('false')
+    expect(wrapper.find('[data-testid="toggle-todo-todo-b"]').attributes('aria-expanded')).toBe('true')
+  })
+
   it('keeps TODO project row layout wider than generic project rows', () => {
     const styles = readFileSync('src/style.css', 'utf8')
     const genericProjectRowIndex = styles.indexOf('.project-header-row')
@@ -304,6 +610,29 @@ describe('ProjectSidebar', () => {
     expect(styles).toContain('.todo-project-header-row .project-row.active')
   })
 
+  it('defines compact project library selection and delete styles', () => {
+    const styles = readFileSync('src/style.css', 'utf8')
+    const libraryProjectRowIndex = styles.indexOf('.library-project-header-row {')
+
+    expect(libraryProjectRowIndex).toBeGreaterThan(-1)
+    expect(styles.slice(libraryProjectRowIndex, libraryProjectRowIndex + 140)).toContain(
+      'grid-template-columns: 26px minmax(0, 1fr) 30px;'
+    )
+    expect(styles).toContain('.project-select-checkbox')
+    expect(styles).toContain('.project-delete-control')
+    expect(styles).toContain('.project-delete-popover')
+    expect(styles).toContain('.bulk-project-delete-control')
+    expect(styles).toContain('.library-action-button-delete:disabled')
+  })
+
+  it('defines compact bulk TODO branch control styles', () => {
+    const styles = readFileSync('src/style.css', 'utf8')
+
+    expect(styles).toContain('.todo-tree-toolbar')
+    expect(styles).toContain('.todo-tree-action')
+    expect(styles).toContain('.todo-tree-action:disabled')
+  })
+
   it('defines priority row styles for each priority level', () => {
     const styles = readFileSync('src/style.css', 'utf8')
 
@@ -315,6 +644,61 @@ describe('ProjectSidebar', () => {
     expect(styles).toContain('.todo-header-row-priority-low')
   })
 })
+
+function multiTodoProps() {
+  return {
+    projects: [
+      { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
+      { id: 'project-b', name: 'beta', path: '/work/beta', available: true }
+    ],
+    todos: [
+      { id: 'todo-a', title: '修复登录问题', status: 'active' },
+      { id: 'todo-b', title: '升级依赖', status: 'active' }
+    ],
+    todoProjects: [
+      { id: 'todo-project-a', todoId: 'todo-a', projectId: 'project-a' },
+      { id: 'todo-project-b', todoId: 'todo-b', projectId: 'project-b' }
+    ],
+    terminals: [
+      {
+        id: 'terminal-a',
+        projectId: 'project-a',
+        todoId: 'todo-a',
+        todoProjectId: 'todo-project-a',
+        shellName: 'zsh',
+        currentCommand: '',
+        state: 'running'
+      },
+      {
+        id: 'terminal-b',
+        projectId: 'project-b',
+        todoId: 'todo-b',
+        todoProjectId: 'todo-project-b',
+        shellName: 'bash',
+        currentCommand: '',
+        state: 'running'
+      }
+    ],
+    activeProjectId: 'project-a',
+    activeTodoId: 'todo-a',
+    activeTodoProjectId: 'todo-project-a',
+    activeTerminalId: 'terminal-a'
+  }
+}
+
+function activeTodoTitles(wrapper) {
+  return wrapper
+    .find('[data-testid="active-todos"]')
+    .findAll('.todo-row .project-name')
+    .map((node) => node.text())
+}
+
+function archivedTodoTitles(wrapper) {
+  return wrapper
+    .find('[data-testid="archived-todos"]')
+    .findAll('.archived-todo-title span')
+    .map((node) => node.text())
+}
 
 function mountSidebar(options = {}) {
   return mount(ProjectSidebar, {

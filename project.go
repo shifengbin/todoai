@@ -566,6 +566,58 @@ func (manager *ProjectManager) DeleteProject(projectID string) (ProjectState, er
 	return state, nil
 }
 
+func (manager *ProjectManager) DeleteProjects(projectIDs []string) (ProjectState, error) {
+	normalizedProjectIDs := normalizeProjectIDs(projectIDs)
+	if len(normalizedProjectIDs) == 0 {
+		return ProjectState{}, errors.New("project not found")
+	}
+
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	state, err := manager.loadLocked()
+	if err != nil {
+		return ProjectState{}, err
+	}
+	if !containsProjects(state.Projects, normalizedProjectIDs) {
+		return ProjectState{}, errors.New("project not found")
+	}
+
+	deletedProjectIDs := map[string]bool{}
+	for _, projectID := range normalizedProjectIDs {
+		deletedProjectIDs[projectID] = true
+	}
+
+	nextProjects := make([]Project, 0, len(state.Projects)-len(deletedProjectIDs))
+	for _, project := range state.Projects {
+		if !deletedProjectIDs[project.ID] {
+			nextProjects = append(nextProjects, project)
+		}
+	}
+
+	nextTodoProjects := make([]TodoProject, 0, len(state.TodoProjects))
+	for _, todoProject := range state.TodoProjects {
+		if !deletedProjectIDs[todoProject.ProjectID] {
+			nextTodoProjects = append(nextTodoProjects, todoProject)
+		}
+	}
+
+	state.Projects = nextProjects
+	state.TodoProjects = nextTodoProjects
+	if deletedProjectIDs[state.ActiveProjectID] {
+		state.ActiveProjectID = mostRecentlySelectedProjectID(state.Projects)
+	}
+	if state.ActiveTodoProjectID != "" && !containsTodoProject(state.TodoProjects, state.ActiveTodoProjectID) {
+		state.ActiveTodoProjectID = ""
+		state.ActiveTodoID = ""
+		state.ActiveTerminalID = ""
+	}
+	if err := manager.saveLocked(state); err != nil {
+		return ProjectState{}, err
+	}
+	return state, nil
+}
+
 func (manager *ProjectManager) GetProject(projectID string) (Project, error) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
