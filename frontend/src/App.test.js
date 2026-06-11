@@ -16,12 +16,14 @@ import {
   ImportProjectsFromParentDirectoryDialog,
   InitializeProjectGitRepository,
   LoadTerminalSettings,
+  RemoveTodoProject,
   SaveTerminalLaunchProfiles,
   SaveTerminalShell,
   SaveTerminalTheme,
   SelectTerminal,
   SendTerminalInput,
-  StartShell
+  StartShell,
+  UpdateTodo
 } from '../wailsjs/go/main/App'
 import { ClipboardGetText, ClipboardSetText } from '../wailsjs/runtime/runtime'
 
@@ -41,6 +43,7 @@ const appApiMock = vi.hoisted(() => ({
   InitializeProjectGitRepository: vi.fn(),
   ListProjects: vi.fn(),
   LoadTerminalSettings: vi.fn(),
+  RemoveTodoProject: vi.fn(),
   ResizeTerminal: vi.fn(),
   SelectProject: vi.fn(),
   SelectTerminal: vi.fn(),
@@ -49,7 +52,8 @@ const appApiMock = vi.hoisted(() => ({
   SaveTerminalShell: vi.fn(),
   SaveTerminalTheme: vi.fn(),
   SendTerminalInput: vi.fn(),
-  StartShell: vi.fn()
+  StartShell: vi.fn(),
+  UpdateTodo: vi.fn()
 }))
 
 const runtimeMock = vi.hoisted(() => ({
@@ -147,6 +151,8 @@ describe('App project terminal tree', () => {
       })
     )
     appApiMock.DeleteTerminal.mockResolvedValue(projectState({ terminals: [], activeTerminalId: '' }))
+    appApiMock.RemoveTodoProject.mockResolvedValue(projectState({ todoProjects: [], terminals: [], activeTodoProjectId: '', activeTerminalId: '' }))
+    appApiMock.UpdateTodo.mockResolvedValue(projectState())
     appApiMock.GetProjectGitStatus.mockResolvedValue(gitStatus())
     appApiMock.InitializeProjectGitRepository.mockResolvedValue()
     appApiMock.StartShell.mockResolvedValue({ projectId: 'project-a', terminalId: 'terminal-a', state: 'running' })
@@ -495,6 +501,95 @@ describe('App project terminal tree', () => {
     expect(AddProjectsToTodo).toHaveBeenCalledWith('todo-a', ['project-b'])
   })
 
+  it('edits TODO details and confirms project removals that close terminals', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'frontend-app', path: '/work/frontend-app', available: true },
+          { id: 'project-b', name: 'api-service', path: '/work/api-service', available: true }
+        ],
+        todos: [todo({ title: 'Fix login', description: 'Old description', priority: 'medium' })],
+        todoProjects: [todoProject({ projectId: 'project-a' })],
+        terminals: [terminal({ todoProjectId: 'todo-project-a' })]
+      })
+    )
+    appApiMock.UpdateTodo.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'frontend-app', path: '/work/frontend-app', available: true },
+          { id: 'project-b', name: 'api-service', path: '/work/api-service', available: true }
+        ],
+        todos: [todo({ title: 'Fix login redirect', description: '登录后跳回首页', priority: 'high' })],
+        todoProjects: [todoProject({ id: 'todo-project-b', projectId: 'project-b' })],
+        activeTodoProjectId: 'todo-project-b',
+        activeProjectId: 'project-b',
+        terminals: [],
+        activeTerminalId: ''
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="edit-todo-todo-a"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="todo-detail-dialog"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="todo-detail-name-input"]').element.value).toBe('Fix login')
+    expect(wrapper.find('[data-testid="todo-detail-description-input"]').element.value).toBe('Old description')
+
+    await wrapper.find('[data-testid="todo-detail-name-input"]').setValue('Fix login redirect')
+    await wrapper.find('[data-testid="todo-detail-description-input"]').setValue('登录后跳回首页')
+    await wrapper.find('[data-testid="todo-detail-priority-high"]').setValue(true)
+    await wrapper.find('[data-testid="todo-detail-selected-project-remove-project-a"]').trigger('click')
+    await wrapper.find('[data-testid="todo-detail-project-filter"]').setValue('api')
+    await nextTick()
+    await wrapper.find('[data-testid="todo-detail-project-option-project-b"]').trigger('click')
+    await wrapper.find('[data-testid="todo-detail-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('close terminals'))
+    expect(UpdateTodo).toHaveBeenCalledWith({
+      id: 'todo-a',
+      title: 'Fix login redirect',
+      description: '登录后跳回首页',
+      priority: 'high',
+      projectIds: ['project-b']
+    })
+    expect(wrapper.find('[data-testid="todo-detail-dialog"]').exists()).toBe(false)
+  })
+
+  it('keeps TODO detail editor open when terminal-closing save is cancelled', async () => {
+    window.confirm.mockReturnValue(false)
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        projects: [{ id: 'project-a', name: 'frontend-app', path: '/work/frontend-app', available: true }],
+        todos: [todo({ title: 'Fix login', priority: 'medium' })],
+        todoProjects: [todoProject({ projectId: 'project-a' })],
+        terminals: [terminal({ todoProjectId: 'todo-project-a' })]
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="edit-todo-todo-a"]').trigger('click')
+    await wrapper.find('[data-testid="todo-detail-selected-project-remove-project-a"]').trigger('click')
+    await wrapper.find('[data-testid="todo-detail-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(UpdateTodo).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="todo-detail-dialog"]').exists()).toBe(true)
+  })
+
+  it('removes a TODO project from the tree through the confirmation popover', async () => {
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="remove-todo-project-todo-project-a"]').trigger('click')
+    await nextTick()
+    await wrapper.find('[data-testid="confirm-remove-todo-project-todo-project-a"]').trigger('click')
+    await flushPromises()
+
+    expect(RemoveTodoProject).toHaveBeenCalledWith('todo-project-a')
+    expect(wrapper.find('[data-testid="todo-project-todo-project-a"]').exists()).toBe(false)
+  })
+
   it('selects a TODO project context without creating a terminal', async () => {
     const wrapper = await mountReadyApp()
     CreateTodoTerminal.mockClear()
@@ -507,27 +602,50 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="terminal-pane-terminal-a"]').classes()).toContain('active')
   })
 
+  it('resizes the sidebar by dragging the divider and refits the active terminal', async () => {
+    const wrapper = await mountReadyApp()
+    const fitAddon = xtermMock.sessions.get('terminal-a').fitAddon
+    fitAddon.fit.mockClear()
+
+    await wrapper.find('[data-testid="sidebar-resize-handle"]').trigger('mousedown', { clientX: 280 })
+    window.dispatchEvent(new MouseEvent('mousemove', { clientX: 360 }))
+    window.dispatchEvent(new MouseEvent('mouseup', { clientX: 360 }))
+    await flushPromises()
+
+    expect(wrapper.find('.app-shell').attributes('style')).toContain('--sidebar-width: 360px')
+    expect(fitAddon.fit).toHaveBeenCalled()
+  })
+
   it('completes a TODO and shows its archived snapshot', async () => {
     const wrapper = await mountReadyApp()
 
     await wrapper.find('[data-testid="complete-todo-todo-a"]').trigger('click')
+    await nextTick()
+    expect(CompleteTodo).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="complete-todo-popover-todo-a"]').exists()).toBe(true)
+
+    await wrapper.find('[data-testid="confirm-complete-todo-todo-a"]').trigger('click')
     await flushPromises()
     await wrapper.find('[data-testid="todo-view-archived"]').trigger('click')
 
-    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('Complete TODO'))
+    expect(window.confirm).not.toHaveBeenCalled()
     expect(CompleteTodo).toHaveBeenCalledWith('todo-a')
     expect(wrapper.find('[data-testid="terminal-terminal-a"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="archived-todos"]').text()).toContain('completed')
     expect(wrapper.find('[data-testid="archived-todos"]').text()).toContain('/work/alpha')
   })
 
-  it('does not delete a TODO when confirmation is cancelled', async () => {
-    window.confirm.mockReturnValue(false)
+  it('does not delete a TODO when the sidebar confirmation is cancelled', async () => {
     const wrapper = await mountReadyApp()
 
     await wrapper.find('[data-testid="delete-todo-todo-a"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="delete-todo-popover-todo-a"]').exists()).toBe(true)
+    await wrapper.find('[data-testid="cancel-delete-todo-todo-a"]').trigger('click')
     await flushPromises()
 
+    expect(window.confirm).not.toHaveBeenCalled()
     expect(DeleteTodo).not.toHaveBeenCalled()
     expect(wrapper.find('[data-testid="todo-todo-a"]').exists()).toBe(true)
   })

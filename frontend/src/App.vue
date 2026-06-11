@@ -19,6 +19,7 @@ import {
   InitializeProjectGitRepository,
   ListProjects,
   LoadTerminalSettings,
+  RemoveTodoProject,
   ResizeTerminal,
   SelectProject,
   SelectTerminal,
@@ -27,7 +28,8 @@ import {
   SaveTerminalShell,
   SaveTerminalTheme,
   SendTerminalInput,
-  StartShell
+  StartShell,
+  UpdateTodo
 } from '../wailsjs/go/main/App'
 import { ClipboardGetText, ClipboardSetText, EventsOff, EventsOn } from '../wailsjs/runtime/runtime'
 
@@ -50,6 +52,14 @@ const terminalMenu = reactive({
   x: 0,
   y: 0
 })
+const sidebarWidth = ref(280)
+const sidebarResize = reactive({
+  active: false,
+  startX: 0,
+  startWidth: 280
+})
+const sidebarMinWidth = 220
+const sidebarMaxWidth = 520
 const defaultTerminalLaunchProfiles = [
   { name: 'codex', command: 'codex' },
   { name: 'claude', command: 'claude' }
@@ -80,6 +90,16 @@ const settingsPanel = reactive({
 })
 const todoForm = reactive({
   visible: false,
+  title: '',
+  description: '',
+  priority: 'medium',
+  projectIds: [],
+  projectSearch: '',
+  saving: false
+})
+const todoDetail = reactive({
+  visible: false,
+  todoId: '',
   title: '',
   description: '',
   priority: 'medium',
@@ -210,6 +230,30 @@ const todoFormProjectOptions = computed(() => {
   return filteredProjects(projects.value, todoForm.projectSearch)
 })
 
+const selectedTodoDetailProjects = computed(() => {
+  const selectedProjectIds = new Set(todoDetail.projectIds)
+  return projects.value.filter((project) => selectedProjectIds.has(project.id))
+})
+
+const todoDetailProjectOptions = computed(() => {
+  return filteredProjects(projects.value, todoDetail.projectSearch)
+})
+
+const removedTodoDetailProjectsWithTerminals = computed(() => {
+  if (!todoDetail.visible || !todoDetail.todoId) {
+    return []
+  }
+
+  const selectedProjectIds = new Set(todoDetail.projectIds)
+  return todoProjects.value.filter((todoProject) => {
+    return (
+      todoProject.todoId === todoDetail.todoId &&
+      !selectedProjectIds.has(todoProject.projectId) &&
+      terminals.value.some((terminal) => terminal.todoProjectId === todoProject.id)
+    )
+  })
+})
+
 const projectPickerOptions = computed(() => {
   const linkedProjectIds = new Set(
     todoProjects.value
@@ -258,6 +302,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', fitActiveTerminal)
   window.removeEventListener('focus', refreshProjectGitStatus)
   window.removeEventListener('click', closeTerminalMenu)
+  window.removeEventListener('mousemove', resizeSidebar)
+  window.removeEventListener('mouseup', stopSidebarResize)
 })
 
 function applyState(state) {
@@ -365,6 +411,81 @@ async function submitTodoForm() {
   }
 }
 
+function editTodo(todoId) {
+  const todo = todos.value.find((candidate) => candidate.id === todoId)
+  if (!todo) {
+    return
+  }
+
+  todoDetail.visible = true
+  todoDetail.todoId = todo.id
+  todoDetail.title = todo.title || ''
+  todoDetail.description = todo.description || ''
+  todoDetail.priority = normalizedTodoPriority(todo.priority)
+  todoDetail.projectIds = todoProjects.value
+    .filter((todoProject) => todoProject.todoId === todo.id)
+    .map((todoProject) => todoProject.projectId)
+  todoDetail.projectSearch = ''
+  todoDetail.saving = false
+  errorMessage.value = ''
+}
+
+function closeTodoDetail() {
+  todoDetail.visible = false
+  todoDetail.todoId = ''
+  todoDetail.title = ''
+  todoDetail.description = ''
+  todoDetail.priority = 'medium'
+  todoDetail.projectIds = []
+  todoDetail.projectSearch = ''
+  todoDetail.saving = false
+}
+
+function toggleTodoDetailProject(project) {
+  if (!project?.id) {
+    return
+  }
+  todoDetail.projectIds = toggleProjectId(todoDetail.projectIds, project.id)
+}
+
+function removeTodoDetailProject(projectId) {
+  todoDetail.projectIds = todoDetail.projectIds.filter((selectedProjectId) => selectedProjectId !== projectId)
+}
+
+async function submitTodoDetail() {
+  const title = todoDetail.title.trim()
+  if (!title) {
+    showError('TODO title is required')
+    return
+  }
+
+  if (
+    removedTodoDetailProjectsWithTerminals.value.length > 0 &&
+    !window.confirm('Saving will close terminals for removed projects. Continue?')
+  ) {
+    return
+  }
+
+  todoDetail.saving = true
+  try {
+    applyState(
+      await UpdateTodo({
+        id: todoDetail.todoId,
+        title,
+        description: todoDetail.description.trim(),
+        priority: normalizedTodoPriority(todoDetail.priority),
+        projectIds: [...todoDetail.projectIds]
+      })
+    )
+    closeTodoDetail()
+    await activateActiveTerminal()
+  } catch (error) {
+    showError(error)
+  } finally {
+    todoDetail.saving = false
+  }
+}
+
 async function addProjectToTodo(todoId) {
   projectPicker.todoId = todoId
   projectPicker.query = ''
@@ -433,6 +554,15 @@ async function selectTodoProject(todoProjectId) {
   }
 }
 
+async function removeTodoProject(todoProjectId) {
+  try {
+    applyState(await RemoveTodoProject(todoProjectId))
+    await activateActiveTerminal()
+  } catch (error) {
+    showError(error)
+  }
+}
+
 async function selectTerminal(terminalId) {
   try {
     applyState(await SelectTerminal(terminalId))
@@ -457,11 +587,6 @@ async function createTerminal(todoProjectId, launchProfile = null) {
 }
 
 async function completeTodo(todoId) {
-  const todo = todos.value.find((candidate) => candidate.id === todoId)
-  const title = todo?.title || 'this TODO'
-  if (!window.confirm(`Complete TODO "${title}"? Running terminals under it will be closed.`)) {
-    return
-  }
   try {
     applyState(await CompleteTodo(todoId))
     await activateActiveTerminal()
@@ -471,11 +596,6 @@ async function completeTodo(todoId) {
 }
 
 async function deleteTodo(todoId) {
-  const todo = todos.value.find((candidate) => candidate.id === todoId)
-  const title = todo?.title || 'this TODO'
-  if (!window.confirm(`Delete TODO "${title}"? Running terminals under it will be closed.`)) {
-    return
-  }
   try {
     applyState(await DeleteTodo(todoId))
     await activateActiveTerminal()
@@ -839,6 +959,42 @@ function errorMessageFrom(error) {
   return error?.message || String(error)
 }
 
+function startSidebarResize(event) {
+  sidebarResize.active = true
+  sidebarResize.startX = event.clientX
+  sidebarResize.startWidth = sidebarWidth.value
+  window.addEventListener('mousemove', resizeSidebar)
+  window.addEventListener('mouseup', stopSidebarResize)
+  event.preventDefault()
+}
+
+function resizeSidebar(event) {
+  if (!sidebarResize.active) {
+    return
+  }
+  const nextWidth = sidebarResize.startWidth + event.clientX - sidebarResize.startX
+  sidebarWidth.value = clampNumber(nextWidth, sidebarMinWidth, sidebarMaxWidth)
+  scheduleFitActiveTerminal()
+}
+
+function stopSidebarResize() {
+  if (!sidebarResize.active) {
+    return
+  }
+  sidebarResize.active = false
+  window.removeEventListener('mousemove', resizeSidebar)
+  window.removeEventListener('mouseup', stopSidebarResize)
+  scheduleFitActiveTerminal()
+}
+
+function clampNumber(value, min, max) {
+  return Math.min(max, Math.max(min, Math.round(value)))
+}
+
+function scheduleFitActiveTerminal() {
+  nextTick(() => fitActiveTerminal())
+}
+
 function fitActiveTerminal() {
   terminalManager.fitActive()
 }
@@ -952,7 +1108,7 @@ function showError(error) {
 </script>
 
 <template>
-  <main class="app-shell" :data-theme="currentTheme">
+  <main class="app-shell" :data-theme="currentTheme" :style="{ '--sidebar-width': `${sidebarWidth}px` }">
     <ProjectSidebar
       :projects="projects"
       :todos="todos"
@@ -968,8 +1124,10 @@ function showError(error) {
       @import-projects="importProjectsFromParentDirectory"
       @select-project="selectProject"
       @create-todo="createTodo"
+      @edit-todo="editTodo"
       @add-project-to-todo="addProjectToTodo"
       @select-todo-project="selectTodoProject"
+      @remove-todo-project="removeTodoProject"
       @complete-todo="completeTodo"
       @delete-todo="deleteTodo"
       @create-terminal="createTerminal"
@@ -977,6 +1135,15 @@ function showError(error) {
       @delete-project="deleteProject"
       @delete-terminal="deleteTerminal"
     />
+
+    <div
+      class="sidebar-resize-handle"
+      data-testid="sidebar-resize-handle"
+      role="separator"
+      aria-orientation="vertical"
+      title="Resize sidebar"
+      @mousedown="startSidebarResize"
+    ></div>
 
     <section class="workspace">
       <header class="workspace-header">
@@ -1191,6 +1358,127 @@ function showError(error) {
             @click="submitTodoForm"
           >
             Create
+          </button>
+        </footer>
+      </section>
+    </div>
+
+    <div v-if="todoDetail.visible" class="settings-overlay" @click="closeTodoDetail">
+      <section class="settings-dialog todo-dialog" data-testid="todo-detail-dialog" @click.stop>
+        <header class="settings-header">
+          <div>
+            <h2>TODO Detail</h2>
+            <p>Task context</p>
+          </div>
+          <button type="button" class="icon-button" title="Close TODO detail" @click="closeTodoDetail">
+            <X :size="16" />
+          </button>
+        </header>
+
+        <div class="settings-body todo-form-body">
+          <label class="settings-field">
+            <span class="settings-label">Name</span>
+            <input
+              v-model="todoDetail.title"
+              type="text"
+              class="todo-text-input"
+              data-testid="todo-detail-name-input"
+            />
+          </label>
+
+          <label class="settings-field">
+            <span class="settings-label">Description</span>
+            <textarea
+              v-model="todoDetail.description"
+              class="todo-textarea"
+              rows="3"
+              data-testid="todo-detail-description-input"
+            ></textarea>
+          </label>
+
+          <div class="settings-field">
+            <span class="settings-label">Priority</span>
+            <div class="todo-priority-options">
+              <label
+                v-for="priority in todoPriorities"
+                :key="priority.value"
+                class="todo-priority-option"
+                :class="`todo-priority-option-${priority.value}`"
+              >
+                <input
+                  v-model="todoDetail.priority"
+                  type="radio"
+                  :value="priority.value"
+                  :data-testid="`todo-detail-priority-${priority.value}`"
+                />
+                <span>{{ priority.label }}</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="settings-field">
+            <span class="settings-label">Projects</span>
+            <div
+              v-if="selectedTodoDetailProjects.length"
+              class="todo-selected-project-tags"
+              data-testid="todo-detail-selected-projects"
+            >
+              <span
+                v-for="project in selectedTodoDetailProjects"
+                :key="project.id"
+                class="todo-selected-project-tag"
+                :data-testid="`todo-detail-selected-project-tag-${project.id}`"
+              >
+                <span class="project-name">{{ project.name }}</span>
+                <button
+                  type="button"
+                  class="todo-selected-project-remove"
+                  :title="`Remove ${project.name}`"
+                  :aria-label="`Remove ${project.name}`"
+                  :data-testid="`todo-detail-selected-project-remove-${project.id}`"
+                  :disabled="todoDetail.saving"
+                  @click="removeTodoDetailProject(project.id)"
+                >
+                  <X :size="12" />
+                </button>
+              </span>
+            </div>
+            <input
+              v-model="todoDetail.projectSearch"
+              type="text"
+              class="todo-text-input"
+              data-testid="todo-detail-project-filter"
+            />
+            <div class="todo-project-options" data-testid="todo-detail-project-options">
+              <button
+                v-for="project in todoDetailProjectOptions"
+                :key="project.id"
+                type="button"
+                class="todo-project-option"
+                :class="{ selected: todoDetail.projectIds.includes(project.id) }"
+                :data-testid="`todo-detail-project-option-${project.id}`"
+                :aria-pressed="todoDetail.projectIds.includes(project.id)"
+                :disabled="todoDetail.saving"
+                @click="toggleTodoDetailProject(project)"
+              >
+                <span class="project-name">{{ project.name }}</span>
+                <span class="project-path">{{ project.path }}</span>
+              </button>
+              <span v-if="todoDetailProjectOptions.length === 0" class="sidebar-empty">No matching projects</span>
+            </div>
+          </div>
+        </div>
+
+        <footer class="settings-actions">
+          <button type="button" class="toolbar-button" @click="closeTodoDetail">Cancel</button>
+          <button
+            type="button"
+            class="toolbar-button primary"
+            data-testid="todo-detail-submit"
+            :disabled="todoDetail.saving"
+            @click="submitTodoDetail"
+          >
+            Save
           </button>
         </footer>
       </section>

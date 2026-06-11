@@ -78,6 +78,10 @@ export function LoadTerminalSettings() {
   return window['go']['main']['App']['LoadTerminalSettings']();
 }
 
+export function RemoveTodoProject(arg1) {
+  return window['go']['main']['App']['RemoveTodoProject'](arg1);
+}
+
 export function ResizeTerminal(arg1, arg2, arg3) {
   return window['go']['main']['App']['ResizeTerminal'](arg1, arg2, arg3);
 }
@@ -112,4 +116,8 @@ export function SendTerminalInput(arg1, arg2) {
 
 export function StartShell(arg1, arg2, arg3) {
   return window['go']['main']['App']['StartShell'](arg1, arg2, arg3);
+}
+
+export function UpdateTodo(arg1) {
+  return window['go']['main']['App']['UpdateTodo'](arg1);
 }

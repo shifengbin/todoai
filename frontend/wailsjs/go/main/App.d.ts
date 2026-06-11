@@ -40,6 +40,8 @@ export function ListProjects():Promise<main.ProjectState>;
 
 export function LoadTerminalSettings():Promise<main.TerminalSettingsState>;
 
+export function RemoveTodoProject(arg1:string):Promise<main.ProjectState>;
+
 export function ResizeTerminal(arg1:string,arg2:number,arg3:number):Promise<void>;
 
 export function SaveTerminalLaunchProfiles(arg1:Array<main.TerminalLaunchProfileSetting>):Promise<main.TerminalSettingsState>;
@@ -57,3 +59,5 @@ export function SelectTodoProject(arg1:string):Promise<main.ProjectState>;
 export function SendTerminalInput(arg1:string,arg2:string):Promise<void>;
 
 export function StartShell(arg1:string,arg2:number,arg3:number):Promise<main.ShellStatus>;
+
+export function UpdateTodo(arg1:main.UpdateTodoRequest):Promise<main.ProjectState>;

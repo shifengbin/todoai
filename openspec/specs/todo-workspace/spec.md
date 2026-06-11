@@ -96,7 +96,7 @@ TBD - created by archiving change add-todo-centric-workspace. Update Purpose aft
 
 ### Requirement: Associate Projects With Todo
 
-系统 SHALL 允许用户从项目库中通过可搜索多选控件选择一个或多个项目关联到 TODO。同一个项目 SHALL 可关联到多个不同 TODO。项目选择 SHALL 支持按项目名称和路径筛选，且 SHALL 不要求用户手动输入完整项目名称。
+系统 SHALL 允许用户从项目库中通过可搜索多选控件选择一个或多个项目关联到 TODO，并 SHALL 允许用户从 TODO 中移除已关联项目。同一个项目 SHALL 可关联到多个不同 TODO。项目选择 SHALL 支持按项目名称和路径筛选，且 SHALL 不要求用户手动输入完整项目名称。移除 TODO 下的工程关联 SHALL 只影响当前 TODO 下的该工程关联。
 
 #### Scenario: User associates projects with a todo
 
@@ -158,6 +158,29 @@ TBD - created by archiving change add-todo-centric-workspace. Update Purpose aft
 - **AND** 用户确认添加
 - **THEN** TODO `修复登录问题` 下显示项目 `frontend-app`
 - **AND** TODO `修复登录问题` 下不新增 `api-service`
+
+#### Scenario: User removes project from todo list with popover confirmation
+
+- **WHEN** TODO `修复登录问题` 下显示工程 `frontend-app`
+- **AND** 用户点击 `frontend-app` 工程行上的删除按钮
+- **THEN** 系统在删除按钮旁显示删除确认气泡
+- **WHEN** 用户在确认气泡中确认删除
+- **THEN** TODO `修复登录问题` 下不再显示工程 `frontend-app`
+
+#### Scenario: User cancels project removal popover
+
+- **WHEN** TODO `修复登录问题` 下显示工程 `frontend-app`
+- **AND** 用户点击 `frontend-app` 工程行上的删除按钮
+- **AND** 系统显示删除确认气泡
+- **WHEN** 用户取消删除
+- **THEN** TODO `修复登录问题` 下仍显示工程 `frontend-app`
+
+#### Scenario: Removing project from one todo preserves other todos
+
+- **WHEN** 工程 `frontend-app` 同时关联到 TODO `修复登录问题` 和 TODO `升级依赖`
+- **AND** 用户从 TODO `修复登录问题` 下移除工程 `frontend-app`
+- **THEN** TODO `修复登录问题` 下不再显示工程 `frontend-app`
+- **AND** TODO `升级依赖` 下仍显示工程 `frontend-app`
 
 ### Requirement: Display Todo Project Terminal Tree
 
@@ -232,25 +255,38 @@ TBD - created by archiving change add-todo-centric-workspace. Update Purpose aft
 
 ### Requirement: Complete Todo
 
-系统 SHALL 允许用户完成活动 TODO。完成 TODO SHALL 关闭并销毁该 TODO 下所有运行时终端，并 SHALL 将 TODO 归档为已完成状态。
+系统 SHALL 允许用户通过 TODO item 完成按钮旁的确认气泡完成活动 TODO。完成 TODO SHALL 关闭并销毁该 TODO 下所有运行时终端，并 SHALL 将 TODO 归档为已完成状态。用户取消确认 SHALL 不改变 TODO 或其终端状态。
 
 #### Scenario: User completes a todo
 
 - **WHEN** TODO `修复登录问题` 下存在运行中的终端
-- **AND** 用户确认完成该 TODO
+- **AND** 用户点击 TODO `修复登录问题` 的完成按钮
+- **AND** 系统在完成按钮旁显示完成确认气泡
+- **AND** 用户在确认气泡中确认完成
 - **THEN** 系统关闭该 TODO 下所有运行中 shell 进程
 - **AND** 系统从运行时状态移除该 TODO 下所有终端
 - **AND** TODO `修复登录问题` 不再显示在活动任务列表中
 - **AND** TODO `修复登录问题` 显示在归档列表中且归档原因为 `completed`
 
+#### Scenario: User cancels todo completion
+
+- **WHEN** TODO `修复登录问题` 下存在运行中的终端
+- **AND** 用户点击 TODO `修复登录问题` 的完成按钮
+- **AND** 系统在完成按钮旁显示完成确认气泡
+- **AND** 用户取消确认
+- **THEN** TODO `修复登录问题` 保持在活动任务列表中
+- **AND** 该 TODO 下的终端保持运行时状态不变
+
 ### Requirement: Delete Todo
 
-系统 SHALL 允许用户删除活动 TODO。删除 TODO SHALL 关闭并销毁该 TODO 下所有运行时终端，并 SHALL 将 TODO 归档为删除状态。
+系统 SHALL 允许用户通过 TODO item 删除按钮旁的确认气泡删除活动 TODO。删除 TODO SHALL 关闭并销毁该 TODO 下所有运行时终端，并 SHALL 将 TODO 归档为删除状态。用户取消确认 SHALL 不改变 TODO 或其终端状态。
 
 #### Scenario: User deletes a todo
 
 - **WHEN** TODO `修复登录问题` 下存在运行中的终端
-- **AND** 用户确认删除该 TODO
+- **AND** 用户点击 TODO `修复登录问题` 的删除按钮
+- **AND** 系统在删除按钮旁显示删除确认气泡
+- **AND** 用户在确认气泡中确认删除
 - **THEN** 系统关闭该 TODO 下所有运行中 shell 进程
 - **AND** 系统从运行时状态移除该 TODO 下所有终端
 - **AND** TODO `修复登录问题` 不再显示在活动任务列表中
@@ -258,7 +294,8 @@ TBD - created by archiving change add-todo-centric-workspace. Update Purpose aft
 
 #### Scenario: User cancels todo deletion
 
-- **WHEN** 用户请求删除 TODO `修复登录问题`
+- **WHEN** 用户点击 TODO `修复登录问题` 的删除按钮
+- **AND** 系统在删除按钮旁显示删除确认气泡
 - **AND** 用户取消确认
 - **THEN** TODO `修复登录问题` 保持在活动任务列表中
 - **AND** 该 TODO 下的终端保持运行时状态不变
@@ -295,23 +332,153 @@ TBD - created by archiving change add-todo-centric-workspace. Update Purpose aft
 
 ### Requirement: Display Todo Priority Visuals
 
-系统 SHALL 在 TODO 工作树中展示活动 TODO 的优先级，并 SHALL 使用与优先级一致的颜色标记 TODO 行。优先级 SHALL 包含 `高`、`中`、`低` 三档，TODO 行背景 SHALL 使用同优先级一致的同色系背景。
+系统 SHALL 在 TODO 工作树中使用与优先级一致的颜色标记活动 TODO item。优先级 SHALL 包含 `高`、`中`、`低` 三档。TODO item header 背景 SHALL 使用与优先级一致的同色系背景，并 SHALL 覆盖该 item 的整条 header，包括展开控件、标题区域和操作按钮区域。TODO item 上 SHALL 不显示 `高`、`中`、`低` 文案标签。
 
 #### Scenario: Todo row shows high priority styling
 
 - **WHEN** 活动 TODO `修复登录问题` 的优先级为 `高`
-- **THEN** TODO 行显示 `高` 优先级标记
-- **AND** TODO 行背景使用高优先级对应的红色系背景
+- **THEN** TODO item header 使用高优先级对应的红色系背景覆盖整条 header
+- **AND** TODO item 上不显示 `高` 文案标签
 
 #### Scenario: Todo row shows medium priority styling
 
 - **WHEN** 活动 TODO `升级依赖` 的优先级为 `中`
-- **THEN** TODO 行显示 `中` 优先级标记
-- **AND** TODO 行背景使用中优先级对应的橙色系背景
+- **THEN** TODO item header 使用中优先级对应的橙色系背景覆盖整条 header
+- **AND** TODO item 上不显示 `中` 文案标签
 
 #### Scenario: Todo row shows low priority styling
 
 - **WHEN** 活动 TODO `整理文档` 的优先级为 `低`
-- **THEN** TODO 行显示 `低` 优先级标记
-- **AND** TODO 行背景使用低优先级对应的绿色系背景
+- **THEN** TODO item header 使用低优先级对应的绿色系背景覆盖整条 header
+- **AND** TODO item 上不显示 `低` 文案标签
+
+### Requirement: Edit Todo Details
+
+系统 SHALL 允许用户从活动 TODO item 的眼睛图标进入 TODO 详情，并 SHALL 在详情中查看和编辑 TODO 名称、描述、优先级和关联工程。保存编辑 SHALL 持久化更新后的 TODO 字段和工程关联。
+
+#### Scenario: User opens todo details from item
+
+- **WHEN** 活动 TODO 列表显示 TODO `修复登录问题`
+- **AND** 用户点击该 TODO item 上的眼睛图标
+- **THEN** 系统打开 TODO 详情编辑界面
+- **AND** 详情界面显示 TODO 名称、描述、优先级和已关联工程
+
+#### Scenario: User edits todo metadata
+
+- **WHEN** 用户打开 TODO `修复登录问题` 的详情
+- **AND** 用户将名称改为 `修复登录跳转`
+- **AND** 用户将描述改为 `登录后跳回首页`
+- **AND** 用户将优先级改为 `高`
+- **AND** 用户保存详情
+- **THEN** 活动 TODO 列表显示 `修复登录跳转`
+- **AND** TODO 描述保存为 `登录后跳回首页`
+- **AND** TODO 优先级保存为 `高`
+
+#### Scenario: User edits todo projects without removed terminals
+
+- **WHEN** TODO `修复登录问题` 已关联工程 `frontend-app`
+- **AND** 项目库还包含工程 `api-service`
+- **AND** 用户在详情中新增工程 `api-service`
+- **AND** 用户保存详情
+- **THEN** TODO `修复登录问题` 下显示工程 `frontend-app`
+- **AND** TODO `修复登录问题` 下显示工程 `api-service`
+- **AND** 系统不自动为 `api-service` 创建终端
+
+#### Scenario: Saving detail edit confirms removed project terminals
+
+- **WHEN** TODO `修复登录问题` 下的工程 `frontend-app` 存在终端
+- **AND** 用户在详情中移除工程 `frontend-app`
+- **AND** 用户点击保存
+- **THEN** 系统在保存前提示移除该工程会关闭其在当前 TODO 下的终端
+- **WHEN** 用户确认保存
+- **THEN** 系统移除 TODO `修复登录问题` 下的工程 `frontend-app`
+- **AND** 系统关闭并移除 `frontend-app` 在该 TODO 下的终端
+
+#### Scenario: User cancels terminal-closing detail save
+
+- **WHEN** TODO `修复登录问题` 下的工程 `frontend-app` 存在终端
+- **AND** 用户在详情中移除工程 `frontend-app`
+- **AND** 用户点击保存
+- **AND** 用户取消关闭终端确认
+- **THEN** 详情编辑界面保持打开
+- **AND** TODO `修复登录问题` 下的工程 `frontend-app` 仍保持关联
+- **AND** `frontend-app` 在该 TODO 下的终端保持运行时状态不变
+
+### Requirement: Scroll Todo Workspace List
+
+系统 SHALL 在 TODO 列表内容超过侧边栏可见高度时，让 TODO tab 内容在侧边栏内部滚动。滚动 SHALL 不改变终端区域高度或宽度。
+
+#### Scenario: Long todo list scrolls inside sidebar
+
+- **WHEN** 活动 TODO 列表内容超过侧边栏高度
+- **THEN** TODO tab 内部出现可滚动区域
+- **AND** 侧边栏 header 和 tab 控件保持可见
+- **AND** 终端区域尺寸不因 TODO 列表长度被挤压
+
+### Requirement: Resize Workspace Sidebar
+
+系统 SHALL 允许用户通过鼠标拖动侧边栏和终端区域之间的分隔条调整侧边栏宽度。调整侧边栏宽度 SHALL 同时改变终端区域宽度，并 SHALL 重新适配活动终端尺寸。
+
+#### Scenario: User drags sidebar wider
+
+- **WHEN** 用户向右拖动侧边栏分隔条
+- **THEN** 侧边栏宽度增加
+- **AND** 终端区域宽度相应减少
+- **AND** 活动终端重新适配新的可见尺寸
+
+#### Scenario: Sidebar resize respects width limits
+
+- **WHEN** 用户拖动侧边栏分隔条超过允许的最小或最大宽度
+- **THEN** 系统将侧边栏宽度限制在允许范围内
+- **AND** 终端区域仍保持可用宽度
+
+### Requirement: Manage Todo Action Confirmation Popovers
+
+系统 SHALL 在 TODO item 的完成和删除操作上使用按钮旁确认气泡。系统 SHALL 在同一时间最多显示一个侧边栏浮层；打开 TODO 操作确认气泡 SHALL 关闭终端启动菜单和 TODO 项目移除确认气泡，打开其它侧边栏浮层 SHALL 关闭 TODO 操作确认气泡。确认气泡 SHALL 支持取消、点击外部关闭和确认成功后关闭。
+
+#### Scenario: Complete confirmation popover opens beside complete action
+
+- **WHEN** 活动 TODO 列表显示 TODO `修复登录问题`
+- **AND** 用户点击该 TODO item 上的完成按钮
+- **THEN** 系统在完成按钮旁显示完成确认气泡
+- **AND** 系统不立即完成 TODO `修复登录问题`
+
+#### Scenario: Delete confirmation popover opens beside delete action
+
+- **WHEN** 活动 TODO 列表显示 TODO `修复登录问题`
+- **AND** 用户点击该 TODO item 上的删除按钮
+- **THEN** 系统在删除按钮旁显示删除确认气泡
+- **AND** 系统不立即删除 TODO `修复登录问题`
+
+#### Scenario: Opening another sidebar popover closes todo action popover
+
+- **WHEN** TODO `修复登录问题` 的完成确认气泡已显示
+- **AND** 用户打开 TODO 下项目 `frontend-app` 的终端启动菜单
+- **THEN** 系统关闭 TODO `修复登录问题` 的完成确认气泡
+- **AND** 系统显示 `frontend-app` 的终端启动菜单
+
+#### Scenario: Outside click closes todo action popover without action
+
+- **WHEN** TODO `修复登录问题` 的删除确认气泡已显示
+- **AND** 用户点击确认气泡外部
+- **THEN** 系统关闭删除确认气泡
+- **AND** TODO `修复登录问题` 保持在活动任务列表中
+
+### Requirement: Display Todo Project Row State
+
+系统 SHALL 在 TODO 工作树中用整行背景表达 TODO 下项目行的悬停和选中状态。TODO 项目行背景 SHALL 覆盖该项目 header 的项目信息区域、创建终端按钮区域和删除按钮区域。TODO 项目行上的创建终端按钮和删除按钮 SHALL 在整行背景上保持可读，并 SHALL 保留各自的 hover 和 focus 反馈。
+
+#### Scenario: Active todo project row background covers action buttons
+
+- **WHEN** TODO `修复登录问题` 下的项目 `frontend-app` 是当前选中的 TODO 项目上下文
+- **THEN** `frontend-app` 项目行的选中背景覆盖项目名称和路径区域
+- **AND** 选中背景覆盖创建终端按钮区域
+- **AND** 选中背景覆盖删除按钮区域
+
+#### Scenario: Hovered todo project row background covers action buttons
+
+- **WHEN** 用户将鼠标悬停在 TODO `修复登录问题` 下的项目 `frontend-app` 行上
+- **THEN** `frontend-app` 项目行的悬停背景覆盖项目名称和路径区域
+- **AND** 悬停背景覆盖创建终端按钮区域
+- **AND** 悬停背景覆盖删除按钮区域
 

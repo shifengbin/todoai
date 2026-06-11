@@ -364,6 +364,27 @@ export namespace main {
 	
 	
 	
+	
+	export class UpdateTodoRequest {
+	    id: string;
+	    title: string;
+	    description?: string;
+	    priority?: string;
+	    projectIds?: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new UpdateTodoRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.title = source["title"];
+	        this.description = source["description"];
+	        this.priority = source["priority"];
+	        this.projectIds = source["projectIds"];
+	    }
+	}
 
 }
 

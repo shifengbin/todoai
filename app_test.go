@@ -261,6 +261,123 @@ func TestAppCompletesTodoAndClosesOnlyOwnedTerminals(t *testing.T) {
 	}
 }
 
+func TestAppUpdateTodoRemovesProjectAndClosesOnlyThatTodoProjectTerminals(t *testing.T) {
+	projectDir := t.TempDir()
+	otherProjectDir := t.TempDir()
+	starter := newFakeShellStarter()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		starter.Start,
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-a", "terminal-b", "terminal-c")),
+	)
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath(A) error = %v", err)
+	}
+	projectAID := state.Projects[0].ID
+	state, err = app.AddProjectFromPath(otherProjectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath(B) error = %v", err)
+	}
+	projectBID := state.ActiveProjectID
+	state, err = app.CreateTodo(CreateTodoRequest{Title: "修复登录问题", ProjectIDs: []string{projectAID, projectBID}})
+	if err != nil {
+		t.Fatalf("CreateTodo(A) error = %v", err)
+	}
+	todoAID := state.ActiveTodoID
+	todoProjectAProjectAID := state.TodoProjects[0].ID
+	todoProjectAProjectBID := state.TodoProjects[1].ID
+	if _, err := app.CreateTodoTerminal(todoProjectAProjectAID, 80, 24); err != nil {
+		t.Fatalf("CreateTodoTerminal(A/projectA) error = %v", err)
+	}
+	if _, err := app.CreateTodoTerminal(todoProjectAProjectBID, 80, 24); err != nil {
+		t.Fatalf("CreateTodoTerminal(A/projectB) error = %v", err)
+	}
+	state, err = app.CreateTodo(CreateTodoRequest{Title: "升级依赖", ProjectIDs: []string{projectAID}})
+	if err != nil {
+		t.Fatalf("CreateTodo(B) error = %v", err)
+	}
+	todoProjectBProjectAID := state.ActiveTodoProjectID
+	if _, err := app.CreateTodoTerminal(todoProjectBProjectAID, 80, 24); err != nil {
+		t.Fatalf("CreateTodoTerminal(B/projectA) error = %v", err)
+	}
+	if _, err := app.SelectTodoProject(todoProjectAProjectAID); err != nil {
+		t.Fatalf("SelectTodoProject(A/projectA) error = %v", err)
+	}
+
+	state, err = app.UpdateTodo(UpdateTodoRequest{
+		ID:          todoAID,
+		Title:       "修复登录跳转",
+		Description: "登录后跳回首页",
+		Priority:    TodoPriorityHigh,
+		ProjectIDs:  []string{projectBID},
+	})
+	if err != nil {
+		t.Fatalf("UpdateTodo() error = %v", err)
+	}
+
+	if !starter.processes[0].closed {
+		t.Fatal("removed TODO-project terminal process was not closed")
+	}
+	if starter.processes[1].closed {
+		t.Fatal("remaining project terminal under edited TODO was closed")
+	}
+	if starter.processes[2].closed {
+		t.Fatal("same project terminal under other TODO was closed")
+	}
+	if len(state.Terminals) != 2 {
+		t.Fatalf("Terminals length = %d, want 2 preserved terminals", len(state.Terminals))
+	}
+	if state.ActiveTodoID != todoAID || state.ActiveTodoProjectID != todoProjectAProjectBID || state.ActiveProjectID != projectBID {
+		t.Fatalf("active context = %q/%q/%q, want edited TODO remaining project", state.ActiveTodoID, state.ActiveTodoProjectID, state.ActiveProjectID)
+	}
+	updated := findTodo(state.Todos, todoAID)
+	if updated == nil || updated.Title != "修复登录跳转" || updated.Priority != TodoPriorityHigh {
+		t.Fatalf("updated todo = %#v, want metadata changes", updated)
+	}
+}
+
+func TestAppRemoveTodoProjectClosesOnlyThatTodoProjectTerminals(t *testing.T) {
+	projectDir := t.TempDir()
+	starter := newFakeShellStarter()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		starter.Start,
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-a", "terminal-b")),
+	)
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	projectID := state.Projects[0].ID
+	_, todoProjectAID := createTodoProjectForApp(t, app, "修复登录问题", projectID)
+	if _, err := app.CreateTodoTerminal(todoProjectAID, 80, 24); err != nil {
+		t.Fatalf("CreateTodoTerminal(A) error = %v", err)
+	}
+	_, todoProjectBID := createTodoProjectForApp(t, app, "升级依赖", projectID)
+	if _, err := app.CreateTodoTerminal(todoProjectBID, 80, 24); err != nil {
+		t.Fatalf("CreateTodoTerminal(B) error = %v", err)
+	}
+
+	state, err = app.RemoveTodoProject(todoProjectAID)
+	if err != nil {
+		t.Fatalf("RemoveTodoProject() error = %v", err)
+	}
+
+	if !starter.processes[0].closed {
+		t.Fatal("removed todo-project terminal process was not closed")
+	}
+	if starter.processes[1].closed {
+		t.Fatal("other todo-project terminal process was closed")
+	}
+	if len(state.TodoProjects) != 1 || state.TodoProjects[0].ID != todoProjectBID {
+		t.Fatalf("TodoProjects = %#v, want only todo-project B", state.TodoProjects)
+	}
+	if len(state.Terminals) != 1 || state.Terminals[0].TodoProjectID != todoProjectBID {
+		t.Fatalf("Terminals = %#v, want only todo-project B terminal", state.Terminals)
+	}
+}
+
 func TestAppImportsProjectsFromParentDirectory(t *testing.T) {
 	parentDir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(parentDir, "frontend-app"), 0o755); err != nil {

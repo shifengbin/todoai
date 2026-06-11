@@ -121,6 +121,17 @@ func (a *App) CreateTodo(request CreateTodoRequest) (ProjectState, error) {
 	return a.withShellState(state), nil
 }
 
+func (a *App) UpdateTodo(request UpdateTodoRequest) (ProjectState, error) {
+	state, removedTodoProjectIDs, err := a.projects.UpdateTodo(request)
+	if err != nil {
+		return ProjectState{}, err
+	}
+	for _, todoProjectID := range removedTodoProjectIDs {
+		a.shells.DeleteTodoProjectTerminals(todoProjectID)
+	}
+	return a.withShellState(state), nil
+}
+
 func (a *App) AddProjectToTodo(todoID string, projectID string) (ProjectState, error) {
 	state, err := a.projects.AssociateProjectWithTodo(todoID, projectID)
 	if err != nil {
@@ -133,6 +144,17 @@ func (a *App) AddProjectsToTodo(todoID string, projectIDs []string) (ProjectStat
 	state, err := a.projects.AssociateProjectsWithTodo(todoID, projectIDs)
 	if err != nil {
 		return ProjectState{}, err
+	}
+	return a.withShellState(state), nil
+}
+
+func (a *App) RemoveTodoProject(todoProjectID string) (ProjectState, error) {
+	state, removedTodoProjectIDs, err := a.projects.RemoveTodoProject(todoProjectID)
+	if err != nil {
+		return ProjectState{}, err
+	}
+	for _, removedTodoProjectID := range removedTodoProjectIDs {
+		a.shells.DeleteTodoProjectTerminals(removedTodoProjectID)
 	}
 	return a.withShellState(state), nil
 }

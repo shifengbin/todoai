@@ -30,15 +30,19 @@ describe('ProjectSidebar', () => {
     expect(wrapper.find('[data-testid="terminal-terminal-a"]').classes()).toContain('active')
 
     await wrapper.find('[data-testid="new-todo"]').trigger('click')
+    await wrapper.find('[data-testid="edit-todo-todo-a"]').trigger('click')
     await wrapper.find('[data-testid="add-project-to-todo-todo-a"]').trigger('click')
     await wrapper.find('[data-testid="todo-project-todo-project-a"]').trigger('click')
     await wrapper.find('[data-testid="add-terminal-todo-project-a"]').trigger('click')
     await wrapper.find('[data-testid="terminal-launch-option-todo-project-a-1"]').trigger('click')
     await wrapper.find('[data-testid="terminal-terminal-a"]').trigger('click')
     await wrapper.find('[data-testid="complete-todo-todo-a"]').trigger('click')
+    await wrapper.find('[data-testid="confirm-complete-todo-todo-a"]').trigger('click')
     await wrapper.find('[data-testid="delete-todo-todo-a"]').trigger('click')
+    await wrapper.find('[data-testid="confirm-delete-todo-todo-a"]').trigger('click')
 
     expect(wrapper.emitted('create-todo')).toHaveLength(1)
+    expect(wrapper.emitted('edit-todo')[0]).toEqual(['todo-a'])
     expect(wrapper.emitted('add-project-to-todo')[0]).toEqual(['todo-a'])
     expect(wrapper.emitted('select-todo-project')[0]).toEqual(['todo-project-a'])
     expect(wrapper.emitted('create-terminal')[0]).toEqual(['todo-project-a', { name: 'codex', command: 'codex' }])
@@ -142,9 +146,99 @@ describe('ProjectSidebar', () => {
     })
 
     const todoRow = wrapper.find('[data-testid="todo-todo-a"]')
-    expect(todoRow.classes()).toContain('todo-row-priority-high')
-    expect(wrapper.find('[data-testid="todo-priority-todo-a"]').text()).toBe('高')
+    const todoHeader = todoRow.element.closest('.todo-header-row')
+    expect(todoHeader.classList.contains('todo-header-row-priority-high')).toBe(true)
+    expect(wrapper.find('[data-testid="todo-priority-todo-a"]').exists()).toBe(false)
+    expect(todoHeader.textContent).not.toContain('高')
     expect(wrapper.find('[data-testid="todo-description-todo-a"]').text()).toBe('登录后跳回首页')
+  })
+
+  it('opens TODO action confirmation popovers before emitting', async () => {
+    const wrapper = mountSidebar()
+
+    await wrapper.find('[data-testid="complete-todo-todo-a"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="complete-todo-popover-todo-a"]').exists()).toBe(true)
+    expect(wrapper.emitted('complete-todo')).toBeUndefined()
+
+    await wrapper.find('[data-testid="cancel-complete-todo-todo-a"]').trigger('click')
+    await wrapper.find('[data-testid="delete-todo-todo-a"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="delete-todo-popover-todo-a"]').exists()).toBe(true)
+    expect(wrapper.emitted('delete-todo')).toBeUndefined()
+  })
+
+  it('confirms and cancels TODO action popovers', async () => {
+    const wrapper = mountSidebar()
+
+    await wrapper.find('[data-testid="complete-todo-todo-a"]').trigger('click')
+    await wrapper.find('[data-testid="cancel-complete-todo-todo-a"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="complete-todo-popover-todo-a"]').exists()).toBe(false)
+    expect(wrapper.emitted('complete-todo')).toBeUndefined()
+
+    await wrapper.find('[data-testid="complete-todo-todo-a"]').trigger('click')
+    await wrapper.find('[data-testid="confirm-complete-todo-todo-a"]').trigger('click')
+
+    expect(wrapper.emitted('complete-todo')[0]).toEqual(['todo-a'])
+    expect(wrapper.find('[data-testid="complete-todo-popover-todo-a"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="delete-todo-todo-a"]').trigger('click')
+    await wrapper.find('[data-testid="confirm-delete-todo-todo-a"]').trigger('click')
+
+    expect(wrapper.emitted('delete-todo')[0]).toEqual(['todo-a'])
+    expect(wrapper.find('[data-testid="delete-todo-popover-todo-a"]').exists()).toBe(false)
+  })
+
+  it('closes TODO action popovers from outside clicks and other sidebar popovers', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        launchProfiles: [{ name: 'codex', command: 'codex' }]
+      }
+    })
+
+    await wrapper.find('[data-testid="delete-todo-todo-a"]').trigger('click')
+    window.dispatchEvent(new MouseEvent('click'))
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="delete-todo-popover-todo-a"]').exists()).toBe(false)
+    expect(wrapper.emitted('delete-todo')).toBeUndefined()
+
+    await wrapper.find('[data-testid="complete-todo-todo-a"]').trigger('click')
+    await wrapper.find('[data-testid="add-terminal-todo-project-a"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="complete-todo-popover-todo-a"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="terminal-launch-menu-todo-project-a"]').exists()).toBe(true)
+
+    await wrapper.find('[data-testid="delete-todo-todo-a"]').trigger('click')
+    await wrapper.find('[data-testid="remove-todo-project-todo-project-a"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="delete-todo-popover-todo-a"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="remove-todo-project-popover-todo-project-a"]').exists()).toBe(true)
+  })
+
+  it('confirms direct TODO project removal from a popover', async () => {
+    const wrapper = mountSidebar()
+
+    await wrapper.find('[data-testid="remove-todo-project-todo-project-a"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="remove-todo-project-popover-todo-project-a"]').exists()).toBe(true)
+
+    await wrapper.find('[data-testid="cancel-remove-todo-project-todo-project-a"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="remove-todo-project-popover-todo-project-a"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="remove-todo-project-todo-project-a"]').trigger('click')
+    await wrapper.find('[data-testid="confirm-remove-todo-project-todo-project-a"]').trigger('click')
+
+    expect(wrapper.emitted('remove-todo-project')[0]).toEqual(['todo-project-a'])
   })
 
   it('expands a collapsed TODO when the active terminal moves under it', async () => {
@@ -199,12 +293,15 @@ describe('ProjectSidebar', () => {
   it('keeps TODO project row layout wider than generic project rows', () => {
     const styles = readFileSync('src/style.css', 'utf8')
     const genericProjectRowIndex = styles.indexOf('.project-header-row')
-    const todoProjectRowIndex = styles.lastIndexOf('.todo-project-header-row')
+    const todoProjectRowIndex = styles.indexOf('.todo-project-header-row {')
 
     expect(todoProjectRowIndex).toBeGreaterThan(genericProjectRowIndex)
     expect(styles.slice(todoProjectRowIndex, todoProjectRowIndex + 120)).toContain(
-      'grid-template-columns: minmax(0, 1fr) 30px;'
+      'grid-template-columns: minmax(0, 1fr) 30px 30px;'
     )
+    expect(styles).toContain('.todo-project-header-row:hover')
+    expect(styles).toContain('.todo-project-node.is-active-project > .todo-project-header-row')
+    expect(styles).toContain('.todo-project-header-row .project-row.active')
   })
 
   it('defines priority row styles for each priority level', () => {
@@ -213,9 +310,9 @@ describe('ProjectSidebar', () => {
     expect(styles).toContain('--todo-priority-high-bg')
     expect(styles).toContain('--todo-priority-medium-bg')
     expect(styles).toContain('--todo-priority-low-bg')
-    expect(styles).toContain('.todo-row-priority-high')
-    expect(styles).toContain('.todo-row-priority-medium')
-    expect(styles).toContain('.todo-row-priority-low')
+    expect(styles).toContain('.todo-header-row-priority-high')
+    expect(styles).toContain('.todo-header-row-priority-medium')
+    expect(styles).toContain('.todo-header-row-priority-low')
   })
 })
 

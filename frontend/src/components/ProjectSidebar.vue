@@ -8,6 +8,7 @@ import {
   CircleAlert,
   FolderInput,
   FolderPlus,
+  Eye,
   ListTodo,
   LoaderCircle,
   Plus,
@@ -64,8 +65,10 @@ const emit = defineEmits([
   'select-project',
   'delete-project',
   'create-todo',
+  'edit-todo',
   'add-project-to-todo',
   'select-todo-project',
+  'remove-todo-project',
   'complete-todo',
   'delete-todo',
   'create-terminal',
@@ -77,6 +80,8 @@ const activeTab = ref('todos')
 const todoView = ref('active')
 const collapsedTodoIds = ref(new Set())
 const openLaunchTodoProjectId = ref('')
+const confirmRemoveTodoProjectId = ref('')
+const todoActionConfirm = ref({ todoId: '', action: '' })
 const launchMenuPlacement = ref('down')
 const launchMenuMaxHeight = ref('')
 
@@ -194,6 +199,8 @@ function selectTodoProject(todoProject) {
 
 function toggleTerminalLaunchMenu(todoProject, event) {
   expandTodo(todoProject.todoId)
+  closeTodoProjectRemovePopover()
+  closeTodoActionPopover()
   if (openLaunchTodoProjectId.value === todoProject.id) {
     closeTerminalLaunchMenu()
     return
@@ -206,6 +213,50 @@ function toggleTerminalLaunchMenu(todoProject, event) {
 function closeTerminalLaunchMenu() {
   openLaunchTodoProjectId.value = ''
   resetTerminalLaunchMenuPlacement()
+}
+
+function openTodoProjectRemovePopover(todoProjectId) {
+  closeTerminalLaunchMenu()
+  closeTodoActionPopover()
+  confirmRemoveTodoProjectId.value = todoProjectId
+}
+
+function closeTodoProjectRemovePopover() {
+  confirmRemoveTodoProjectId.value = ''
+}
+
+function confirmTodoProjectRemoval(todoProjectId) {
+  emit('remove-todo-project', todoProjectId)
+  closeTodoProjectRemovePopover()
+}
+
+function openTodoActionPopover(todoId, action) {
+  closeTerminalLaunchMenu()
+  closeTodoProjectRemovePopover()
+  todoActionConfirm.value = { todoId, action }
+}
+
+function closeTodoActionPopover() {
+  todoActionConfirm.value = { todoId: '', action: '' }
+}
+
+function isTodoActionPopoverOpen(todoId, action) {
+  return todoActionConfirm.value.todoId === todoId && todoActionConfirm.value.action === action
+}
+
+function confirmTodoAction(todoId, action) {
+  if (action === 'complete') {
+    emit('complete-todo', todoId)
+  } else if (action === 'delete') {
+    emit('delete-todo', todoId)
+  }
+  closeTodoActionPopover()
+}
+
+function closeFloatingMenus() {
+  closeTerminalLaunchMenu()
+  closeTodoProjectRemovePopover()
+  closeTodoActionPopover()
 }
 
 function selectTerminalLaunchOption(todoProject, option) {
@@ -282,19 +333,8 @@ function todoPriority(todo) {
   return ['high', 'medium', 'low'].includes(todo?.priority) ? todo.priority : 'medium'
 }
 
-function todoPriorityLabel(todo) {
-  const priority = todoPriority(todo)
-  if (priority === 'high') {
-    return '高'
-  }
-  if (priority === 'low') {
-    return '低'
-  }
-  return '中'
-}
-
 function todoPriorityClass(todo) {
-  return `todo-row-priority-${todoPriority(todo)}`
+  return `todo-header-row-priority-${todoPriority(todo)}`
 }
 
 function archivedAtLabel(todo) {
@@ -302,11 +342,11 @@ function archivedAtLabel(todo) {
 }
 
 onMounted(() => {
-  window.addEventListener('click', closeTerminalLaunchMenu)
+  window.addEventListener('click', closeFloatingMenus)
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('click', closeTerminalLaunchMenu)
+  window.removeEventListener('click', closeFloatingMenus)
 })
 
 watch(
@@ -438,7 +478,10 @@ watch(
             'is-expanded': isTodoExpanded(todo.id)
           }"
         >
-          <div class="todo-header-row">
+          <div
+            class="todo-header-row"
+            :class="[{ active: todo.id === activeTodoId }, todoPriorityClass(todo)]"
+          >
             <button
               type="button"
               class="branch-toggle"
@@ -455,20 +498,13 @@ watch(
 
             <div
               class="todo-row"
-              :class="[{ active: todo.id === activeTodoId }, todoPriorityClass(todo)]"
+              :class="{ active: todo.id === activeTodoId }"
               :data-testid="`todo-${todo.id}`"
             >
               <ListTodo class="project-icon" :size="17" />
               <span class="project-copy">
                 <span class="todo-title-line">
                   <span class="project-name">{{ todo.title }}</span>
-                  <span
-                    class="todo-priority-badge"
-                    :class="`todo-priority-badge-${todoPriority(todo)}`"
-                    :data-testid="`todo-priority-${todo.id}`"
-                  >
-                    {{ todoPriorityLabel(todo) }}
-                  </span>
                 </span>
                 <span
                   v-if="todo.description"
@@ -484,30 +520,105 @@ watch(
             <button
               type="button"
               class="todo-action-button"
+              :data-testid="`edit-todo-${todo.id}`"
+              title="View and edit TODO"
+              @click.stop="emit('edit-todo', todo.id)"
+            >
+              <Eye :size="14" />
+            </button>
+            <button
+              type="button"
+              class="todo-action-button"
               :data-testid="`add-project-to-todo-${todo.id}`"
               title="Add project"
               @click.stop="emit('add-project-to-todo', todo.id)"
             >
               <FolderPlus :size="14" />
             </button>
-            <button
-              type="button"
-              class="todo-action-button"
-              :data-testid="`complete-todo-${todo.id}`"
-              title="Complete TODO"
-              @click.stop="emit('complete-todo', todo.id)"
-            >
-              <Check :size="14" />
-            </button>
-            <button
-              type="button"
-              class="delete-project-button"
-              :data-testid="`delete-todo-${todo.id}`"
-              title="Delete TODO"
-              @click.stop="emit('delete-todo', todo.id)"
-            >
-              <Trash2 :size="14" />
-            </button>
+            <div class="todo-action-confirm-control">
+              <button
+                type="button"
+                class="todo-action-button"
+                :data-testid="`complete-todo-${todo.id}`"
+                title="Complete TODO"
+                :aria-expanded="isTodoActionPopoverOpen(todo.id, 'complete')"
+                :aria-controls="`complete-todo-popover-${todo.id}`"
+                @click.stop="openTodoActionPopover(todo.id, 'complete')"
+              >
+                <Check :size="14" />
+              </button>
+              <div
+                v-if="isTodoActionPopoverOpen(todo.id, 'complete')"
+                :id="`complete-todo-popover-${todo.id}`"
+                class="todo-action-popover"
+                :data-testid="`complete-todo-popover-${todo.id}`"
+                @click.stop
+              >
+                <span class="todo-action-confirm-copy">Complete TODO?</span>
+                <div class="todo-action-confirm-actions">
+                  <button
+                    type="button"
+                    class="todo-action-confirm-cancel"
+                    :data-testid="`cancel-complete-todo-${todo.id}`"
+                    aria-label="Cancel completing TODO"
+                    @click="closeTodoActionPopover"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    class="todo-action-confirm-button todo-action-confirm-button-complete"
+                    :data-testid="`confirm-complete-todo-${todo.id}`"
+                    aria-label="Confirm completing TODO"
+                    @click="confirmTodoAction(todo.id, 'complete')"
+                  >
+                    Complete
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="todo-action-confirm-control">
+              <button
+                type="button"
+                class="delete-project-button"
+                :data-testid="`delete-todo-${todo.id}`"
+                title="Delete TODO"
+                :aria-expanded="isTodoActionPopoverOpen(todo.id, 'delete')"
+                :aria-controls="`delete-todo-popover-${todo.id}`"
+                @click.stop="openTodoActionPopover(todo.id, 'delete')"
+              >
+                <Trash2 :size="14" />
+              </button>
+              <div
+                v-if="isTodoActionPopoverOpen(todo.id, 'delete')"
+                :id="`delete-todo-popover-${todo.id}`"
+                class="todo-action-popover"
+                :data-testid="`delete-todo-popover-${todo.id}`"
+                @click.stop
+              >
+                <span class="todo-action-confirm-copy">Delete TODO?</span>
+                <div class="todo-action-confirm-actions">
+                  <button
+                    type="button"
+                    class="todo-action-confirm-cancel"
+                    :data-testid="`cancel-delete-todo-${todo.id}`"
+                    aria-label="Cancel deleting TODO"
+                    @click="closeTodoActionPopover"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    class="todo-action-confirm-button todo-action-confirm-button-delete"
+                    :data-testid="`confirm-delete-todo-${todo.id}`"
+                    aria-label="Confirm deleting TODO"
+                    @click="confirmTodoAction(todo.id, 'delete')"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div
@@ -590,6 +701,47 @@ watch(
                   </div>
                 </div>
                 <span v-else class="add-terminal-placeholder" aria-hidden="true"></span>
+
+                <div class="todo-project-remove-control">
+                  <button
+                    type="button"
+                    class="delete-project-button"
+                    :data-testid="`remove-todo-project-${todoProject.id}`"
+                    title="Remove project from TODO"
+                    :aria-expanded="confirmRemoveTodoProjectId === todoProject.id"
+                    :aria-controls="`remove-todo-project-popover-${todoProject.id}`"
+                    @click.stop="openTodoProjectRemovePopover(todoProject.id)"
+                  >
+                    <Trash2 :size="14" />
+                  </button>
+                  <div
+                    v-if="confirmRemoveTodoProjectId === todoProject.id"
+                    :id="`remove-todo-project-popover-${todoProject.id}`"
+                    class="todo-project-remove-popover"
+                    :data-testid="`remove-todo-project-popover-${todoProject.id}`"
+                    @click.stop
+                  >
+                    <span class="todo-project-remove-copy">Remove from TODO?</span>
+                    <div class="todo-project-remove-actions">
+                      <button
+                        type="button"
+                        class="todo-project-remove-cancel"
+                        :data-testid="`cancel-remove-todo-project-${todoProject.id}`"
+                        @click="closeTodoProjectRemovePopover"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        class="todo-project-remove-confirm"
+                        :data-testid="`confirm-remove-todo-project-${todoProject.id}`"
+                        @click="confirmTodoProjectRemoval(todoProject.id)"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               <div

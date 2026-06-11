@@ -429,6 +429,39 @@ func (manager *ShellSessionManager) DeleteTodoTerminals(todoID string) {
 	}
 }
 
+func (manager *ShellSessionManager) DeleteTodoProjectTerminals(todoProjectID string) {
+	manager.mu.Lock()
+	sessions := []struct {
+		session     *ShellSession
+		shouldClose bool
+	}{}
+	for terminalID, terminal := range manager.terminals {
+		if terminal.TodoProjectID != todoProjectID {
+			continue
+		}
+		if session, ok := manager.sessions[terminalID]; ok {
+			sessions = append(sessions, struct {
+				session     *ShellSession
+				shouldClose bool
+			}{
+				session:     session,
+				shouldClose: session.state == ShellStateRunning,
+			})
+			delete(manager.sessions, terminalID)
+		}
+		delete(manager.terminals, terminalID)
+		delete(manager.activeByContext, terminalContextKey(terminal.TodoProjectID, terminal.ProjectID))
+	}
+	manager.mu.Unlock()
+
+	for _, item := range sessions {
+		if item.shouldClose {
+			_ = item.session.process.Close()
+		}
+		item.session.cleanupSession()
+	}
+}
+
 func (manager *ShellSessionManager) Terminal(terminalID string) (ProjectTerminal, error) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()

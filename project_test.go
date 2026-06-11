@@ -379,6 +379,158 @@ func TestProjectManagerLoadsLegacyTodoWithoutPriorityAsMedium(t *testing.T) {
 	}
 }
 
+func TestProjectManagerUpdatesTodoDetailsAndProjectAssociations(t *testing.T) {
+	projectDir := t.TempDir()
+	otherProjectDir := t.TempDir()
+	thirdProjectDir := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	now := time.Date(2026, 6, 10, 9, 0, 0, 0, time.UTC)
+	manager := NewProjectManager(
+		configPath,
+		WithProjectIDGenerator(sequenceIDs("project-a", "project-b", "project-c", "todo-a", "todo-project-a", "todo-project-b", "todo-project-c")),
+		WithProjectClock(func() time.Time { return now }),
+	)
+	projectA, _, err := manager.AddProjectPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectPath(A) error = %v", err)
+	}
+	projectB, _, err := manager.AddProjectPath(otherProjectDir)
+	if err != nil {
+		t.Fatalf("AddProjectPath(B) error = %v", err)
+	}
+	projectC, _, err := manager.AddProjectPath(thirdProjectDir)
+	if err != nil {
+		t.Fatalf("AddProjectPath(C) error = %v", err)
+	}
+	if _, err := manager.CreateTodo(CreateTodoRequest{Title: "旧标题", ProjectIDs: []string{projectA.ID, projectB.ID}}); err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	now = now.Add(time.Minute)
+
+	state, removedTodoProjectIDs, err := manager.UpdateTodo(UpdateTodoRequest{
+		ID:          "todo-a",
+		Title:       "  新标题  ",
+		Description: "  新描述  ",
+		Priority:    TodoPriorityLow,
+		ProjectIDs:  []string{projectB.ID, projectC.ID},
+	})
+	if err != nil {
+		t.Fatalf("UpdateTodo() error = %v", err)
+	}
+
+	if len(removedTodoProjectIDs) != 1 || removedTodoProjectIDs[0] != "todo-project-a" {
+		t.Fatalf("removedTodoProjectIDs = %#v, want todo-project-a", removedTodoProjectIDs)
+	}
+	todo := findTodo(state.Todos, "todo-a")
+	if todo == nil {
+		t.Fatal("updated todo not found")
+	}
+	if todo.Title != "新标题" || todo.Description != "新描述" || todo.Priority != TodoPriorityLow {
+		t.Fatalf("updated todo = %#v, want trimmed title, description, and low priority", todo)
+	}
+	if len(state.TodoProjects) != 2 {
+		t.Fatalf("TodoProjects length = %d, want 2", len(state.TodoProjects))
+	}
+	if state.TodoProjects[0].ID != "todo-project-b" || state.TodoProjects[0].ProjectID != projectB.ID {
+		t.Fatalf("first TodoProject = %#v, want existing project B association preserved", state.TodoProjects[0])
+	}
+	if state.TodoProjects[1].ID != "todo-project-c" || state.TodoProjects[1].ProjectID != projectC.ID {
+		t.Fatalf("second TodoProject = %#v, want new project C association", state.TodoProjects[1])
+	}
+	if state.ActiveTodoProjectID != "todo-project-b" || state.ActiveProjectID != projectB.ID {
+		t.Fatalf("active context = %q/%q, want remaining project B", state.ActiveTodoProjectID, state.ActiveProjectID)
+	}
+}
+
+func TestProjectManagerRejectsInvalidTodoUpdateWithoutChangingState(t *testing.T) {
+	projectDir := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	manager := NewProjectManager(
+		configPath,
+		WithProjectIDGenerator(sequenceIDs("project-a", "todo-a", "todo-project-a")),
+	)
+	project, _, err := manager.AddProjectPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectPath() error = %v", err)
+	}
+	if _, err := manager.CreateTodo(CreateTodoRequest{Title: "修复登录问题", ProjectIDs: []string{project.ID}}); err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+
+	cases := []struct {
+		name    string
+		request UpdateTodoRequest
+	}{
+		{
+			name:    "blank title",
+			request: UpdateTodoRequest{ID: "todo-a", Title: "   ", ProjectIDs: []string{project.ID}},
+		},
+		{
+			name:    "missing todo",
+			request: UpdateTodoRequest{ID: "missing-todo", Title: "新标题", ProjectIDs: []string{project.ID}},
+		},
+		{
+			name:    "missing project",
+			request: UpdateTodoRequest{ID: "todo-a", Title: "新标题", ProjectIDs: []string{"missing-project"}},
+		},
+		{
+			name:    "duplicate project",
+			request: UpdateTodoRequest{ID: "todo-a", Title: "新标题", ProjectIDs: []string{project.ID, project.ID}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, _, err := manager.UpdateTodo(tc.request); err == nil {
+				t.Fatal("UpdateTodo() error = nil, want error")
+			}
+			state, err := manager.Load()
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if state.Todos[0].Title != "修复登录问题" {
+				t.Fatalf("Title after invalid update = %q, want unchanged", state.Todos[0].Title)
+			}
+			if len(state.TodoProjects) != 1 || state.TodoProjects[0].ProjectID != project.ID {
+				t.Fatalf("TodoProjects after invalid update = %#v, want unchanged association", state.TodoProjects)
+			}
+		})
+	}
+}
+
+func TestProjectManagerRemovesTodoProjectWithoutAffectingOtherTodos(t *testing.T) {
+	projectDir := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	manager := NewProjectManager(
+		configPath,
+		WithProjectIDGenerator(sequenceIDs("project-a", "todo-a", "todo-project-a", "todo-b", "todo-project-b")),
+	)
+	project, _, err := manager.AddProjectPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectPath() error = %v", err)
+	}
+	if _, err := manager.CreateTodo(CreateTodoRequest{Title: "修复登录问题", ProjectIDs: []string{project.ID}}); err != nil {
+		t.Fatalf("CreateTodo(A) error = %v", err)
+	}
+	if _, err := manager.CreateTodo(CreateTodoRequest{Title: "升级依赖", ProjectIDs: []string{project.ID}}); err != nil {
+		t.Fatalf("CreateTodo(B) error = %v", err)
+	}
+
+	state, removedTodoProjectIDs, err := manager.RemoveTodoProject("todo-project-a")
+	if err != nil {
+		t.Fatalf("RemoveTodoProject() error = %v", err)
+	}
+
+	if len(removedTodoProjectIDs) != 1 || removedTodoProjectIDs[0] != "todo-project-a" {
+		t.Fatalf("removedTodoProjectIDs = %#v, want todo-project-a", removedTodoProjectIDs)
+	}
+	if len(state.TodoProjects) != 1 || state.TodoProjects[0].ID != "todo-project-b" {
+		t.Fatalf("TodoProjects = %#v, want only todo-project-b", state.TodoProjects)
+	}
+	if state.ActiveTodoID != "todo-b" || state.ActiveTodoProjectID != "todo-project-b" || state.ActiveProjectID != project.ID {
+		t.Fatalf("active context = %q/%q/%q, want todo-b/todo-project-b/%q", state.ActiveTodoID, state.ActiveTodoProjectID, state.ActiveProjectID, project.ID)
+	}
+}
+
 func TestProjectManagerArchivesTodoWithProjectSnapshots(t *testing.T) {
 	projectDir := t.TempDir()
 	configPath := filepath.Join(t.TempDir(), "projects.json")

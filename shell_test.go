@@ -712,6 +712,54 @@ func TestShellSessionManagerDeletesTodoTerminalsAndPreservesOtherTodos(t *testin
 	}
 }
 
+func TestShellSessionManagerDeletesTodoProjectTerminalsAndPreservesSameProjectInOtherTodos(t *testing.T) {
+	starter := newFakeShellStarter()
+	manager := NewShellSessionManager(
+		starter.Start,
+		ShellSessionCallbacks{},
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-a", "terminal-b", "terminal-c")),
+	)
+	project := Project{ID: "project-a", Path: t.TempDir(), Available: true}
+	todoProjectA := TodoProject{ID: "todo-project-a", TodoID: "todo-a", ProjectID: project.ID}
+	todoProjectB := TodoProject{ID: "todo-project-b", TodoID: "todo-b", ProjectID: project.ID}
+	terminalA1, err := manager.CreateTodoProjectTerminal(todoProjectA, project, TerminalSize{Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatalf("CreateTodoProjectTerminal(A1) error = %v", err)
+	}
+	terminalA2, err := manager.CreateTodoProjectTerminal(todoProjectA, project, TerminalSize{Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatalf("CreateTodoProjectTerminal(A2) error = %v", err)
+	}
+	terminalB, err := manager.CreateTodoProjectTerminal(todoProjectB, project, TerminalSize{Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatalf("CreateTodoProjectTerminal(B) error = %v", err)
+	}
+
+	manager.DeleteTodoProjectTerminals("todo-project-a")
+
+	if _, err := manager.Terminal(terminalA1.ID); err == nil {
+		t.Fatal("Terminal(A1) error = nil, want deleted terminal")
+	}
+	if _, err := manager.Terminal(terminalA2.ID); err == nil {
+		t.Fatal("Terminal(A2) error = nil, want deleted terminal")
+	}
+	if remaining, err := manager.Terminal(terminalB.ID); err != nil || remaining.ID != terminalB.ID {
+		t.Fatalf("Terminal(B) = %#v, %v; want preserved terminal B", remaining, err)
+	}
+	if got := manager.ActiveTerminalID("todo-project-a"); got != "" {
+		t.Fatalf("ActiveTerminalID(todo-project-a) = %q, want empty", got)
+	}
+	if got := manager.ActiveTerminalID("todo-project-b"); got != terminalB.ID {
+		t.Fatalf("ActiveTerminalID(todo-project-b) = %q, want %q", got, terminalB.ID)
+	}
+	if !starter.processes[0].closed || !starter.processes[1].closed {
+		t.Fatal("todo-project A terminal processes were not closed")
+	}
+	if starter.processes[2].closed {
+		t.Fatal("todo-project B terminal process was closed")
+	}
+}
+
 type fakeShellStarter struct {
 	requests  []ShellStartRequest
 	processes []*fakePtyProcess

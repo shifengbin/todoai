@@ -55,6 +55,14 @@ type CreateTodoRequest struct {
 	ProjectIDs  []string `json:"projectIds,omitempty"`
 }
 
+type UpdateTodoRequest struct {
+	ID          string   `json:"id"`
+	Title       string   `json:"title"`
+	Description string   `json:"description,omitempty"`
+	Priority    string   `json:"priority,omitempty"`
+	ProjectIDs  []string `json:"projectIds,omitempty"`
+}
+
 type TodoProject struct {
 	ID             string `json:"id"`
 	TodoID         string `json:"todoId"`
@@ -369,6 +377,116 @@ func (manager *ProjectManager) AssociateProjectsWithTodo(todoID string, projectI
 		return ProjectState{}, err
 	}
 	return state, nil
+}
+
+func (manager *ProjectManager) UpdateTodo(request UpdateTodoRequest) (ProjectState, []string, error) {
+	normalizedTitle := strings.TrimSpace(request.Title)
+	if normalizedTitle == "" {
+		return ProjectState{}, nil, errors.New("todo title is required")
+	}
+	normalizedDescription := strings.TrimSpace(request.Description)
+	normalizedPriority := normalizeTodoPriority(request.Priority)
+	projectIDs, err := normalizeProjectIDsForUpdate(request.ProjectIDs)
+	if err != nil {
+		return ProjectState{}, nil, err
+	}
+
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	state, err := manager.loadLocked()
+	if err != nil {
+		return ProjectState{}, nil, err
+	}
+	todoIndex := -1
+	for index := range state.Todos {
+		if state.Todos[index].ID == request.ID && state.Todos[index].Status == TodoStatusActive {
+			todoIndex = index
+			break
+		}
+	}
+	if todoIndex < 0 {
+		return ProjectState{}, nil, errors.New("todo not found")
+	}
+	if !containsProjects(state.Projects, projectIDs) {
+		return ProjectState{}, nil, errors.New("project not found")
+	}
+
+	state.Todos[todoIndex].Title = normalizedTitle
+	state.Todos[todoIndex].Description = normalizedDescription
+	state.Todos[todoIndex].Priority = normalizedPriority
+	removedTodoProjectIDs := []string{}
+	existingByProjectID := map[string]TodoProject{}
+	for _, todoProject := range state.TodoProjects {
+		if todoProject.TodoID == request.ID {
+			existingByProjectID[todoProject.ProjectID] = todoProject
+		}
+	}
+	requestedProjectIDs := map[string]bool{}
+	for _, projectID := range projectIDs {
+		requestedProjectIDs[projectID] = true
+	}
+	for _, todoProject := range state.TodoProjects {
+		if todoProject.TodoID == request.ID && !requestedProjectIDs[todoProject.ProjectID] {
+			removedTodoProjectIDs = append(removedTodoProjectIDs, todoProject.ID)
+		}
+	}
+
+	now := manager.now().UTC().Format(time.RFC3339)
+	updatedTodoProjects := make([]TodoProject, 0, len(projectIDs))
+	for _, projectID := range projectIDs {
+		if todoProject, ok := existingByProjectID[projectID]; ok {
+			updatedTodoProjects = append(updatedTodoProjects, todoProject)
+			continue
+		}
+		updatedTodoProjects = append(updatedTodoProjects, TodoProject{
+			ID:             manager.newID(),
+			TodoID:         request.ID,
+			ProjectID:      projectID,
+			CreatedAt:      now,
+			LastSelectedAt: now,
+		})
+	}
+	state.TodoProjects = replaceTodoProjectsForTodo(state.TodoProjects, request.ID, updatedTodoProjects)
+	updateActiveContextAfterTodoProjectRemoval(&state, request.ID, removedTodoProjectIDs, updatedTodoProjects)
+	if err := manager.saveLocked(state); err != nil {
+		return ProjectState{}, nil, err
+	}
+	return state, removedTodoProjectIDs, nil
+}
+
+func (manager *ProjectManager) RemoveTodoProject(todoProjectID string) (ProjectState, []string, error) {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	state, err := manager.loadLocked()
+	if err != nil {
+		return ProjectState{}, nil, err
+	}
+	removedTodoProject := TodoProject{}
+	found := false
+	nextTodoProjects := make([]TodoProject, 0, len(state.TodoProjects))
+	for _, todoProject := range state.TodoProjects {
+		if todoProject.ID == todoProjectID {
+			removedTodoProject = todoProject
+			found = true
+			continue
+		}
+		nextTodoProjects = append(nextTodoProjects, todoProject)
+	}
+	if !found {
+		return ProjectState{}, nil, errors.New("todo project not found")
+	}
+	if _, ok := activeTodoByID(state.Todos, removedTodoProject.TodoID); !ok {
+		return ProjectState{}, nil, errors.New("todo not found")
+	}
+	state.TodoProjects = nextTodoProjects
+	removedTodoProjectIDs := []string{todoProjectID}
+	updateActiveContextAfterTodoProjectRemoval(&state, removedTodoProject.TodoID, removedTodoProjectIDs, nil)
+	if err := manager.saveLocked(state); err != nil {
+		return ProjectState{}, nil, err
+	}
+	return state, removedTodoProjectIDs, nil
 }
 
 func (manager *ProjectManager) SelectTodoProject(todoProjectID string) (ProjectState, TodoProject, Project, error) {
@@ -697,6 +815,72 @@ func removeTodoProjectsForProject(todoProjects []TodoProject, projectID string) 
 	return next
 }
 
+func replaceTodoProjectsForTodo(todoProjects []TodoProject, todoID string, replacement []TodoProject) []TodoProject {
+	next := make([]TodoProject, 0, len(todoProjects)-countTodoProjectsForTodo(todoProjects, todoID)+len(replacement))
+	inserted := false
+	for _, todoProject := range todoProjects {
+		if todoProject.TodoID != todoID {
+			next = append(next, todoProject)
+			continue
+		}
+		if !inserted {
+			next = append(next, replacement...)
+			inserted = true
+		}
+	}
+	if !inserted {
+		next = append(next, replacement...)
+	}
+	return next
+}
+
+func countTodoProjectsForTodo(todoProjects []TodoProject, todoID string) int {
+	count := 0
+	for _, todoProject := range todoProjects {
+		if todoProject.TodoID == todoID {
+			count++
+		}
+	}
+	return count
+}
+
+func updateActiveContextAfterTodoProjectRemoval(state *ProjectState, todoID string, removedTodoProjectIDs []string, preferred []TodoProject) {
+	removed := map[string]bool{}
+	for _, todoProjectID := range removedTodoProjectIDs {
+		removed[todoProjectID] = true
+	}
+	if !removed[state.ActiveTodoProjectID] {
+		return
+	}
+	state.ActiveTodoID = todoID
+	state.ActiveTodoProjectID = ""
+	state.ActiveProjectID = ""
+	state.ActiveTerminalID = ""
+	if len(preferred) > 0 {
+		state.ActiveTodoProjectID = preferred[0].ID
+		state.ActiveProjectID = preferred[0].ProjectID
+		return
+	}
+	if replacement, ok := mostRecentlySelectedTodoProjectForTodo(state.TodoProjects, todoID); ok {
+		state.ActiveTodoProjectID = replacement.ID
+		state.ActiveProjectID = replacement.ProjectID
+	}
+}
+
+func mostRecentlySelectedTodoProjectForTodo(todoProjects []TodoProject, todoID string) (TodoProject, bool) {
+	selected := TodoProject{}
+	for _, todoProject := range todoProjects {
+		if todoProject.TodoID != todoID {
+			continue
+		}
+		if selected.ID == "" || todoProject.LastSelectedAt > selected.LastSelectedAt ||
+			(todoProject.LastSelectedAt == selected.LastSelectedAt && todoProject.ID < selected.ID) {
+			selected = todoProject
+		}
+	}
+	return selected, selected.ID != ""
+}
+
 func todoProjectSnapshots(projects []Project, todoProjects []TodoProject, todoID string) []TodoProjectSnapshot {
 	snapshots := []TodoProjectSnapshot{}
 	for _, todoProject := range todoProjects {
@@ -740,4 +924,21 @@ func normalizeProjectIDs(projectIDs []string) []string {
 		normalized = append(normalized, projectID)
 	}
 	return normalized
+}
+
+func normalizeProjectIDsForUpdate(projectIDs []string) ([]string, error) {
+	normalized := []string{}
+	seen := map[string]bool{}
+	for _, projectID := range projectIDs {
+		projectID = strings.TrimSpace(projectID)
+		if projectID == "" {
+			continue
+		}
+		if seen[projectID] {
+			return nil, errors.New("duplicate project")
+		}
+		seen[projectID] = true
+		normalized = append(normalized, projectID)
+	}
+	return normalized, nil
 }
