@@ -5,18 +5,24 @@ import ProjectSidebar from './components/ProjectSidebar.vue'
 import { TerminalSessionManager } from './terminalManager'
 import { createXtermSession } from './xtermFactory'
 import {
+  AddProjectsToTodo,
+  CompleteTodo,
   CreateProjectFromDialog,
-  CreateTerminal,
+  CreateTodo,
+  CreateTodoTerminal,
   DeleteProject,
   DeleteTerminal,
+  DeleteTodo,
   DetectTerminalShell,
   GetProjectGitStatus,
+  ImportProjectsFromParentDirectoryDialog,
   InitializeProjectGitRepository,
   ListProjects,
   LoadTerminalSettings,
   ResizeTerminal,
   SelectProject,
   SelectTerminal,
+  SelectTodoProject,
   SaveTerminalLaunchProfiles,
   SaveTerminalShell,
   SaveTerminalTheme,
@@ -26,9 +32,14 @@ import {
 import { ClipboardGetText, ClipboardSetText, EventsOff, EventsOn } from '../wailsjs/runtime/runtime'
 
 const projects = ref([])
+const todos = ref([])
+const todoProjects = ref([])
 const terminals = ref([])
 const activeProjectId = ref('')
+const activeTodoId = ref('')
+const activeTodoProjectId = ref('')
 const activeTerminalId = ref('')
+const importSummary = ref(null)
 const shellStatuses = reactive({})
 const terminalContainers = new Map()
 const errorMessage = ref('')
@@ -42,6 +53,11 @@ const terminalMenu = reactive({
 const defaultTerminalLaunchProfiles = [
   { name: 'codex', command: 'codex' },
   { name: 'claude', command: 'claude' }
+]
+const todoPriorities = [
+  { value: 'high', label: '高' },
+  { value: 'medium', label: '中' },
+  { value: 'low', label: '低' }
 ]
 const appearanceThemes = ['light', 'dark']
 const currentTheme = ref('light')
@@ -62,6 +78,22 @@ const settingsPanel = reactive({
   theme: 'light',
   error: ''
 })
+const todoForm = reactive({
+  visible: false,
+  title: '',
+  description: '',
+  priority: 'medium',
+  projectIds: [],
+  projectSearch: '',
+  saving: false
+})
+const projectPicker = reactive({
+  visible: false,
+  todoId: '',
+  query: '',
+  projectIds: [],
+  saving: false
+})
 const terminalManager = new TerminalSessionManager({
   createSession: createXtermSession,
   sendInput: (terminalId, data) => SendTerminalInput(terminalId, data),
@@ -81,6 +113,22 @@ const terminalManager = new TerminalSessionManager({
 
 const activeProject = computed(() => {
   return projects.value.find((project) => project.id === activeProjectId.value) || null
+})
+
+const activeTodo = computed(() => {
+  return todos.value.find((todo) => todo.id === activeTodoId.value) || null
+})
+
+const activeTodoProject = computed(() => {
+  return todoProjects.value.find((todoProject) => todoProject.id === activeTodoProjectId.value) || null
+})
+
+const activeTodoProjectProject = computed(() => {
+  const todoProject = activeTodoProject.value
+  if (!todoProject) {
+    return null
+  }
+  return projects.value.find((project) => project.id === todoProject.projectId) || null
 })
 
 const activeTerminal = computed(() => {
@@ -153,6 +201,32 @@ const terminalSettingsDetected = computed(() => {
 
 const terminalSettingsFallback = computed(() => terminalSettings.value?.fallback || null)
 
+const selectedTodoFormProjects = computed(() => {
+  const selectedProjectIds = new Set(todoForm.projectIds)
+  return projects.value.filter((project) => selectedProjectIds.has(project.id))
+})
+
+const todoFormProjectOptions = computed(() => {
+  return filteredProjects(projects.value, todoForm.projectSearch)
+})
+
+const projectPickerOptions = computed(() => {
+  const linkedProjectIds = new Set(
+    todoProjects.value
+      .filter((todoProject) => todoProject.todoId === projectPicker.todoId)
+      .map((todoProject) => todoProject.projectId)
+  )
+  return filteredProjects(
+    projects.value.filter((project) => !linkedProjectIds.has(project.id)),
+    projectPicker.query
+  )
+})
+
+const selectedProjectPickerProjects = computed(() => {
+  const selectedProjectIds = new Set(projectPicker.projectIds)
+  return projects.value.filter((project) => selectedProjectIds.has(project.id))
+})
+
 onMounted(async () => {
   EventsOn('terminal-output', (event) => {
     terminalManager.write(event.terminalId, event.data)
@@ -172,11 +246,7 @@ onMounted(async () => {
 
   try {
     applyState(await ListProjects())
-    if (activeProject.value?.available) {
-      await selectProject(activeProject.value.id)
-    } else {
-      await activateActiveTerminal()
-    }
+    await activateActiveTerminal()
   } catch (error) {
     showError(error)
   }
@@ -194,6 +264,9 @@ function applyState(state) {
   const previousActiveProjectId = activeProjectId.value
   const previousTerminals = new Map(terminals.value.map((terminal) => [terminal.id, terminal]))
   projects.value = state?.projects || []
+  todos.value = state?.todos || []
+  todoProjects.value = state?.todoProjects || []
+  importSummary.value = state?.importSummary || null
   const nextTerminals = (state?.terminals || []).map((terminal) => ({
     ...terminal,
     currentCommand:
@@ -214,6 +287,8 @@ function applyState(state) {
   }
   terminals.value = nextTerminals
   activeProjectId.value = state?.activeProjectId || ''
+  activeTodoId.value = state?.activeTodoId || ''
+  activeTodoProjectId.value = state?.activeTodoProjectId || ''
   activeTerminalId.value = state?.activeTerminalId || ''
   for (const terminal of terminals.value) {
     if (terminal.state) {
@@ -227,9 +302,14 @@ function applyState(state) {
 async function createProject() {
   try {
     applyState(await CreateProjectFromDialog())
-    if (activeProject.value?.available) {
-      await selectProject(activeProject.value.id)
-    }
+  } catch (error) {
+    showError(error)
+  }
+}
+
+async function importProjectsFromParentDirectory() {
+  try {
+    applyState(await ImportProjectsFromParentDirectoryDialog())
   } catch (error) {
     showError(error)
   }
@@ -238,6 +318,115 @@ async function createProject() {
 async function selectProject(projectId) {
   try {
     applyState(await SelectProject(projectId))
+  } catch (error) {
+    showError(error)
+  }
+}
+
+function createTodo() {
+  todoForm.visible = true
+  todoForm.title = ''
+  todoForm.description = ''
+  todoForm.priority = 'medium'
+  todoForm.projectIds = []
+  todoForm.projectSearch = ''
+  todoForm.saving = false
+  errorMessage.value = ''
+}
+
+function closeTodoForm() {
+  todoForm.visible = false
+  todoForm.saving = false
+}
+
+async function submitTodoForm() {
+  const title = todoForm.title.trim()
+  if (!title) {
+    showError('TODO title is required')
+    return
+  }
+
+  todoForm.saving = true
+  try {
+    applyState(
+      await CreateTodo({
+        title,
+        description: todoForm.description.trim(),
+        priority: normalizedTodoPriority(todoForm.priority),
+        projectIds: [...todoForm.projectIds]
+      })
+    )
+    closeTodoForm()
+    await activateActiveTerminal()
+  } catch (error) {
+    showError(error)
+  } finally {
+    todoForm.saving = false
+  }
+}
+
+async function addProjectToTodo(todoId) {
+  projectPicker.todoId = todoId
+  projectPicker.query = ''
+  projectPicker.projectIds = []
+  projectPicker.saving = false
+  if (projectPickerOptions.value.length === 0) {
+    showError('No available projects to add')
+    return
+  }
+  projectPicker.visible = true
+  errorMessage.value = ''
+}
+
+function closeProjectPicker() {
+  projectPicker.visible = false
+  projectPicker.todoId = ''
+  projectPicker.query = ''
+  projectPicker.projectIds = []
+  projectPicker.saving = false
+}
+
+function toggleProjectForTodo(project) {
+  if (!project?.id) {
+    return
+  }
+  projectPicker.projectIds = toggleProjectId(projectPicker.projectIds, project.id)
+}
+
+function removeProjectPickerProject(projectId) {
+  projectPicker.projectIds = projectPicker.projectIds.filter((selectedProjectId) => selectedProjectId !== projectId)
+}
+
+async function submitProjectPicker() {
+  if (!projectPicker.todoId || projectPicker.projectIds.length === 0) {
+    return
+  }
+  projectPicker.saving = true
+  try {
+    applyState(await AddProjectsToTodo(projectPicker.todoId, [...projectPicker.projectIds]))
+    closeProjectPicker()
+    await activateActiveTerminal()
+  } catch (error) {
+    showError(error)
+  } finally {
+    projectPicker.saving = false
+  }
+}
+
+function toggleTodoFormProject(project) {
+  if (!project?.id) {
+    return
+  }
+  todoForm.projectIds = toggleProjectId(todoForm.projectIds, project.id)
+}
+
+function removeTodoFormProject(projectId) {
+  todoForm.projectIds = todoForm.projectIds.filter((selectedProjectId) => selectedProjectId !== projectId)
+}
+
+async function selectTodoProject(todoProjectId) {
+  try {
+    applyState(await SelectTodoProject(todoProjectId))
     await activateActiveTerminal()
   } catch (error) {
     showError(error)
@@ -253,15 +442,43 @@ async function selectTerminal(terminalId) {
   }
 }
 
-async function createTerminal(projectId, launchProfile = null) {
+async function createTerminal(todoProjectId, launchProfile = null) {
   try {
     const size = terminalManager.size() || { cols: 80, rows: 24 }
-    const state = await CreateTerminal(projectId, size.cols || 80, size.rows || 24)
+    const state = await CreateTodoTerminal(todoProjectId, size.cols || 80, size.rows || 24)
     applyState(state)
     await activateActiveTerminal()
     if (launchProfile?.command && state?.activeTerminalId) {
       await SendTerminalInput(state.activeTerminalId, `${launchProfile.command}\n`)
     }
+  } catch (error) {
+    showError(error)
+  }
+}
+
+async function completeTodo(todoId) {
+  const todo = todos.value.find((candidate) => candidate.id === todoId)
+  const title = todo?.title || 'this TODO'
+  if (!window.confirm(`Complete TODO "${title}"? Running terminals under it will be closed.`)) {
+    return
+  }
+  try {
+    applyState(await CompleteTodo(todoId))
+    await activateActiveTerminal()
+  } catch (error) {
+    showError(error)
+  }
+}
+
+async function deleteTodo(todoId) {
+  const todo = todos.value.find((candidate) => candidate.id === todoId)
+  const title = todo?.title || 'this TODO'
+  if (!window.confirm(`Delete TODO "${title}"? Running terminals under it will be closed.`)) {
+    return
+  }
+  try {
+    applyState(await DeleteTodo(todoId))
+    await activateActiveTerminal()
   } catch (error) {
     showError(error)
   }
@@ -307,7 +524,7 @@ async function activateActiveTerminal() {
 
 async function restartActiveShell() {
   const terminal = activeTerminal.value
-  if (!terminal || !activeProject.value?.available) {
+  if (!terminal || !activeTodoProjectProject.value?.available) {
     return
   }
   const size = terminalManager.size(terminal.id) || { cols: 80, rows: 24 }
@@ -586,6 +803,31 @@ function statusChip(id, tone, text) {
   return { id, tone, text }
 }
 
+function filteredProjects(projectList, query) {
+  const normalizedQuery = normalizeSearch(query)
+  if (!normalizedQuery) {
+    return projectList
+  }
+  return projectList.filter((project) => {
+    return [project.name, project.path].some((value) => normalizeSearch(value).includes(normalizedQuery))
+  })
+}
+
+function normalizeSearch(value) {
+  return (value || '').trim().toLowerCase()
+}
+
+function normalizedTodoPriority(priority) {
+  return todoPriorities.some((option) => option.value === priority) ? priority : 'medium'
+}
+
+function toggleProjectId(projectIds, projectId) {
+  if (projectIds.includes(projectId)) {
+    return projectIds.filter((candidate) => candidate !== projectId)
+  }
+  return [...projectIds, projectId]
+}
+
 function addCountChip(chips, id, count, label) {
   if (!count) {
     return
@@ -632,7 +874,7 @@ function handleTerminalCommandState(terminalId, event) {
   if (event.type === 'command-end') {
     terminal.currentCommand = ''
     resetTerminalActivity(terminal)
-    if (terminal.projectId === activeProjectId.value) {
+    if (terminal.id === activeTerminalId.value) {
       refreshProjectGitStatus()
     }
   }
@@ -713,12 +955,23 @@ function showError(error) {
   <main class="app-shell" :data-theme="currentTheme">
     <ProjectSidebar
       :projects="projects"
+      :todos="todos"
+      :todo-projects="todoProjects"
       :terminals="terminals"
       :active-project-id="activeProjectId"
+      :active-todo-id="activeTodoId"
+      :active-todo-project-id="activeTodoProjectId"
       :active-terminal-id="activeTerminalId"
       :launch-profiles="terminalLaunchProfiles"
+      :import-summary="importSummary"
       @create-project="createProject"
+      @import-projects="importProjectsFromParentDirectory"
       @select-project="selectProject"
+      @create-todo="createTodo"
+      @add-project-to-todo="addProjectToTodo"
+      @select-todo-project="selectTodoProject"
+      @complete-todo="completeTodo"
+      @delete-todo="deleteTodo"
       @create-terminal="createTerminal"
       @select-terminal="selectTerminal"
       @delete-project="deleteProject"
@@ -727,11 +980,15 @@ function showError(error) {
 
     <section class="workspace">
       <header class="workspace-header">
-        <div v-if="activeProject" class="project-heading">
+        <div v-if="activeTodoProject && activeTodoProjectProject" class="project-heading">
+          <span class="heading-name">{{ activeTodo?.title || 'TODO' }} / {{ activeTodoProjectProject.name }}</span>
+          <span class="heading-path">{{ activeTodoProjectProject.path }}</span>
+        </div>
+        <div v-else-if="activeProject" class="project-heading">
           <span class="heading-name">{{ activeProject.name }}</span>
           <span class="heading-path">{{ activeProject.path }}</span>
         </div>
-        <div v-else class="project-heading muted">No project selected</div>
+        <div v-else class="project-heading muted">No TODO project selected</div>
         <div class="workspace-actions">
           <button
             type="button"
@@ -744,7 +1001,7 @@ function showError(error) {
             <span>Settings</span>
           </button>
           <button
-            v-if="activeProject && activeTerminalState === 'exited'"
+            v-if="activeTodoProjectProject && activeTerminalState === 'exited'"
             type="button"
             class="toolbar-button"
             title="Restart shell"
@@ -787,8 +1044,8 @@ function showError(error) {
           </button>
         </div>
 
-        <div v-if="!activeProject" class="state-layer">Select a project</div>
-        <div v-else-if="!activeProject.available" class="state-layer warning">Project path unavailable</div>
+        <div v-if="!activeTodoProject || !activeTodoProjectProject" class="state-layer">Select a TODO project</div>
+        <div v-else-if="!activeTodoProjectProject.available" class="state-layer warning">Project path unavailable</div>
         <div v-else-if="!activeTerminal" class="state-layer">Select a terminal</div>
         <div v-else-if="activeTerminalState === 'exited'" class="state-layer warning">Shell exited</div>
       </div>
@@ -819,6 +1076,206 @@ function showError(error) {
         <div v-if="errorMessage" class="status-error">{{ errorMessage }}</div>
       </footer>
     </section>
+
+    <div v-if="todoForm.visible" class="settings-overlay" @click="closeTodoForm">
+      <section class="settings-dialog todo-dialog" data-testid="todo-create-dialog" @click.stop>
+        <header class="settings-header">
+          <div>
+            <h2>New TODO</h2>
+            <p>Task context</p>
+          </div>
+          <button type="button" class="icon-button" title="Close TODO form" @click="closeTodoForm">
+            <X :size="16" />
+          </button>
+        </header>
+
+        <div class="settings-body todo-form-body">
+          <label class="settings-field">
+            <span class="settings-label">Name</span>
+            <input
+              v-model="todoForm.title"
+              type="text"
+              class="todo-text-input"
+              data-testid="todo-name-input"
+            />
+          </label>
+
+          <label class="settings-field">
+            <span class="settings-label">Description</span>
+            <textarea
+              v-model="todoForm.description"
+              class="todo-textarea"
+              rows="3"
+              data-testid="todo-description-input"
+            ></textarea>
+          </label>
+
+          <div class="settings-field">
+            <span class="settings-label">Priority</span>
+            <div class="todo-priority-options">
+              <label
+                v-for="priority in todoPriorities"
+                :key="priority.value"
+                class="todo-priority-option"
+                :class="`todo-priority-option-${priority.value}`"
+              >
+                <input
+                  v-model="todoForm.priority"
+                  type="radio"
+                  :value="priority.value"
+                  :data-testid="`todo-priority-${priority.value}`"
+                />
+                <span>{{ priority.label }}</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="settings-field">
+            <span class="settings-label">Projects</span>
+            <div
+              v-if="selectedTodoFormProjects.length"
+              class="todo-selected-project-tags"
+              data-testid="todo-selected-project"
+            >
+              <span
+                v-for="project in selectedTodoFormProjects"
+                :key="project.id"
+                class="todo-selected-project-tag"
+                :data-testid="`todo-selected-project-tag-${project.id}`"
+              >
+                <span class="project-name">{{ project.name }}</span>
+                <button
+                  type="button"
+                  class="todo-selected-project-remove"
+                  :title="`Remove ${project.name}`"
+                  :aria-label="`Remove ${project.name}`"
+                  :data-testid="`todo-selected-project-remove-${project.id}`"
+                  @click="removeTodoFormProject(project.id)"
+                >
+                  <X :size="12" />
+                </button>
+              </span>
+            </div>
+            <input
+              v-model="todoForm.projectSearch"
+              type="text"
+              class="todo-text-input"
+              data-testid="todo-project-filter"
+            />
+            <div class="todo-project-options" data-testid="todo-project-options">
+              <button
+                v-for="project in todoFormProjectOptions"
+                :key="project.id"
+                type="button"
+                class="todo-project-option"
+                :class="{ selected: todoForm.projectIds.includes(project.id) }"
+                :data-testid="`todo-project-option-${project.id}`"
+                :aria-pressed="todoForm.projectIds.includes(project.id)"
+                @click="toggleTodoFormProject(project)"
+              >
+                <span class="project-name">{{ project.name }}</span>
+                <span class="project-path">{{ project.path }}</span>
+              </button>
+              <span v-if="todoFormProjectOptions.length === 0" class="sidebar-empty">No matching projects</span>
+            </div>
+          </div>
+        </div>
+
+        <footer class="settings-actions">
+          <button type="button" class="toolbar-button" @click="closeTodoForm">Cancel</button>
+          <button
+            type="button"
+            class="toolbar-button primary"
+            data-testid="todo-create-submit"
+            :disabled="todoForm.saving"
+            @click="submitTodoForm"
+          >
+            Create
+          </button>
+        </footer>
+      </section>
+    </div>
+
+    <div v-if="projectPicker.visible" class="settings-overlay" @click="closeProjectPicker">
+      <section class="settings-dialog todo-dialog" data-testid="todo-project-picker-dialog" @click.stop>
+        <header class="settings-header">
+          <div>
+            <h2>Add Project</h2>
+            <p>TODO context</p>
+          </div>
+          <button type="button" class="icon-button" title="Close project picker" @click="closeProjectPicker">
+            <X :size="16" />
+          </button>
+        </header>
+
+        <div class="settings-body todo-form-body">
+          <div
+            v-if="selectedProjectPickerProjects.length"
+            class="todo-selected-project-tags"
+            data-testid="todo-project-picker-tags"
+          >
+            <span
+              v-for="project in selectedProjectPickerProjects"
+              :key="project.id"
+              class="todo-selected-project-tag"
+              :data-testid="`todo-project-picker-tag-${project.id}`"
+            >
+              <span class="project-name">{{ project.name }}</span>
+              <button
+                type="button"
+                class="todo-selected-project-remove"
+                :title="`Remove ${project.name}`"
+                :aria-label="`Remove ${project.name}`"
+                :data-testid="`todo-project-picker-remove-${project.id}`"
+                :disabled="projectPicker.saving"
+                @click="removeProjectPickerProject(project.id)"
+              >
+                <X :size="12" />
+              </button>
+            </span>
+          </div>
+          <label class="settings-field">
+            <span class="settings-label">Search</span>
+            <input
+              v-model="projectPicker.query"
+              type="text"
+              class="todo-text-input"
+              data-testid="todo-project-picker-filter"
+            />
+          </label>
+          <div class="todo-project-options" data-testid="todo-project-picker-options">
+            <button
+              v-for="project in projectPickerOptions"
+              :key="project.id"
+              type="button"
+              class="todo-project-option"
+              :class="{ selected: projectPicker.projectIds.includes(project.id) }"
+              :data-testid="`todo-project-picker-option-${project.id}`"
+              :aria-pressed="projectPicker.projectIds.includes(project.id)"
+              :disabled="projectPicker.saving"
+              @click="toggleProjectForTodo(project)"
+            >
+              <span class="project-name">{{ project.name }}</span>
+              <span class="project-path">{{ project.path }}</span>
+            </button>
+            <span v-if="projectPickerOptions.length === 0" class="sidebar-empty">No matching projects</span>
+          </div>
+        </div>
+
+        <footer class="settings-actions">
+          <button type="button" class="toolbar-button" @click="closeProjectPicker">Cancel</button>
+          <button
+            type="button"
+            class="toolbar-button primary"
+            data-testid="todo-project-picker-submit"
+            :disabled="projectPicker.saving || projectPicker.projectIds.length === 0"
+            @click="submitProjectPicker"
+          >
+            Add
+          </button>
+        </footer>
+      </section>
+    </div>
 
     <div v-if="settingsPanel.visible" class="settings-overlay" @click="closeTerminalSettings">
       <section class="settings-dialog" data-testid="terminal-settings-dialog" @click.stop>

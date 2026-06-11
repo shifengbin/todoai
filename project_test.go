@@ -24,6 +24,59 @@ func TestProjectManagerLoadsEmptyStateWhenConfigIsMissing(t *testing.T) {
 	if state.ActiveProjectID != "" {
 		t.Fatalf("ActiveProjectID = %q, want empty", state.ActiveProjectID)
 	}
+	if len(state.Todos) != 0 {
+		t.Fatalf("Todos length = %d, want 0", len(state.Todos))
+	}
+	if len(state.TodoProjects) != 0 {
+		t.Fatalf("TodoProjects length = %d, want 0", len(state.TodoProjects))
+	}
+	if state.ActiveTodoID != "" {
+		t.Fatalf("ActiveTodoID = %q, want empty", state.ActiveTodoID)
+	}
+	if state.ActiveTodoProjectID != "" {
+		t.Fatalf("ActiveTodoProjectID = %q, want empty", state.ActiveTodoProjectID)
+	}
+}
+
+func TestProjectManagerLoadsLegacyProjectStateWithTodoDefaults(t *testing.T) {
+	projectDir := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	legacyJSON := `{
+  "version": 1,
+  "projects": [
+    {
+      "id": "project-a",
+      "name": "alpha",
+      "path": "` + filepath.ToSlash(projectDir) + `",
+      "available": true,
+      "createdAt": "2026-06-10T09:00:00Z",
+      "lastSelectedAt": "2026-06-10T09:00:00Z"
+    }
+  ],
+  "activeProjectId": "project-a"
+}`
+	if err := os.WriteFile(configPath, []byte(legacyJSON), 0o600); err != nil {
+		t.Fatalf("write legacy config: %v", err)
+	}
+
+	manager := NewProjectManager(configPath)
+	state, err := manager.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if len(state.Projects) != 1 || state.Projects[0].ID != "project-a" {
+		t.Fatalf("Projects = %#v, want legacy project", state.Projects)
+	}
+	if len(state.Todos) != 0 {
+		t.Fatalf("Todos length = %d, want 0", len(state.Todos))
+	}
+	if len(state.TodoProjects) != 0 {
+		t.Fatalf("TodoProjects length = %d, want 0", len(state.TodoProjects))
+	}
+	if state.ActiveTodoID != "" || state.ActiveTodoProjectID != "" {
+		t.Fatalf("active TODO context = %q/%q, want empty", state.ActiveTodoID, state.ActiveTodoProjectID)
+	}
 }
 
 func TestProjectManagerPersistsProjectCreatedFromDirectory(t *testing.T) {
@@ -107,6 +160,382 @@ func TestProjectManagerSelectsExistingProjectForDuplicatePath(t *testing.T) {
 	}
 	if state.ActiveProjectID != first.ID {
 		t.Fatalf("ActiveProjectID = %q, want %q", state.ActiveProjectID, first.ID)
+	}
+}
+
+func TestProjectManagerCreatesTodoAndAssociatesProjects(t *testing.T) {
+	projectDir := t.TempDir()
+	otherProjectDir := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	now := time.Date(2026, 6, 10, 9, 0, 0, 0, time.UTC)
+	manager := NewProjectManager(
+		configPath,
+		WithProjectIDGenerator(sequenceIDs("project-a", "project-b", "todo-a", "todo-project-a", "todo-project-b", "todo-b", "todo-project-c")),
+		WithProjectClock(func() time.Time { return now }),
+	)
+	projectA, _, err := manager.AddProjectPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectPath(A) error = %v", err)
+	}
+	projectB, _, err := manager.AddProjectPath(otherProjectDir)
+	if err != nil {
+		t.Fatalf("AddProjectPath(B) error = %v", err)
+	}
+
+	state, err := manager.CreateTodo(CreateTodoRequest{Title: "修复登录问题"})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	if state.ActiveTodoID != "todo-a" {
+		t.Fatalf("ActiveTodoID = %q, want todo-a", state.ActiveTodoID)
+	}
+	if len(state.Todos) != 1 || state.Todos[0].Title != "修复登录问题" || state.Todos[0].Status != TodoStatusActive {
+		t.Fatalf("Todos = %#v, want active todo", state.Todos)
+	}
+
+	state, err = manager.AssociateProjectWithTodo("todo-a", projectA.ID)
+	if err != nil {
+		t.Fatalf("AssociateProjectWithTodo(A) error = %v", err)
+	}
+	state, err = manager.AssociateProjectWithTodo("todo-a", projectB.ID)
+	if err != nil {
+		t.Fatalf("AssociateProjectWithTodo(B) error = %v", err)
+	}
+	state, err = manager.AssociateProjectWithTodo("todo-a", projectA.ID)
+	if err != nil {
+		t.Fatalf("duplicate AssociateProjectWithTodo(A) error = %v", err)
+	}
+	if len(state.TodoProjects) != 2 {
+		t.Fatalf("TodoProjects length = %d, want 2 after duplicate association", len(state.TodoProjects))
+	}
+
+	state, err = manager.CreateTodo(CreateTodoRequest{Title: "升级依赖"})
+	if err != nil {
+		t.Fatalf("CreateTodo(second) error = %v", err)
+	}
+	state, err = manager.AssociateProjectWithTodo("todo-b", projectA.ID)
+	if err != nil {
+		t.Fatalf("AssociateProjectWithTodo(second todo) error = %v", err)
+	}
+	if countTodoProjectAssociations(state.TodoProjects, projectA.ID) != 2 {
+		t.Fatalf("project A associations = %#v, want project in both todos", state.TodoProjects)
+	}
+
+	reloaded := NewProjectManager(configPath)
+	persisted, err := reloaded.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(persisted.Todos) != 2 {
+		t.Fatalf("persisted Todos length = %d, want 2", len(persisted.Todos))
+	}
+	if len(persisted.TodoProjects) != 3 {
+		t.Fatalf("persisted TodoProjects length = %d, want 3", len(persisted.TodoProjects))
+	}
+}
+
+func TestProjectManagerCreatesTodoWithDetailsAndOptionalProjects(t *testing.T) {
+	projectDir := t.TempDir()
+	otherProjectDir := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	now := time.Date(2026, 6, 10, 9, 0, 0, 0, time.UTC)
+	manager := NewProjectManager(
+		configPath,
+		WithProjectIDGenerator(sequenceIDs("project-a", "project-b", "todo-a", "todo-project-a", "todo-project-b")),
+		WithProjectClock(func() time.Time { return now }),
+	)
+	project, _, err := manager.AddProjectPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectPath() error = %v", err)
+	}
+	otherProject, _, err := manager.AddProjectPath(otherProjectDir)
+	if err != nil {
+		t.Fatalf("AddProjectPath(other) error = %v", err)
+	}
+
+	state, err := manager.CreateTodo(CreateTodoRequest{
+		Title:       "  修复登录问题  ",
+		Description: "  登录后跳回首页  ",
+		Priority:    TodoPriorityHigh,
+		ProjectIDs:  []string{project.ID, otherProject.ID},
+	})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+
+	if len(state.Todos) != 1 {
+		t.Fatalf("Todos length = %d, want 1", len(state.Todos))
+	}
+	todo := state.Todos[0]
+	if todo.Title != "修复登录问题" {
+		t.Fatalf("Title = %q, want trimmed title", todo.Title)
+	}
+	if todo.Description != "登录后跳回首页" {
+		t.Fatalf("Description = %q, want trimmed description", todo.Description)
+	}
+	if todo.Priority != TodoPriorityHigh {
+		t.Fatalf("Priority = %q, want %q", todo.Priority, TodoPriorityHigh)
+	}
+	if state.ActiveTodoID != "todo-a" || state.ActiveTodoProjectID != "todo-project-a" || state.ActiveProjectID != project.ID {
+		t.Fatalf("active context = %q/%q/%q, want todo-a/todo-project-a/%q", state.ActiveTodoID, state.ActiveTodoProjectID, state.ActiveProjectID, project.ID)
+	}
+	if len(state.TodoProjects) != 2 {
+		t.Fatalf("TodoProjects length = %d, want 2", len(state.TodoProjects))
+	}
+	if state.TodoProjects[0].TodoID != "todo-a" || state.TodoProjects[0].ProjectID != project.ID {
+		t.Fatalf("first TodoProject = %#v, want first selected project", state.TodoProjects[0])
+	}
+	if state.TodoProjects[1].TodoID != "todo-a" || state.TodoProjects[1].ProjectID != otherProject.ID {
+		t.Fatalf("second TodoProject = %#v, want second selected project", state.TodoProjects[1])
+	}
+
+	reloaded := NewProjectManager(configPath)
+	persisted, err := reloaded.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(persisted.Todos) != 1 || persisted.Todos[0].Description != "登录后跳回首页" || persisted.Todos[0].Priority != TodoPriorityHigh {
+		t.Fatalf("persisted Todos = %#v, want description and high priority", persisted.Todos)
+	}
+	if len(persisted.TodoProjects) != 2 {
+		t.Fatalf("persisted TodoProjects length = %d, want 2", len(persisted.TodoProjects))
+	}
+}
+
+func TestProjectManagerCreatesTodoWithoutProjectUsingMediumPriority(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	manager := NewProjectManager(configPath, WithProjectIDGenerator(sequenceIDs("todo-a")))
+
+	state, err := manager.CreateTodo(CreateTodoRequest{Title: "修复登录问题"})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+
+	if len(state.Todos) != 1 {
+		t.Fatalf("Todos length = %d, want 1", len(state.Todos))
+	}
+	if state.Todos[0].Priority != TodoPriorityMedium {
+		t.Fatalf("Priority = %q, want %q", state.Todos[0].Priority, TodoPriorityMedium)
+	}
+	if state.Todos[0].Description != "" {
+		t.Fatalf("Description = %q, want empty", state.Todos[0].Description)
+	}
+	if len(state.TodoProjects) != 0 {
+		t.Fatalf("TodoProjects length = %d, want 0", len(state.TodoProjects))
+	}
+	if state.ActiveTodoID != "todo-a" || state.ActiveTodoProjectID != "" || state.ActiveTerminalID != "" {
+		t.Fatalf("active context = %q/%q/%q, want todo-a and no project/terminal", state.ActiveTodoID, state.ActiveTodoProjectID, state.ActiveTerminalID)
+	}
+}
+
+func TestProjectManagerRejectsBlankTodoTitleWithoutChangingState(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	manager := NewProjectManager(configPath, WithProjectIDGenerator(sequenceIDs("todo-a")))
+
+	if _, err := manager.CreateTodo(CreateTodoRequest{Title: "   ", Priority: TodoPriorityLow}); err == nil {
+		t.Fatal("CreateTodo() error = nil, want title error")
+	}
+
+	state, err := manager.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(state.Todos) != 0 {
+		t.Fatalf("Todos = %#v, want unchanged empty state", state.Todos)
+	}
+}
+
+func TestProjectManagerLoadsLegacyTodoWithoutPriorityAsMedium(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	legacyJSON := `{
+  "version": 1,
+  "projects": [],
+  "todos": [
+    {
+      "id": "todo-a",
+      "title": "修复登录问题",
+      "status": "active",
+      "createdAt": "2026-06-10T09:00:00Z"
+    }
+  ],
+  "todoProjects": [],
+  "activeTodoId": "todo-a"
+}`
+	if err := os.WriteFile(configPath, []byte(legacyJSON), 0o600); err != nil {
+		t.Fatalf("write legacy config: %v", err)
+	}
+
+	manager := NewProjectManager(configPath)
+	state, err := manager.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if len(state.Todos) != 1 {
+		t.Fatalf("Todos length = %d, want 1", len(state.Todos))
+	}
+	if state.Todos[0].Priority != TodoPriorityMedium {
+		t.Fatalf("Priority = %q, want %q", state.Todos[0].Priority, TodoPriorityMedium)
+	}
+}
+
+func TestProjectManagerArchivesTodoWithProjectSnapshots(t *testing.T) {
+	projectDir := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	now := time.Date(2026, 6, 10, 9, 0, 0, 0, time.UTC)
+	manager := NewProjectManager(
+		configPath,
+		WithProjectIDGenerator(sequenceIDs("project-a", "todo-a", "todo-project-a")),
+		WithProjectClock(func() time.Time { return now }),
+	)
+	project, _, err := manager.AddProjectPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectPath() error = %v", err)
+	}
+	if _, err := manager.CreateTodo(CreateTodoRequest{Title: "修复登录问题"}); err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	if _, err := manager.AssociateProjectWithTodo("todo-a", project.ID); err != nil {
+		t.Fatalf("AssociateProjectWithTodo() error = %v", err)
+	}
+
+	now = now.Add(time.Minute)
+	state, err := manager.CompleteTodo("todo-a")
+	if err != nil {
+		t.Fatalf("CompleteTodo() error = %v", err)
+	}
+
+	if len(state.TodoProjects) != 0 {
+		t.Fatalf("TodoProjects length = %d, want 0 after archive", len(state.TodoProjects))
+	}
+	if len(state.Todos) != 1 {
+		t.Fatalf("Todos length = %d, want 1 archived todo", len(state.Todos))
+	}
+	todo := state.Todos[0]
+	if todo.Status != TodoStatusArchived || todo.ArchivedReason != TodoArchiveReasonCompleted {
+		t.Fatalf("todo archive state = %q/%q, want archived/completed", todo.Status, todo.ArchivedReason)
+	}
+	if todo.CompletedAt == "" || todo.ArchivedAt == "" {
+		t.Fatalf("CompletedAt/ArchivedAt = %q/%q, want timestamps", todo.CompletedAt, todo.ArchivedAt)
+	}
+	if len(todo.ProjectSnapshots) != 1 {
+		t.Fatalf("ProjectSnapshots length = %d, want 1", len(todo.ProjectSnapshots))
+	}
+	if snapshot := todo.ProjectSnapshots[0]; snapshot.ProjectID != project.ID || snapshot.Name != filepath.Base(projectDir) || snapshot.Path != projectDir {
+		t.Fatalf("ProjectSnapshot = %#v, want archived project details", snapshot)
+	}
+
+	state, err = manager.DeleteProject(project.ID)
+	if err != nil {
+		t.Fatalf("DeleteProject() error = %v", err)
+	}
+	if len(state.Todos[0].ProjectSnapshots) != 1 || state.Todos[0].ProjectSnapshots[0].Path != projectDir {
+		t.Fatalf("archived snapshots after project delete = %#v, want unchanged", state.Todos[0].ProjectSnapshots)
+	}
+}
+
+func TestProjectManagerArchivesDeletedTodo(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	manager := NewProjectManager(
+		configPath,
+		WithProjectIDGenerator(sequenceIDs("todo-a")),
+	)
+	if _, err := manager.CreateTodo(CreateTodoRequest{Title: "临时任务"}); err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+
+	state, err := manager.DeleteTodo("todo-a")
+	if err != nil {
+		t.Fatalf("DeleteTodo() error = %v", err)
+	}
+
+	if len(state.Todos) != 1 {
+		t.Fatalf("Todos length = %d, want archived todo", len(state.Todos))
+	}
+	if state.Todos[0].Status != TodoStatusArchived || state.Todos[0].ArchivedReason != TodoArchiveReasonDeleted {
+		t.Fatalf("todo archive state = %q/%q, want archived/deleted", state.Todos[0].Status, state.Todos[0].ArchivedReason)
+	}
+}
+
+func TestProjectManagerImportsProjectsFromParentDirectory(t *testing.T) {
+	parentDir := t.TempDir()
+	existingDir := filepath.Join(parentDir, "existing")
+	newDir := filepath.Join(parentDir, "new-app")
+	if err := os.Mkdir(existingDir, 0o755); err != nil {
+		t.Fatalf("mkdir existing: %v", err)
+	}
+	if err := os.Mkdir(newDir, 0o755); err != nil {
+		t.Fatalf("mkdir new: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(parentDir, "README.md"), []byte("not a project"), 0o600); err != nil {
+		t.Fatalf("write file child: %v", err)
+	}
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	manager := NewProjectManager(
+		configPath,
+		WithProjectIDGenerator(sequenceIDs("project-existing", "project-new")),
+	)
+	if _, _, err := manager.AddProjectPath(existingDir); err != nil {
+		t.Fatalf("AddProjectPath(existing) error = %v", err)
+	}
+
+	state, err := manager.ImportProjectsFromParentDirectory(parentDir)
+	if err != nil {
+		t.Fatalf("ImportProjectsFromParentDirectory() error = %v", err)
+	}
+
+	if len(state.Projects) != 2 {
+		t.Fatalf("Projects length = %d, want existing + one new", len(state.Projects))
+	}
+	if state.ImportSummary == nil {
+		t.Fatal("ImportSummary = nil, want summary")
+	}
+	if state.ImportSummary.AddedCount != 1 || state.ImportSummary.SkippedCount != 1 {
+		t.Fatalf("ImportSummary = %#v, want 1 added and 1 skipped", state.ImportSummary)
+	}
+	if !containsProjectPath(state.Projects, newDir) {
+		t.Fatalf("Projects = %#v, want imported %q", state.Projects, newDir)
+	}
+}
+
+func TestProjectManagerDeleteProjectRemovesActiveTodoAssociationsButPreservesArchivedSnapshots(t *testing.T) {
+	projectDir := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	manager := NewProjectManager(
+		configPath,
+		WithProjectIDGenerator(sequenceIDs("project-a", "todo-active", "todo-project-active", "todo-archived", "todo-project-archived")),
+	)
+	project, _, err := manager.AddProjectPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectPath() error = %v", err)
+	}
+	if _, err := manager.CreateTodo(CreateTodoRequest{Title: "活动任务"}); err != nil {
+		t.Fatalf("CreateTodo(active) error = %v", err)
+	}
+	if _, err := manager.AssociateProjectWithTodo("todo-active", project.ID); err != nil {
+		t.Fatalf("AssociateProjectWithTodo(active) error = %v", err)
+	}
+	if _, err := manager.CreateTodo(CreateTodoRequest{Title: "归档任务"}); err != nil {
+		t.Fatalf("CreateTodo(archived) error = %v", err)
+	}
+	if _, err := manager.AssociateProjectWithTodo("todo-archived", project.ID); err != nil {
+		t.Fatalf("AssociateProjectWithTodo(archived) error = %v", err)
+	}
+	if _, err := manager.CompleteTodo("todo-archived"); err != nil {
+		t.Fatalf("CompleteTodo() error = %v", err)
+	}
+
+	state, err := manager.DeleteProject(project.ID)
+	if err != nil {
+		t.Fatalf("DeleteProject() error = %v", err)
+	}
+
+	if len(state.TodoProjects) != 0 {
+		t.Fatalf("TodoProjects = %#v, want active project associations removed", state.TodoProjects)
+	}
+	archived := findTodo(state.Todos, "todo-archived")
+	if archived == nil || len(archived.ProjectSnapshots) != 1 || archived.ProjectSnapshots[0].Path != projectDir {
+		t.Fatalf("archived todo = %#v, want preserved snapshot", archived)
 	}
 }
 
@@ -266,4 +695,32 @@ func sequenceIDs(ids ...string) func() string {
 		index++
 		return id
 	}
+}
+
+func countTodoProjectAssociations(todoProjects []TodoProject, projectID string) int {
+	count := 0
+	for _, todoProject := range todoProjects {
+		if todoProject.ProjectID == projectID {
+			count++
+		}
+	}
+	return count
+}
+
+func containsProjectPath(projects []Project, path string) bool {
+	for _, project := range projects {
+		if project.Path == path {
+			return true
+		}
+	}
+	return false
+}
+
+func findTodo(todos []Todo, todoID string) *Todo {
+	for index := range todos {
+		if todos[index].ID == todoID {
+			return &todos[index]
+		}
+	}
+	return nil
 }

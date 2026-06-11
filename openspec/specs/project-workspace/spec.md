@@ -28,92 +28,20 @@ The system SHALL persist the opened project list locally and reload it when the 
 
 ### Requirement: Select Active Project
 
-The system SHALL allow the user to select an opened project from the left-side project tree and SHALL expose the selected project as the active project for the shell area. If the selected project has an existing terminal session, the system SHALL make that project's most recently active terminal active. If the selected project has no terminal session and the project path is available, the system SHALL create and select a default terminal for that project.
+The system SHALL allow the user to select an opened project from the project library. Selecting a project from the project library SHALL update the selected project for project management and status display, but SHALL NOT create, select, or reveal a terminal session. Terminal activation SHALL occur only through a TODO project context.
 
-#### Scenario: User selects a project
+#### Scenario: User selects a project from the project library
 
-- **WHEN** the user clicks a project in the left-side project tree
-- **THEN** that project becomes active
-- **AND** the shell area is associated with an active terminal in that project's directory
+- **WHEN** the user clicks a project in the project library
+- **THEN** that project becomes the selected project for project management
+- **AND** no shell session is created
+- **AND** no terminal becomes active from that project selection
 
-### Requirement: Display Project Terminal Tree
+#### Scenario: User selects a project through a TODO context
 
-The system SHALL display opened projects as top-level rows in the left sidebar and SHALL display each project's terminal sessions as child rows under the owning project.
-
-#### Scenario: Project has multiple terminals
-
-- **WHEN** a project has terminal sessions named `zsh`, `npm run dev`, and `go test ./...`
-- **THEN** the left sidebar shows the project row with those terminal rows nested beneath it
-
-### Requirement: Select Active Terminal From Project Tree
-
-The system SHALL allow the user to select a terminal row under a project and SHALL expose that terminal as the active terminal for the shell area.
-
-#### Scenario: User selects a terminal under a project
-
-- **WHEN** the user clicks terminal `go test ./...` under project `demo-app`
-- **THEN** project `demo-app` becomes the active project
-- **AND** terminal `go test ./...` becomes the active terminal shown in the shell area
-
-### Requirement: Collapse Project Terminal Branches
-
-The system SHALL allow the user to expand and collapse each project's terminal child rows independently in the left-side project terminal tree.
-
-#### Scenario: User collapses a project branch
-
-- **WHEN** a project branch is expanded and has terminal child rows
-- **AND** the user activates that project's collapse control
-- **THEN** the terminal child rows for that project are hidden
-- **AND** the project row remains visible
-
-#### Scenario: User expands a project branch
-
-- **WHEN** a project branch is collapsed and has terminal child rows
-- **AND** the user activates that project's expand control
-- **THEN** the terminal child rows for that project are shown beneath the project row
-
-#### Scenario: Collapsing one project does not affect another project
-
-- **WHEN** project A and project B both have terminal child rows
-- **AND** the user collapses project A
-- **THEN** project A's terminal child rows are hidden
-- **AND** project B's expanded or collapsed state is unchanged
-
-### Requirement: Reveal Active Project Terminal Branch
-
-The system SHALL expand the branch for the project that becomes active through project selection, terminal selection, or terminal creation.
-
-#### Scenario: User selects a collapsed project
-
-- **WHEN** a project branch is collapsed
-- **AND** the user selects that project
-- **THEN** that project's branch is expanded
-
-#### Scenario: User selects a terminal under a project
-
-- **WHEN** a terminal becomes active under a project
-- **THEN** the owning project's branch is expanded
-
-#### Scenario: User creates a terminal under a project
-
-- **WHEN** the user creates a terminal under an available project
-- **THEN** the owning project's branch is expanded
-- **AND** the new terminal row is visible under that project
-
-### Requirement: Show Project Terminal Hierarchy
-
-The system SHALL visually distinguish project parent rows from terminal child rows and SHALL communicate terminal ownership through tree indentation or branch guides.
-
-#### Scenario: Project has terminal children
-
-- **WHEN** a project has visible terminal child rows
-- **THEN** the terminal rows appear visually nested under the project row
-- **AND** the sidebar communicates that the terminal rows belong to that project
-
-#### Scenario: Project branch is collapsed
-
-- **WHEN** a project with terminal child rows is collapsed
-- **THEN** the project row indicates that hidden terminal children can be expanded
+- **WHEN** the user clicks project `demo-app` under TODO `fix-login`
+- **THEN** project `demo-app` becomes the active project for the shell area
+- **AND** the shell area is associated only with terminals under that TODO project context
 
 ### Requirement: Handle Duplicate Project Paths
 
@@ -135,7 +63,7 @@ The system SHALL detect when a persisted project path no longer exists or is ina
 
 ### Requirement: Remove Opened Project
 
-The system SHALL allow the user to remove an opened project from the application without deleting the project's directory or files from disk.
+The system SHALL allow the user to remove an opened project from the application without deleting the project's directory or files from disk. Removing a project SHALL remove that project from active TODO project associations and SHALL close runtime terminal sessions for that project across all TODO contexts. Archived TODO project snapshots SHALL remain unchanged.
 
 #### Scenario: User confirms project removal
 
@@ -143,6 +71,7 @@ The system SHALL allow the user to remove an opened project from the application
 - **AND** confirms the deletion
 - **THEN** the project list no longer contains `/home/user/work/demo-app`
 - **AND** the persisted opened project list no longer contains `/home/user/work/demo-app`
+- **AND** active TODOs no longer contain associations to `/home/user/work/demo-app`
 - **AND** the directory `/home/user/work/demo-app` remains on disk
 
 #### Scenario: User cancels project removal
@@ -150,17 +79,20 @@ The system SHALL allow the user to remove an opened project from the application
 - **WHEN** the user requests to delete an opened project
 - **AND** cancels the confirmation
 - **THEN** the project list remains unchanged
+- **AND** TODO project associations remain unchanged
 
 #### Scenario: Active project is removed
 
 - **WHEN** the active project is removed
-- **THEN** the system selects the remaining opened project with the most recent selection time as the active project
-- **AND** if no opened projects remain, the active project is empty
+- **THEN** the system selects the remaining opened project with the most recent selection time as the selected project for project management
+- **AND** if no opened projects remain, the selected project is empty
+- **AND** any active terminal owned by the removed project is cleared
 
 #### Scenario: Removed project is not found
 
 - **WHEN** the user requests to delete a project that is not in the opened project list
 - **THEN** the system reports an error and leaves the opened project list unchanged
+- **AND** TODO project associations remain unchanged
 
 ### Requirement: Display Active Project Git Status Bar
 
@@ -244,104 +176,6 @@ The system SHALL allow the user to remove an opened project from the application
 - **THEN** 状态栏显示 Git 状态不可用
 - **AND** 项目选择和终端会话功能保持可用
 
-### Requirement: Highlight Active Terminal Branch Guide
-
-The system SHALL visually highlight the visible project-terminal branch guide for the project that owns the active terminal.
-
-#### Scenario: Active terminal branch guide is highlighted
-
-- **WHEN** a project has visible terminal child rows
-- **AND** one of those terminal rows is the active terminal
-- **THEN** the visible vertical branch guide for that project's terminal list uses the same active color as the active terminal row's horizontal branch guide
-
-#### Scenario: Inactive terminal branch guides remain neutral
-
-- **WHEN** a project has visible terminal child rows
-- **AND** none of those terminal rows is the active terminal
-- **THEN** the visible vertical branch guide for that project's terminal list uses the default neutral branch guide color
-
-### Requirement: Display Interactive Terminal Activity In Project Tree
-
-系统 SHALL 在左侧项目终端树中展示交互式终端程序的运行时活动状态。该状态 SHALL 基于终端标题变化推导，并 SHALL 不替代现有 shell 命令标签。
-
-#### Scenario: Interactive terminal records an idle launch title
-
-- **WHEN** terminal A 的当前命令标签是 `codex`
-- **AND** terminal A 刚启动并收到静态运行时标题 `codex - alpha`
-- **THEN** terminal A 的项目树终端行不显示执行中的动态指示
-- **AND** terminal A 的主标签仍显示 `codex`
-
-#### Scenario: Interactive terminal is busy after launch
-
-- **WHEN** terminal A 的当前命令标签是 `codex`
-- **AND** terminal A 已记录空闲运行时标题 `codex - alpha`
-- **AND** terminal A 后续收到不同于空闲标题的执行中运行时标题
-- **THEN** terminal A 的项目树终端行显示执行中的动态指示
-- **AND** terminal A 的主标签仍显示 `codex`
-
-#### Scenario: Interactive terminal needs user input
-
-- **WHEN** terminal A 的当前命令标签是 `codex`
-- **AND** terminal A 收到表示需要注意的运行时标题，例如包含 `!`
-- **THEN** terminal A 的项目树终端行显示需要用户输入的注意指示
-- **AND** terminal A 不显示执行中的动态指示
-
-#### Scenario: Interactive terminal returns to idle title
-
-- **WHEN** terminal A 的项目树终端行正在显示执行中或需要输入状态
-- **AND** terminal A 的运行时标题恢复为当前命令标签 `codex` 或已记录的空闲标题
-- **THEN** terminal A 的项目树终端行停止活动指示
-- **AND** terminal A 的主标签仍显示 `codex`
-
-#### Scenario: Shell command state still controls command label
-
-- **WHEN** terminal A 的 shell command-start 事件报告当前命令为 `codex`
-- **AND** terminal A 后续收到运行时标题变化
-- **THEN** terminal A 的主标签由 shell 命令状态保持为 `codex`
-- **AND** 运行时标题只影响活动指示状态
-
-#### Scenario: Shell command exits
-
-- **WHEN** terminal A 正在显示交互式活动状态
-- **AND** terminal A 的 shell command-end 事件到达
-- **THEN** terminal A 清除交互式活动指示
-- **AND** terminal A 的主标签恢复为 shell 名称
-
-### Requirement: Show Project Terminal Launch Menu
-
-The system SHALL show a terminal launch menu when the user activates the add-terminal control for an available project.
-
-#### Scenario: Launch menu contains terminal and configured profiles
-
-- **WHEN** settings contains launch profiles named `codex` and `claude`
-- **AND** the user activates the add-terminal control for an available project
-- **THEN** the launch menu shows `Terminal` as the first option
-- **AND** the launch menu shows `codex` and `claude` after `Terminal` in the configured order
-
-#### Scenario: Unavailable project has no launch menu
-
-- **WHEN** a project path is unavailable
-- **THEN** the project row does not expose an add-terminal launch menu action
-
-### Requirement: Create Terminal From Launch Menu
-
-The system SHALL create a new terminal for the selected project using the launch option chosen from the project terminal launch menu.
-
-#### Scenario: User chooses terminal launch option
-
-- **WHEN** the user opens the launch menu for project `demo-app`
-- **AND** chooses `Terminal`
-- **THEN** the system creates a new terminal under project `demo-app`
-- **AND** the new terminal starts as a normal shell session without an automatic startup command
-
-#### Scenario: User chooses configured launch profile
-
-- **WHEN** the user opens the launch menu for project `demo-app`
-- **AND** chooses the `codex` launch profile
-- **THEN** the system creates a new terminal under project `demo-app`
-- **AND** the new terminal is selected as the active terminal
-- **AND** the owning project branch is expanded so the new terminal row is visible
-
 ### Requirement: Initialize Active Project Git Repository From Status Bar
 
 系统 SHALL 在当前激活项目可用且不是 Git 仓库时，在底部状态栏提供初始化 Git 仓库的操作。该操作 SHALL 直接在当前项目路径执行 Git 初始化，并在成功后刷新状态栏中的 Git 信息。
@@ -376,4 +210,64 @@ The system SHALL create a new terminal for the selected project using the launch
 - **AND** Git 初始化失败
 - **THEN** 状态栏仍显示该项目不是 Git 仓库
 - **AND** 系统显示不会阻断终端操作的错误信息
+
+### Requirement: Display Project Library Tab
+
+系统 SHALL 在左侧工作区的 `项目` tab 中展示全局项目库。项目库 SHALL 用于导入、查看和删除项目，但 SHALL 不直接提供终端创建、终端选择或终端树操作。
+
+#### Scenario: Project tab shows imported projects
+
+- **WHEN** 用户打开 `项目` tab
+- **AND** 项目库包含 `frontend-app` 和 `api-service`
+- **THEN** `项目` tab 显示 `frontend-app`
+- **AND** `项目` tab 显示 `api-service`
+- **AND** 项目行不显示终端子行
+
+#### Scenario: Project tab does not expose terminal actions
+
+- **WHEN** 用户打开 `项目` tab
+- **AND** 项目 `frontend-app` 可用
+- **THEN** 项目行不显示新增终端启动菜单
+- **AND** 点击项目行不会创建 shell 终端
+
+### Requirement: Import Projects From Parent Directory
+
+系统 SHALL 允许用户选择一个父目录，并将该父目录下第一层可访问子目录批量导入为项目。系统 SHALL 跳过普通文件、不可访问目录和已存在的项目路径。
+
+#### Scenario: User imports child directories from a parent directory
+
+- **WHEN** 用户选择父目录 `/home/user/work`
+- **AND** 该目录包含子目录 `/home/user/work/frontend-app`
+- **AND** 该目录包含子目录 `/home/user/work/api-service`
+- **THEN** 项目库包含项目 `frontend-app`，路径为 `/home/user/work/frontend-app`
+- **AND** 项目库包含项目 `api-service`，路径为 `/home/user/work/api-service`
+
+#### Scenario: Import skips duplicate project paths
+
+- **WHEN** 项目库已包含路径 `/home/user/work/frontend-app`
+- **AND** 用户从父目录 `/home/user/work` 批量导入
+- **THEN** 系统不会创建第二个 `/home/user/work/frontend-app` 项目
+- **AND** 导入结果显示该路径被跳过
+
+#### Scenario: Import ignores non-directory children
+
+- **WHEN** 用户选择父目录 `/home/user/work`
+- **AND** 该目录包含文件 `/home/user/work/readme.md`
+- **THEN** 系统不会为 `readme.md` 创建项目
+
+#### Scenario: User cancels parent directory import
+
+- **WHEN** 用户打开父目录导入选择器并取消
+- **THEN** 项目库保持不变
+
+### Requirement: Report Parent Directory Import Summary
+
+系统 SHALL 在父目录批量导入完成后向用户展示导入摘要。摘要 SHALL 至少包含新增项目数量和跳过项目数量。
+
+#### Scenario: Import summary is shown
+
+- **WHEN** 用户从父目录批量导入 2 个新项目
+- **AND** 系统跳过 1 个已存在路径
+- **THEN** 系统显示 2 个项目已导入
+- **AND** 系统显示 1 个项目已跳过
 

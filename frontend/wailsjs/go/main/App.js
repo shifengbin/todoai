@@ -6,6 +6,18 @@ export function AddProjectFromPath(arg1) {
   return window['go']['main']['App']['AddProjectFromPath'](arg1);
 }
 
+export function AddProjectToTodo(arg1, arg2) {
+  return window['go']['main']['App']['AddProjectToTodo'](arg1, arg2);
+}
+
+export function AddProjectsToTodo(arg1, arg2) {
+  return window['go']['main']['App']['AddProjectsToTodo'](arg1, arg2);
+}
+
+export function CompleteTodo(arg1) {
+  return window['go']['main']['App']['CompleteTodo'](arg1);
+}
+
 export function CreateProjectFromDialog() {
   return window['go']['main']['App']['CreateProjectFromDialog']();
 }
@@ -14,12 +26,24 @@ export function CreateTerminal(arg1, arg2, arg3) {
   return window['go']['main']['App']['CreateTerminal'](arg1, arg2, arg3);
 }
 
+export function CreateTodo(arg1) {
+  return window['go']['main']['App']['CreateTodo'](arg1);
+}
+
+export function CreateTodoTerminal(arg1, arg2, arg3) {
+  return window['go']['main']['App']['CreateTodoTerminal'](arg1, arg2, arg3);
+}
+
 export function DeleteProject(arg1) {
   return window['go']['main']['App']['DeleteProject'](arg1);
 }
 
 export function DeleteTerminal(arg1) {
   return window['go']['main']['App']['DeleteTerminal'](arg1);
+}
+
+export function DeleteTodo(arg1) {
+  return window['go']['main']['App']['DeleteTodo'](arg1);
 }
 
 export function DetectTerminalShell() {
@@ -32,6 +56,14 @@ export function GetProjectGitStatus(arg1) {
 
 export function GetShellStatus(arg1) {
   return window['go']['main']['App']['GetShellStatus'](arg1);
+}
+
+export function ImportProjectsFromParentDirectory(arg1) {
+  return window['go']['main']['App']['ImportProjectsFromParentDirectory'](arg1);
+}
+
+export function ImportProjectsFromParentDirectoryDialog() {
+  return window['go']['main']['App']['ImportProjectsFromParentDirectoryDialog']();
 }
 
 export function InitializeProjectGitRepository(arg1) {
@@ -68,6 +100,10 @@ export function SelectProject(arg1) {
 
 export function SelectTerminal(arg1) {
   return window['go']['main']['App']['SelectTerminal'](arg1);
+}
+
+export function SelectTodoProject(arg1) {
+  return window['go']['main']['App']['SelectTodoProject'](arg1);
 }
 
 export function SendTerminalInput(arg1, arg2) {

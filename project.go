@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,6 +13,18 @@ import (
 )
 
 const projectConfigVersion = 1
+
+const (
+	TodoStatusActive   = "active"
+	TodoStatusArchived = "archived"
+
+	TodoArchiveReasonCompleted = "completed"
+	TodoArchiveReasonDeleted   = "deleted"
+
+	TodoPriorityHigh   = "high"
+	TodoPriorityMedium = "medium"
+	TodoPriorityLow    = "low"
+)
 
 type Project struct {
 	ID             string `json:"id"`
@@ -22,12 +35,59 @@ type Project struct {
 	LastSelectedAt string `json:"lastSelectedAt"`
 }
 
+type Todo struct {
+	ID               string                `json:"id"`
+	Title            string                `json:"title"`
+	Description      string                `json:"description,omitempty"`
+	Priority         string                `json:"priority"`
+	Status           string                `json:"status"`
+	ArchivedReason   string                `json:"archivedReason,omitempty"`
+	ProjectSnapshots []TodoProjectSnapshot `json:"projectSnapshots,omitempty"`
+	CreatedAt        string                `json:"createdAt"`
+	CompletedAt      string                `json:"completedAt,omitempty"`
+	ArchivedAt       string                `json:"archivedAt,omitempty"`
+}
+
+type CreateTodoRequest struct {
+	Title       string   `json:"title"`
+	Description string   `json:"description,omitempty"`
+	Priority    string   `json:"priority,omitempty"`
+	ProjectIDs  []string `json:"projectIds,omitempty"`
+}
+
+type TodoProject struct {
+	ID             string `json:"id"`
+	TodoID         string `json:"todoId"`
+	ProjectID      string `json:"projectId"`
+	CreatedAt      string `json:"createdAt"`
+	LastSelectedAt string `json:"lastSelectedAt"`
+}
+
+type TodoProjectSnapshot struct {
+	ProjectID string `json:"projectId"`
+	Name      string `json:"name"`
+	Path      string `json:"path"`
+}
+
+type ProjectImportSummary struct {
+	ParentPath   string    `json:"parentPath"`
+	AddedCount   int       `json:"addedCount"`
+	SkippedCount int       `json:"skippedCount"`
+	Added        []Project `json:"added,omitempty"`
+	SkippedPaths []string  `json:"skippedPaths,omitempty"`
+}
+
 type ProjectState struct {
-	Version          int               `json:"version"`
-	Projects         []Project         `json:"projects"`
-	ActiveProjectID  string            `json:"activeProjectId"`
-	Terminals        []ProjectTerminal `json:"terminals,omitempty"`
-	ActiveTerminalID string            `json:"activeTerminalId,omitempty"`
+	Version             int                   `json:"version"`
+	Projects            []Project             `json:"projects"`
+	Todos               []Todo                `json:"todos"`
+	TodoProjects        []TodoProject         `json:"todoProjects"`
+	ActiveProjectID     string                `json:"activeProjectId"`
+	ActiveTodoID        string                `json:"activeTodoId,omitempty"`
+	ActiveTodoProjectID string                `json:"activeTodoProjectId,omitempty"`
+	Terminals           []ProjectTerminal     `json:"terminals,omitempty"`
+	ActiveTerminalID    string                `json:"activeTerminalId,omitempty"`
+	ImportSummary       *ProjectImportSummary `json:"importSummary,omitempty"`
 }
 
 type ProjectManager struct {
@@ -117,6 +177,65 @@ func (manager *ProjectManager) AddProjectPath(path string) (Project, bool, error
 	return project, true, nil
 }
 
+func (manager *ProjectManager) ImportProjectsFromParentDirectory(parentPath string) (ProjectState, error) {
+	absoluteParentPath, err := normalizeProjectPath(parentPath)
+	if err != nil {
+		return ProjectState{}, err
+	}
+	if !directoryAvailable(absoluteParentPath) {
+		return ProjectState{}, errors.New("parent path is not an accessible directory")
+	}
+	entries, err := os.ReadDir(absoluteParentPath)
+	if err != nil {
+		return ProjectState{}, err
+	}
+
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	state, err := manager.loadLocked()
+	if err != nil {
+		return ProjectState{}, err
+	}
+
+	summary := &ProjectImportSummary{ParentPath: absoluteParentPath}
+	selectedAt := manager.now().UTC().Format(time.RFC3339)
+	for _, entry := range entries {
+		childPath := filepath.Join(absoluteParentPath, entry.Name())
+		if !entry.IsDir() {
+			continue
+		}
+		absoluteChildPath, err := normalizeProjectPath(childPath)
+		if err != nil || !directoryAvailable(absoluteChildPath) {
+			summary.SkippedCount++
+			summary.SkippedPaths = append(summary.SkippedPaths, childPath)
+			continue
+		}
+		if containsProjectAbsolutePath(state.Projects, absoluteChildPath) {
+			summary.SkippedCount++
+			summary.SkippedPaths = append(summary.SkippedPaths, absoluteChildPath)
+			continue
+		}
+		project := Project{
+			ID:             manager.newID(),
+			Name:           filepath.Base(absoluteChildPath),
+			Path:           absoluteChildPath,
+			Available:      true,
+			CreatedAt:      selectedAt,
+			LastSelectedAt: selectedAt,
+		}
+		state.Projects = append(state.Projects, project)
+		state.ActiveProjectID = project.ID
+		summary.AddedCount++
+		summary.Added = append(summary.Added, project)
+	}
+	state.ImportSummary = summary
+	if err := manager.saveLocked(state); err != nil {
+		return ProjectState{}, err
+	}
+	return state, nil
+}
+
 func (manager *ProjectManager) SelectProject(projectID string) (ProjectState, error) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
@@ -134,6 +253,161 @@ func (manager *ProjectManager) SelectProject(projectID string) (ProjectState, er
 	}
 
 	return ProjectState{}, errors.New("project not found")
+}
+
+func (manager *ProjectManager) CreateTodo(request CreateTodoRequest) (ProjectState, error) {
+	normalizedTitle := strings.TrimSpace(request.Title)
+	if normalizedTitle == "" {
+		return ProjectState{}, errors.New("todo title is required")
+	}
+	normalizedPriority := normalizeTodoPriority(request.Priority)
+	normalizedDescription := strings.TrimSpace(request.Description)
+	projectIDs := normalizeProjectIDs(request.ProjectIDs)
+
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	state, err := manager.loadLocked()
+	if err != nil {
+		return ProjectState{}, err
+	}
+	if !containsProjects(state.Projects, projectIDs) {
+		return ProjectState{}, errors.New("project not found")
+	}
+	now := manager.now().UTC().Format(time.RFC3339)
+	todo := Todo{
+		ID:          manager.newID(),
+		Title:       normalizedTitle,
+		Description: normalizedDescription,
+		Priority:    normalizedPriority,
+		Status:      TodoStatusActive,
+		CreatedAt:   now,
+	}
+	state.Todos = append(state.Todos, todo)
+	state.ActiveTodoID = todo.ID
+	state.ActiveTodoProjectID = ""
+	state.ActiveTerminalID = ""
+	for index, projectID := range projectIDs {
+		todoProject := TodoProject{
+			ID:             manager.newID(),
+			TodoID:         todo.ID,
+			ProjectID:      projectID,
+			CreatedAt:      now,
+			LastSelectedAt: now,
+		}
+		state.TodoProjects = append(state.TodoProjects, todoProject)
+		if index == 0 {
+			state.ActiveTodoProjectID = todoProject.ID
+			state.ActiveProjectID = projectID
+		}
+	}
+	if err := manager.saveLocked(state); err != nil {
+		return ProjectState{}, err
+	}
+	return state, nil
+}
+
+func (manager *ProjectManager) AssociateProjectWithTodo(todoID string, projectID string) (ProjectState, error) {
+	return manager.AssociateProjectsWithTodo(todoID, []string{projectID})
+}
+
+func (manager *ProjectManager) AssociateProjectsWithTodo(todoID string, projectIDs []string) (ProjectState, error) {
+	projectIDs = normalizeProjectIDs(projectIDs)
+
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	state, err := manager.loadLocked()
+	if err != nil {
+		return ProjectState{}, err
+	}
+	if _, ok := activeTodoByID(state.Todos, todoID); !ok {
+		return ProjectState{}, errors.New("todo not found")
+	}
+	if len(projectIDs) == 0 {
+		return state, nil
+	}
+	if !containsProjects(state.Projects, projectIDs) {
+		return ProjectState{}, errors.New("project not found")
+	}
+	selectedAt := manager.now().UTC().Format(time.RFC3339)
+	activeTodoProjectID := ""
+	activeProjectID := ""
+	for _, projectID := range projectIDs {
+		found := false
+		for index := range state.TodoProjects {
+			if state.TodoProjects[index].TodoID == todoID && state.TodoProjects[index].ProjectID == projectID {
+				state.TodoProjects[index].LastSelectedAt = selectedAt
+				if activeTodoProjectID == "" {
+					activeTodoProjectID = state.TodoProjects[index].ID
+					activeProjectID = projectID
+				}
+				found = true
+				break
+			}
+		}
+		if found {
+			continue
+		}
+		todoProject := TodoProject{
+			ID:             manager.newID(),
+			TodoID:         todoID,
+			ProjectID:      projectID,
+			CreatedAt:      selectedAt,
+			LastSelectedAt: selectedAt,
+		}
+		state.TodoProjects = append(state.TodoProjects, todoProject)
+		if activeTodoProjectID == "" {
+			activeTodoProjectID = todoProject.ID
+			activeProjectID = projectID
+		}
+	}
+	state.ActiveTodoID = todoID
+	state.ActiveTodoProjectID = activeTodoProjectID
+	state.ActiveProjectID = activeProjectID
+	if err := manager.saveLocked(state); err != nil {
+		return ProjectState{}, err
+	}
+	return state, nil
+}
+
+func (manager *ProjectManager) SelectTodoProject(todoProjectID string) (ProjectState, TodoProject, Project, error) {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	state, err := manager.loadLocked()
+	if err != nil {
+		return ProjectState{}, TodoProject{}, Project{}, err
+	}
+	for index := range state.TodoProjects {
+		if state.TodoProjects[index].ID != todoProjectID {
+			continue
+		}
+		if _, ok := activeTodoByID(state.Todos, state.TodoProjects[index].TodoID); !ok {
+			return ProjectState{}, TodoProject{}, Project{}, errors.New("todo not found")
+		}
+		project, ok := projectByIDFromProjects(state.Projects, state.TodoProjects[index].ProjectID)
+		if !ok {
+			return ProjectState{}, TodoProject{}, Project{}, errors.New("project not found")
+		}
+		state.TodoProjects[index].LastSelectedAt = manager.now().UTC().Format(time.RFC3339)
+		state.ActiveTodoID = state.TodoProjects[index].TodoID
+		state.ActiveTodoProjectID = todoProjectID
+		state.ActiveProjectID = project.ID
+		if err := manager.saveLocked(state); err != nil {
+			return ProjectState{}, TodoProject{}, Project{}, err
+		}
+		return state, state.TodoProjects[index], project, nil
+	}
+	return ProjectState{}, TodoProject{}, Project{}, errors.New("todo project not found")
+}
+
+func (manager *ProjectManager) CompleteTodo(todoID string) (ProjectState, error) {
+	return manager.archiveTodo(todoID, TodoArchiveReasonCompleted)
+}
+
+func (manager *ProjectManager) DeleteTodo(todoID string) (ProjectState, error) {
+	return manager.archiveTodo(todoID, TodoArchiveReasonDeleted)
 }
 
 func (manager *ProjectManager) DeleteProject(projectID string) (ProjectState, error) {
@@ -159,8 +433,14 @@ func (manager *ProjectManager) DeleteProject(projectID string) (ProjectState, er
 	}
 
 	state.Projects = nextProjects
+	state.TodoProjects = removeTodoProjectsForProject(state.TodoProjects, projectID)
 	if state.ActiveProjectID == projectID {
 		state.ActiveProjectID = mostRecentlySelectedProjectID(state.Projects)
+	}
+	if state.ActiveTodoProjectID != "" && !containsTodoProject(state.TodoProjects, state.ActiveTodoProjectID) {
+		state.ActiveTodoProjectID = ""
+		state.ActiveTodoID = ""
+		state.ActiveTerminalID = ""
 	}
 	if err := manager.saveLocked(state); err != nil {
 		return ProjectState{}, err
@@ -184,9 +464,71 @@ func (manager *ProjectManager) GetProject(projectID string) (Project, error) {
 	return Project{}, errors.New("project not found")
 }
 
+func (manager *ProjectManager) TodoProject(todoProjectID string) (TodoProject, Project, error) {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	state, err := manager.loadLocked()
+	if err != nil {
+		return TodoProject{}, Project{}, err
+	}
+	for _, todoProject := range state.TodoProjects {
+		if todoProject.ID == todoProjectID {
+			project, ok := projectByIDFromProjects(state.Projects, todoProject.ProjectID)
+			if !ok {
+				return TodoProject{}, Project{}, errors.New("project not found")
+			}
+			return todoProject, project, nil
+		}
+	}
+	return TodoProject{}, Project{}, errors.New("todo project not found")
+}
+
+func (manager *ProjectManager) archiveTodo(todoID string, reason string) (ProjectState, error) {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	state, err := manager.loadLocked()
+	if err != nil {
+		return ProjectState{}, err
+	}
+	now := manager.now().UTC().Format(time.RFC3339)
+	todoIndex := -1
+	for index := range state.Todos {
+		if state.Todos[index].ID == todoID && state.Todos[index].Status == TodoStatusActive {
+			todoIndex = index
+			break
+		}
+	}
+	if todoIndex < 0 {
+		return ProjectState{}, errors.New("todo not found")
+	}
+	snapshots := todoProjectSnapshots(state.Projects, state.TodoProjects, todoID)
+	state.Todos[todoIndex].Status = TodoStatusArchived
+	state.Todos[todoIndex].ArchivedReason = reason
+	state.Todos[todoIndex].ArchivedAt = now
+	state.Todos[todoIndex].ProjectSnapshots = snapshots
+	if reason == TodoArchiveReasonCompleted {
+		state.Todos[todoIndex].CompletedAt = now
+	}
+	state.TodoProjects = removeTodoProjectsForTodo(state.TodoProjects, todoID)
+	if state.ActiveTodoID == todoID {
+		state.ActiveTodoID = ""
+		state.ActiveTodoProjectID = ""
+		state.ActiveTerminalID = ""
+	}
+	if err := manager.saveLocked(state); err != nil {
+		return ProjectState{}, err
+	}
+	return state, nil
+}
+
 func (manager *ProjectManager) loadLocked() (ProjectState, error) {
 	state := ProjectState{
-		Version: projectConfigVersion,
+		Version:      projectConfigVersion,
+		Projects:     []Project{},
+		Todos:        []Todo{},
+		TodoProjects: []TodoProject{},
 	}
 
 	data, err := os.ReadFile(manager.configPath)
@@ -204,11 +546,30 @@ func (manager *ProjectManager) loadLocked() (ProjectState, error) {
 	if state.Version == 0 {
 		state.Version = projectConfigVersion
 	}
+	if state.Projects == nil {
+		state.Projects = []Project{}
+	}
+	if state.Todos == nil {
+		state.Todos = []Todo{}
+	}
+	for index := range state.Todos {
+		state.Todos[index].Priority = normalizeTodoPriority(state.Todos[index].Priority)
+	}
+	if state.TodoProjects == nil {
+		state.TodoProjects = []TodoProject{}
+	}
 	for index := range state.Projects {
 		state.Projects[index].Available = directoryAvailable(state.Projects[index].Path)
 	}
 	if state.ActiveProjectID != "" && !containsProject(state.Projects, state.ActiveProjectID) {
 		state.ActiveProjectID = ""
+	}
+	if state.ActiveTodoID != "" && !containsActiveTodo(state.Todos, state.ActiveTodoID) {
+		state.ActiveTodoID = ""
+		state.ActiveTodoProjectID = ""
+	}
+	if state.ActiveTodoProjectID != "" && !containsTodoProject(state.TodoProjects, state.ActiveTodoProjectID) {
+		state.ActiveTodoProjectID = ""
 	}
 
 	return state, nil
@@ -216,11 +577,13 @@ func (manager *ProjectManager) loadLocked() (ProjectState, error) {
 
 func (manager *ProjectManager) saveLocked(state ProjectState) error {
 	state.Version = projectConfigVersion
+	persistedState := state
+	persistedState.ImportSummary = nil
 
 	if err := os.MkdirAll(filepath.Dir(manager.configPath), 0o755); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(state, "", "  ")
+	data, err := json.MarshalIndent(persistedState, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -239,6 +602,17 @@ func normalizeProjectPath(path string) (string, error) {
 	return absolutePath, nil
 }
 
+func normalizeTodoPriority(priority string) string {
+	switch strings.TrimSpace(priority) {
+	case TodoPriorityHigh:
+		return TodoPriorityHigh
+	case TodoPriorityLow:
+		return TodoPriorityLow
+	default:
+		return TodoPriorityMedium
+	}
+}
+
 func directoryAvailable(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
@@ -253,6 +627,95 @@ func containsProject(projects []Project, projectID string) bool {
 	return false
 }
 
+func containsProjects(projects []Project, projectIDs []string) bool {
+	for _, projectID := range projectIDs {
+		if !containsProject(projects, projectID) {
+			return false
+		}
+	}
+	return true
+}
+
+func containsProjectAbsolutePath(projects []Project, path string) bool {
+	for _, project := range projects {
+		if project.Path == path {
+			return true
+		}
+	}
+	return false
+}
+
+func containsActiveTodo(todos []Todo, todoID string) bool {
+	_, ok := activeTodoByID(todos, todoID)
+	return ok
+}
+
+func activeTodoByID(todos []Todo, todoID string) (Todo, bool) {
+	for _, todo := range todos {
+		if todo.ID == todoID && todo.Status == TodoStatusActive {
+			return todo, true
+		}
+	}
+	return Todo{}, false
+}
+
+func containsTodoProject(todoProjects []TodoProject, todoProjectID string) bool {
+	for _, todoProject := range todoProjects {
+		if todoProject.ID == todoProjectID {
+			return true
+		}
+	}
+	return false
+}
+
+func projectByIDFromProjects(projects []Project, projectID string) (Project, bool) {
+	for _, project := range projects {
+		if project.ID == projectID {
+			return project, true
+		}
+	}
+	return Project{}, false
+}
+
+func removeTodoProjectsForTodo(todoProjects []TodoProject, todoID string) []TodoProject {
+	next := make([]TodoProject, 0, len(todoProjects))
+	for _, todoProject := range todoProjects {
+		if todoProject.TodoID != todoID {
+			next = append(next, todoProject)
+		}
+	}
+	return next
+}
+
+func removeTodoProjectsForProject(todoProjects []TodoProject, projectID string) []TodoProject {
+	next := make([]TodoProject, 0, len(todoProjects))
+	for _, todoProject := range todoProjects {
+		if todoProject.ProjectID != projectID {
+			next = append(next, todoProject)
+		}
+	}
+	return next
+}
+
+func todoProjectSnapshots(projects []Project, todoProjects []TodoProject, todoID string) []TodoProjectSnapshot {
+	snapshots := []TodoProjectSnapshot{}
+	for _, todoProject := range todoProjects {
+		if todoProject.TodoID != todoID {
+			continue
+		}
+		project, ok := projectByIDFromProjects(projects, todoProject.ProjectID)
+		if !ok {
+			continue
+		}
+		snapshots = append(snapshots, TodoProjectSnapshot{
+			ProjectID: project.ID,
+			Name:      project.Name,
+			Path:      project.Path,
+		})
+	}
+	return snapshots
+}
+
 func mostRecentlySelectedProjectID(projects []Project) string {
 	selectedProjectID := ""
 	selectedAt := ""
@@ -263,4 +726,18 @@ func mostRecentlySelectedProjectID(projects []Project) string {
 		}
 	}
 	return selectedProjectID
+}
+
+func normalizeProjectIDs(projectIDs []string) []string {
+	normalized := []string{}
+	seen := map[string]bool{}
+	for _, projectID := range projectIDs {
+		projectID = strings.TrimSpace(projectID)
+		if projectID == "" || seen[projectID] {
+			continue
+		}
+		seen[projectID] = true
+		normalized = append(normalized, projectID)
+	}
+	return normalized
 }

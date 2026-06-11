@@ -1,9 +1,30 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ChevronDown, ChevronRight, CircleAlert, FolderPlus, LoaderCircle, Plus, TerminalSquare, Trash2 } from '@lucide/vue'
+import {
+  Archive,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  CircleAlert,
+  FolderInput,
+  FolderPlus,
+  ListTodo,
+  LoaderCircle,
+  Plus,
+  TerminalSquare,
+  Trash2
+} from '@lucide/vue'
 
 const props = defineProps({
   projects: {
+    type: Array,
+    default: () => []
+  },
+  todos: {
+    type: Array,
+    default: () => []
+  },
+  todoProjects: {
     type: Array,
     default: () => []
   },
@@ -15,6 +36,14 @@ const props = defineProps({
     type: String,
     default: ''
   },
+  activeTodoId: {
+    type: String,
+    default: ''
+  },
+  activeTodoProjectId: {
+    type: String,
+    default: ''
+  },
   activeTerminalId: {
     type: String,
     default: ''
@@ -22,20 +51,32 @@ const props = defineProps({
   launchProfiles: {
     type: Array,
     default: () => []
+  },
+  importSummary: {
+    type: Object,
+    default: null
   }
 })
 
 const emit = defineEmits([
   'create-project',
+  'import-projects',
   'select-project',
+  'delete-project',
+  'create-todo',
+  'add-project-to-todo',
+  'select-todo-project',
+  'complete-todo',
+  'delete-todo',
   'create-terminal',
   'select-terminal',
-  'delete-project',
   'delete-terminal'
 ])
 
-const collapsedProjectIds = ref(new Set())
-const openLaunchProjectId = ref('')
+const activeTab = ref('todos')
+const todoView = ref('active')
+const collapsedTodoIds = ref(new Set())
+const openLaunchTodoProjectId = ref('')
 const launchMenuPlacement = ref('down')
 const launchMenuMaxHeight = ref('')
 
@@ -49,85 +90,127 @@ const terminalLaunchOptions = computed(() => [
   ...props.launchProfiles
 ])
 
-const terminalsByProject = computed(() => {
+const activeTodos = computed(() => props.todos.filter((todo) => todo.status === 'active'))
+const archivedTodos = computed(() => props.todos.filter((todo) => todo.status !== 'active'))
+
+const projectsById = computed(() => {
+  const projects = new Map()
+  for (const project of props.projects) {
+    projects.set(project.id, project)
+  }
+  return projects
+})
+
+const todoProjectsByTodo = computed(() => {
   const groups = new Map()
-  for (const terminal of props.terminals) {
-    if (!groups.has(terminal.projectId)) {
-      groups.set(terminal.projectId, [])
+  for (const todoProject of props.todoProjects) {
+    if (!groups.has(todoProject.todoId)) {
+      groups.set(todoProject.todoId, [])
     }
-    groups.get(terminal.projectId).push(terminal)
+    groups.get(todoProject.todoId).push(todoProject)
   }
   return groups
 })
 
-function projectTerminals(projectId) {
-  return terminalsByProject.value.get(projectId) || []
-}
-
-function hasProjectTerminals(projectId) {
-  return projectTerminals(projectId).length > 0
-}
-
-function projectHasActiveTerminal(projectId) {
-  return projectTerminals(projectId).some((terminal) => terminal.id === props.activeTerminalId)
-}
-
-function isProjectCollapsed(projectId) {
-  return collapsedProjectIds.value.has(projectId)
-}
-
-function isProjectExpanded(projectId) {
-  return hasProjectTerminals(projectId) && !isProjectCollapsed(projectId)
-}
-
-function terminalListId(projectId) {
-  return `terminal-list-${projectId}`
-}
-
-function toggleProjectBranch(projectId) {
-  const nextCollapsedProjectIds = new Set(collapsedProjectIds.value)
-  if (nextCollapsedProjectIds.has(projectId)) {
-    nextCollapsedProjectIds.delete(projectId)
-  } else {
-    nextCollapsedProjectIds.add(projectId)
+const terminalsByTodoProject = computed(() => {
+  const groups = new Map()
+  for (const terminal of props.terminals) {
+    const todoProjectId = terminal.todoProjectId || ''
+    if (!todoProjectId) {
+      continue
+    }
+    if (!groups.has(todoProjectId)) {
+      groups.set(todoProjectId, [])
+    }
+    groups.get(todoProjectId).push(terminal)
   }
-  collapsedProjectIds.value = nextCollapsedProjectIds
+  return groups
+})
+
+function todoProjectsForTodo(todoId) {
+  return todoProjectsByTodo.value.get(todoId) || []
 }
 
-function expandProject(projectId) {
-  if (!projectId || !collapsedProjectIds.value.has(projectId)) {
+function projectForTodoProject(todoProject) {
+  return projectsById.value.get(todoProject.projectId) || null
+}
+
+function todoProjectTerminals(todoProjectId) {
+  return terminalsByTodoProject.value.get(todoProjectId) || []
+}
+
+function hasTodoProjectTerminals(todoProjectId) {
+  return todoProjectTerminals(todoProjectId).length > 0
+}
+
+function todoHasActiveTerminal(todo) {
+  return props.terminals.some((terminal) => terminal.todoId === todo.id && terminal.id === props.activeTerminalId)
+}
+
+function todoProjectHasActiveTerminal(todoProject) {
+  return todoProjectTerminals(todoProject.id).some((terminal) => terminal.id === props.activeTerminalId)
+}
+
+function isTodoCollapsed(todoId) {
+  return collapsedTodoIds.value.has(todoId)
+}
+
+function isTodoExpanded(todoId) {
+  return !isTodoCollapsed(todoId)
+}
+
+function todoProjectListId(todoId) {
+  return `todo-project-list-${todoId}`
+}
+
+function terminalListId(todoProjectId) {
+  return `terminal-list-${todoProjectId}`
+}
+
+function toggleTodoBranch(todoId) {
+  const nextCollapsedTodoIds = new Set(collapsedTodoIds.value)
+  if (nextCollapsedTodoIds.has(todoId)) {
+    nextCollapsedTodoIds.delete(todoId)
+  } else {
+    nextCollapsedTodoIds.add(todoId)
+  }
+  collapsedTodoIds.value = nextCollapsedTodoIds
+}
+
+function expandTodo(todoId) {
+  if (!todoId || !collapsedTodoIds.value.has(todoId)) {
     return
   }
 
-  const nextCollapsedProjectIds = new Set(collapsedProjectIds.value)
-  nextCollapsedProjectIds.delete(projectId)
-  collapsedProjectIds.value = nextCollapsedProjectIds
+  const nextCollapsedTodoIds = new Set(collapsedTodoIds.value)
+  nextCollapsedTodoIds.delete(todoId)
+  collapsedTodoIds.value = nextCollapsedTodoIds
 }
 
-function selectProject(projectId) {
-  expandProject(projectId)
-  emit('select-project', projectId)
+function selectTodoProject(todoProject) {
+  expandTodo(todoProject.todoId)
+  emit('select-todo-project', todoProject.id)
 }
 
-function toggleTerminalLaunchMenu(projectId, event) {
-  expandProject(projectId)
-  if (openLaunchProjectId.value === projectId) {
+function toggleTerminalLaunchMenu(todoProject, event) {
+  expandTodo(todoProject.todoId)
+  if (openLaunchTodoProjectId.value === todoProject.id) {
     closeTerminalLaunchMenu()
     return
   }
 
   updateTerminalLaunchMenuPlacement(event?.currentTarget)
-  openLaunchProjectId.value = projectId
+  openLaunchTodoProjectId.value = todoProject.id
 }
 
 function closeTerminalLaunchMenu() {
-  openLaunchProjectId.value = ''
+  openLaunchTodoProjectId.value = ''
   resetTerminalLaunchMenuPlacement()
 }
 
-function selectTerminalLaunchOption(projectId, option) {
-  expandProject(projectId)
-  emit('create-terminal', projectId, option.command ? option : null)
+function selectTerminalLaunchOption(todoProject, option) {
+  expandTodo(todoProject.todoId)
+  emit('create-terminal', todoProject.id, option.command ? option : null)
   closeTerminalLaunchMenu()
 }
 
@@ -195,6 +278,29 @@ function terminalRowLabel(terminal) {
   return activityLabel === 'Idle' ? displayName : `${displayName} - ${activityLabel}`
 }
 
+function todoPriority(todo) {
+  return ['high', 'medium', 'low'].includes(todo?.priority) ? todo.priority : 'medium'
+}
+
+function todoPriorityLabel(todo) {
+  const priority = todoPriority(todo)
+  if (priority === 'high') {
+    return '高'
+  }
+  if (priority === 'low') {
+    return '低'
+  }
+  return '中'
+}
+
+function todoPriorityClass(todo) {
+  return `todo-row-priority-${todoPriority(todo)}`
+}
+
+function archivedAtLabel(todo) {
+  return todo.archivedAt || 'No archive time'
+}
+
 onMounted(() => {
   window.addEventListener('click', closeTerminalLaunchMenu)
 })
@@ -204,9 +310,17 @@ onBeforeUnmount(() => {
 })
 
 watch(
-  () => props.activeProjectId,
-  (projectId) => {
-    expandProject(projectId)
+  [() => props.activeTodoId, () => props.activeTodoProjectId],
+  ([todoId, todoProjectId]) => {
+    if (todoId) {
+      expandTodo(todoId)
+      return
+    }
+
+    const todoProject = props.todoProjects.find((candidate) => candidate.id === todoProjectId)
+    if (todoProject) {
+      expandTodo(todoProject.todoId)
+    }
   },
   { immediate: true }
 )
@@ -219,8 +333,14 @@ watch(
     }
 
     const terminal = props.terminals.find((candidate) => candidate.id === terminalId)
-    if (terminal) {
-      expandProject(terminal.projectId)
+    if (terminal?.todoId) {
+      expandTodo(terminal.todoId)
+      return
+    }
+
+    const todoProject = props.todoProjects.find((candidate) => candidate.id === terminal?.todoProjectId)
+    if (todoProject) {
+      expandTodo(todoProject.todoId)
     }
   },
   { immediate: true }
@@ -230,98 +350,380 @@ watch(
 <template>
   <aside class="project-sidebar">
     <div class="sidebar-header">
-      <div class="sidebar-title">Projects</div>
+      <div class="sidebar-title">Workspace</div>
+      <div class="sidebar-actions">
+        <button
+          v-if="activeTab === 'todos'"
+          type="button"
+          class="icon-button"
+          data-testid="new-todo"
+          title="New TODO"
+          @click="emit('create-todo')"
+        >
+          <Plus :size="18" />
+        </button>
+        <button
+          v-else
+          type="button"
+          class="icon-button"
+          data-testid="new-project"
+          title="New project"
+          @click="emit('create-project')"
+        >
+          <FolderPlus :size="18" />
+        </button>
+      </div>
+    </div>
+
+    <div class="sidebar-tabs tab-strip" data-testid="workspace-tabs" role="tablist" aria-label="Workspace sections">
       <button
         type="button"
-        class="icon-button"
-        data-testid="new-project"
-        title="New project"
-        @click="emit('create-project')"
+        class="sidebar-tab"
+        :class="{ active: activeTab === 'todos' }"
+        data-testid="sidebar-tab-todos"
+        role="tab"
+        :aria-selected="activeTab === 'todos'"
+        @click="activeTab = 'todos'"
       >
-        <FolderPlus :size="18" />
+        <ListTodo :size="15" />
+        <span>TODO</span>
+      </button>
+      <button
+        type="button"
+        class="sidebar-tab"
+        :class="{ active: activeTab === 'projects' }"
+        data-testid="sidebar-tab-projects"
+        role="tab"
+        :aria-selected="activeTab === 'projects'"
+        @click="activeTab = 'projects'"
+      >
+        <TerminalSquare :size="15" />
+        <span>项目</span>
       </button>
     </div>
 
-    <div class="project-list">
+    <div v-if="activeTab === 'todos'" class="project-list" data-testid="todo-workspace">
+      <div class="todo-view-tabs" role="tablist" aria-label="TODO views">
+        <button
+          type="button"
+          class="todo-view-tab"
+          :class="{ active: todoView === 'active' }"
+          data-testid="todo-view-active"
+          @click="todoView = 'active'"
+        >
+          Active
+        </button>
+        <button
+          type="button"
+          class="todo-view-tab"
+          :class="{ active: todoView === 'archived' }"
+          data-testid="todo-view-archived"
+          @click="todoView = 'archived'"
+        >
+          Archived
+        </button>
+      </div>
+
+      <div v-if="todoView === 'active'" class="todo-list" data-testid="active-todos">
+        <div v-if="activeTodos.length === 0" class="sidebar-empty">No active TODOs</div>
+
+        <div
+          v-for="todo in activeTodos"
+          :key="todo.id"
+          class="todo-node"
+          :class="{
+            active: todo.id === activeTodoId,
+            'has-active-terminal': todoHasActiveTerminal(todo),
+            'is-collapsed': isTodoCollapsed(todo.id),
+            'is-expanded': isTodoExpanded(todo.id)
+          }"
+        >
+          <div class="todo-header-row">
+            <button
+              type="button"
+              class="branch-toggle"
+              :aria-controls="todoProjectListId(todo.id)"
+              :aria-expanded="!isTodoCollapsed(todo.id)"
+              :aria-label="`${isTodoCollapsed(todo.id) ? 'Expand' : 'Collapse'} ${todo.title}`"
+              :data-testid="`toggle-todo-${todo.id}`"
+              :title="isTodoCollapsed(todo.id) ? 'Expand TODO' : 'Collapse TODO'"
+              @click.stop="toggleTodoBranch(todo.id)"
+            >
+              <ChevronRight v-if="isTodoCollapsed(todo.id)" :size="16" />
+              <ChevronDown v-else :size="16" />
+            </button>
+
+            <div
+              class="todo-row"
+              :class="[{ active: todo.id === activeTodoId }, todoPriorityClass(todo)]"
+              :data-testid="`todo-${todo.id}`"
+            >
+              <ListTodo class="project-icon" :size="17" />
+              <span class="project-copy">
+                <span class="todo-title-line">
+                  <span class="project-name">{{ todo.title }}</span>
+                  <span
+                    class="todo-priority-badge"
+                    :class="`todo-priority-badge-${todoPriority(todo)}`"
+                    :data-testid="`todo-priority-${todo.id}`"
+                  >
+                    {{ todoPriorityLabel(todo) }}
+                  </span>
+                </span>
+                <span
+                  v-if="todo.description"
+                  class="todo-description"
+                  :data-testid="`todo-description-${todo.id}`"
+                >
+                  {{ todo.description }}
+                </span>
+                <span class="project-path">{{ todoProjectsForTodo(todo.id).length }} projects</span>
+              </span>
+            </div>
+
+            <button
+              type="button"
+              class="todo-action-button"
+              :data-testid="`add-project-to-todo-${todo.id}`"
+              title="Add project"
+              @click.stop="emit('add-project-to-todo', todo.id)"
+            >
+              <FolderPlus :size="14" />
+            </button>
+            <button
+              type="button"
+              class="todo-action-button"
+              :data-testid="`complete-todo-${todo.id}`"
+              title="Complete TODO"
+              @click.stop="emit('complete-todo', todo.id)"
+            >
+              <Check :size="14" />
+            </button>
+            <button
+              type="button"
+              class="delete-project-button"
+              :data-testid="`delete-todo-${todo.id}`"
+              title="Delete TODO"
+              @click.stop="emit('delete-todo', todo.id)"
+            >
+              <Trash2 :size="14" />
+            </button>
+          </div>
+
+          <div
+            v-if="!isTodoCollapsed(todo.id)"
+            :id="todoProjectListId(todo.id)"
+            class="todo-project-list"
+            role="group"
+            :aria-label="`Projects for ${todo.title}`"
+          >
+            <div v-if="todoProjectsForTodo(todo.id).length === 0" class="sidebar-empty nested">
+              No projects linked
+            </div>
+
+            <div
+              v-for="todoProject in todoProjectsForTodo(todo.id)"
+              :key="todoProject.id"
+              class="project-node todo-project-node"
+              :class="{
+                'has-terminals': hasTodoProjectTerminals(todoProject.id),
+                'has-active-terminal': todoProjectHasActiveTerminal(todoProject),
+                'is-active-project': todoProject.id === activeTodoProjectId,
+                'is-unavailable': !projectForTodoProject(todoProject)?.available
+              }"
+            >
+              <div class="project-header-row todo-project-header-row">
+                <button
+                  type="button"
+                  class="project-row"
+                  :class="{
+                    active: todoProject.id === activeTodoProjectId,
+                    unavailable: !projectForTodoProject(todoProject)?.available
+                  }"
+                  :data-testid="`todo-project-${todoProject.id}`"
+                  @click="selectTodoProject(todoProject)"
+                >
+                  <TerminalSquare class="project-icon" :size="17" />
+                  <span class="project-copy">
+                    <span
+                      class="project-name"
+                      :data-testid="`todo-project-name-${todoProject.id}`"
+                    >
+                      {{ projectForTodoProject(todoProject)?.name || 'Missing project' }}
+                    </span>
+                    <span class="project-path">{{ projectForTodoProject(todoProject)?.path || todoProject.projectId }}</span>
+                    <span v-if="!projectForTodoProject(todoProject)?.available" class="project-status">Unavailable</span>
+                  </span>
+                </button>
+
+                <div v-if="projectForTodoProject(todoProject)?.available" class="terminal-launch-control">
+                  <button
+                    type="button"
+                    class="add-terminal-button"
+                    :data-testid="`add-terminal-${todoProject.id}`"
+                    title="New terminal"
+                    :aria-expanded="openLaunchTodoProjectId === todoProject.id"
+                    :aria-controls="`terminal-launch-menu-${todoProject.id}`"
+                    @click.stop="toggleTerminalLaunchMenu(todoProject, $event)"
+                  >
+                    <Plus :size="14" />
+                  </button>
+                  <div
+                    v-if="openLaunchTodoProjectId === todoProject.id"
+                    :id="`terminal-launch-menu-${todoProject.id}`"
+                    class="terminal-launch-menu"
+                    :class="terminalLaunchMenuClass()"
+                    :style="terminalLaunchMenuStyle()"
+                    :data-testid="`terminal-launch-menu-${todoProject.id}`"
+                    @click.stop
+                  >
+                    <button
+                      v-for="(option, index) in terminalLaunchOptions"
+                      :key="`${option.name}-${index}`"
+                      type="button"
+                      class="terminal-launch-option"
+                      :data-testid="`terminal-launch-option-${todoProject.id}-${index}`"
+                      @click="selectTerminalLaunchOption(todoProject, option)"
+                    >
+                      {{ option.name }}
+                    </button>
+                  </div>
+                </div>
+                <span v-else class="add-terminal-placeholder" aria-hidden="true"></span>
+              </div>
+
+              <div
+                v-if="hasTodoProjectTerminals(todoProject.id)"
+                :id="terminalListId(todoProject.id)"
+                class="terminal-list"
+                role="group"
+                :aria-label="`Terminals for ${projectForTodoProject(todoProject)?.name || 'project'}`"
+                :data-testid="`terminal-list-${todoProject.id}`"
+              >
+                <div
+                  v-for="terminal in todoProjectTerminals(todoProject.id)"
+                  :key="terminal.id"
+                  class="terminal-entry"
+                >
+                  <button
+                    type="button"
+                    class="terminal-row"
+                    :class="{
+                      active: terminal.id === activeTerminalId,
+                      exited: terminal.state === 'exited',
+                      'activity-busy': terminal.activityState === 'busy',
+                      'activity-needs-input': terminal.activityState === 'needs-input'
+                    }"
+                    :aria-label="terminalRowLabel(terminal)"
+                    :title="terminalRowLabel(terminal)"
+                    :data-activity-state="terminalActivityState(terminal)"
+                    :data-testid="`terminal-${terminal.id}`"
+                    @click="emit('select-terminal', terminal.id)"
+                  >
+                    <span
+                      class="terminal-activity"
+                      :class="terminalActivityState(terminal)"
+                      :data-testid="`terminal-activity-${terminal.id}`"
+                      :aria-label="terminalActivityLabel(terminal)"
+                      role="img"
+                    >
+                      <LoaderCircle v-if="terminalActivityState(terminal) === 'busy'" :size="13" aria-hidden="true" />
+                      <CircleAlert v-else-if="terminalActivityState(terminal) === 'needs-input'" :size="13" aria-hidden="true" />
+                    </span>
+                    <TerminalSquare class="terminal-icon" :size="15" />
+                    <span class="terminal-name">{{ terminalDisplayName(terminal) }}</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="delete-terminal-button"
+                    :data-testid="`delete-terminal-${terminal.id}`"
+                    title="Delete terminal"
+                    @click.stop="emit('delete-terminal', terminal.id)"
+                  >
+                    <Trash2 :size="13" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div v-else class="archived-todos" data-testid="archived-todos">
+        <div v-if="archivedTodos.length === 0" class="sidebar-empty">No archived TODOs</div>
+
+        <div
+          v-for="todo in archivedTodos"
+          :key="todo.id"
+          class="archived-todo"
+          :data-testid="`archived-todo-${todo.id}`"
+        >
+          <div class="archived-todo-title">
+            <Archive :size="15" />
+            <span>{{ todo.title }}</span>
+          </div>
+          <div class="archived-todo-meta">
+            <span>{{ todo.archivedReason || todo.status }}</span>
+            <span>{{ archivedAtLabel(todo) }}</span>
+          </div>
+          <div v-if="todo.projectSnapshots?.length" class="archived-projects">
+            <div
+              v-for="snapshot in todo.projectSnapshots"
+              :key="`${todo.id}-${snapshot.projectId}`"
+              class="archived-project"
+            >
+              <span class="project-name">{{ snapshot.name }}</span>
+              <span class="project-path">{{ snapshot.path }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div v-else class="project-list" data-testid="project-library">
+      <div class="project-library-actions">
+        <button
+          type="button"
+          class="library-action-button"
+          data-testid="import-parent-directory"
+          @click="emit('import-projects')"
+        >
+          <FolderInput :size="15" />
+          <span>Import parent</span>
+        </button>
+      </div>
+
+      <div v-if="importSummary" class="import-summary" data-testid="import-summary">
+        <span>{{ importSummary.addedCount || 0 }} imported</span>
+        <span>{{ importSummary.skippedCount || 0 }} skipped</span>
+      </div>
+
+      <div v-if="projects.length === 0" class="sidebar-empty">No projects imported</div>
+
       <div
         v-for="project in projects"
         :key="project.id"
-        class="project-node"
+        class="project-node library-project-node"
         :class="{
-          'has-terminals': hasProjectTerminals(project.id),
-          'has-active-terminal': projectHasActiveTerminal(project.id),
-          'is-expanded': isProjectExpanded(project.id),
-          'is-collapsed': hasProjectTerminals(project.id) && isProjectCollapsed(project.id),
           'is-active-project': project.id === activeProjectId,
           'is-unavailable': !project.available
         }"
       >
-        <div class="project-header-row">
-          <button
-            v-if="hasProjectTerminals(project.id)"
-            type="button"
-            class="branch-toggle"
-            :aria-controls="terminalListId(project.id)"
-            :aria-expanded="!isProjectCollapsed(project.id)"
-            :aria-label="`${isProjectCollapsed(project.id) ? 'Expand' : 'Collapse'} terminals for ${project.name}`"
-            :data-testid="`toggle-project-${project.id}`"
-            :title="isProjectCollapsed(project.id) ? 'Expand terminals' : 'Collapse terminals'"
-            @click.stop="toggleProjectBranch(project.id)"
-          >
-            <ChevronRight v-if="isProjectCollapsed(project.id)" :size="16" />
-            <ChevronDown v-else :size="16" />
-          </button>
-          <span v-else class="branch-toggle-placeholder" aria-hidden="true"></span>
-
+        <div class="project-header-row library-project-header-row">
           <button
             type="button"
             class="project-row"
             :class="{ active: project.id === activeProjectId, unavailable: !project.available }"
             :data-testid="`project-${project.id}`"
-            @click="selectProject(project.id)"
+            @click="emit('select-project', project.id)"
           >
             <TerminalSquare class="project-icon" :size="17" />
             <span class="project-copy">
-              <span class="project-name">{{ project.name }}</span>
+              <span class="project-name" :data-testid="`project-name-${project.id}`">{{ project.name }}</span>
               <span class="project-path">{{ project.path }}</span>
               <span v-if="!project.available" class="project-status">Unavailable</span>
             </span>
           </button>
-
-          <div v-if="project.available" class="terminal-launch-control">
-            <button
-              type="button"
-              class="add-terminal-button"
-              :data-testid="`add-terminal-${project.id}`"
-              title="New terminal"
-              :aria-expanded="openLaunchProjectId === project.id"
-              :aria-controls="`terminal-launch-menu-${project.id}`"
-              @click.stop="toggleTerminalLaunchMenu(project.id, $event)"
-            >
-              <Plus :size="14" />
-            </button>
-            <div
-              v-if="openLaunchProjectId === project.id"
-              :id="`terminal-launch-menu-${project.id}`"
-              class="terminal-launch-menu"
-              :class="terminalLaunchMenuClass()"
-              :style="terminalLaunchMenuStyle()"
-              :data-testid="`terminal-launch-menu-${project.id}`"
-              @click.stop
-            >
-              <button
-                v-for="(option, index) in terminalLaunchOptions"
-                :key="`${option.name}-${index}`"
-                type="button"
-                class="terminal-launch-option"
-                :data-testid="`terminal-launch-option-${project.id}-${index}`"
-                @click="selectTerminalLaunchOption(project.id, option)"
-              >
-                {{ option.name }}
-              </button>
-            </div>
-          </div>
-          <span v-else class="add-terminal-placeholder" aria-hidden="true"></span>
 
           <button
             type="button"
@@ -332,55 +734,6 @@ watch(
           >
             <Trash2 :size="14" />
           </button>
-        </div>
-
-        <div
-          v-if="hasProjectTerminals(project.id) && !isProjectCollapsed(project.id)"
-          :id="terminalListId(project.id)"
-          class="terminal-list"
-          role="group"
-          :aria-label="`Terminals for ${project.name}`"
-          :data-testid="`terminal-list-${project.id}`"
-        >
-          <div v-for="terminal in projectTerminals(project.id)" :key="terminal.id" class="terminal-entry">
-            <button
-              type="button"
-              class="terminal-row"
-              :class="{
-                active: terminal.id === activeTerminalId,
-                exited: terminal.state === 'exited',
-                'activity-busy': terminal.activityState === 'busy',
-                'activity-needs-input': terminal.activityState === 'needs-input'
-              }"
-              :aria-label="terminalRowLabel(terminal)"
-              :title="terminalRowLabel(terminal)"
-              :data-activity-state="terminalActivityState(terminal)"
-              :data-testid="`terminal-${terminal.id}`"
-              @click="emit('select-terminal', terminal.id)"
-            >
-              <span
-                class="terminal-activity"
-                :class="terminalActivityState(terminal)"
-                :data-testid="`terminal-activity-${terminal.id}`"
-                :aria-label="terminalActivityLabel(terminal)"
-                role="img"
-              >
-                <LoaderCircle v-if="terminalActivityState(terminal) === 'busy'" :size="13" aria-hidden="true" />
-                <CircleAlert v-else-if="terminalActivityState(terminal) === 'needs-input'" :size="13" aria-hidden="true" />
-              </span>
-              <TerminalSquare class="terminal-icon" :size="15" />
-              <span class="terminal-name">{{ terminalDisplayName(terminal) }}</span>
-            </button>
-            <button
-              type="button"
-              class="delete-terminal-button"
-              :data-testid="`delete-terminal-${terminal.id}`"
-              title="Delete terminal"
-              @click.stop="emit('delete-terminal', terminal.id)"
-            >
-              <Trash2 :size="13" />
-            </button>
-          </div>
         </div>
       </div>
     </div>

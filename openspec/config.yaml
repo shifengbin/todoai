@@ -5,6 +5,11 @@ context: |
   文档语言：中文
   项目领域：桌面应用开发
 
+rules:
+  tasks:
+    - 要有自动review任务, 以确保代码质量和规范
+    - 客户端要进行自动化测试任务
+
 # Project context (optional)
 # This is shown to AI when creating artifacts.
 # Add your tech stack, conventions, style guides, domain knowledge, etc.

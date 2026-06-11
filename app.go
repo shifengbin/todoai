@@ -84,16 +84,63 @@ func (a *App) AddProjectFromPath(path string) (ProjectState, error) {
 	return a.ListProjects()
 }
 
+func (a *App) ImportProjectsFromParentDirectory(parentPath string) (ProjectState, error) {
+	state, err := a.projects.ImportProjectsFromParentDirectory(parentPath)
+	if err != nil {
+		return ProjectState{}, err
+	}
+	return a.withShellState(state), nil
+}
+
+func (a *App) ImportProjectsFromParentDirectoryDialog() (ProjectState, error) {
+	path, err := wailsruntime.OpenDirectoryDialog(a.ctx, wailsruntime.OpenDialogOptions{
+		Title: "Select Parent Directory",
+	})
+	if err != nil {
+		return ProjectState{}, err
+	}
+	if path == "" {
+		return a.ListProjects()
+	}
+	return a.ImportProjectsFromParentDirectory(path)
+}
+
 func (a *App) SelectProject(projectID string) (ProjectState, error) {
 	state, err := a.projects.SelectProject(projectID)
 	if err != nil {
 		return ProjectState{}, err
 	}
-	project, ok := projectByID(state.Projects, projectID)
-	if ok && project.Available {
-		if _, err := a.shells.EnsureProjectTerminal(project, TerminalSize{Cols: 80, Rows: 24}); err != nil {
-			return ProjectState{}, err
-		}
+	return a.withShellState(state), nil
+}
+
+func (a *App) CreateTodo(request CreateTodoRequest) (ProjectState, error) {
+	state, err := a.projects.CreateTodo(request)
+	if err != nil {
+		return ProjectState{}, err
+	}
+	return a.withShellState(state), nil
+}
+
+func (a *App) AddProjectToTodo(todoID string, projectID string) (ProjectState, error) {
+	state, err := a.projects.AssociateProjectWithTodo(todoID, projectID)
+	if err != nil {
+		return ProjectState{}, err
+	}
+	return a.withShellState(state), nil
+}
+
+func (a *App) AddProjectsToTodo(todoID string, projectIDs []string) (ProjectState, error) {
+	state, err := a.projects.AssociateProjectsWithTodo(todoID, projectIDs)
+	if err != nil {
+		return ProjectState{}, err
+	}
+	return a.withShellState(state), nil
+}
+
+func (a *App) SelectTodoProject(todoProjectID string) (ProjectState, error) {
+	state, _, _, err := a.projects.SelectTodoProject(todoProjectID)
+	if err != nil {
+		return ProjectState{}, err
 	}
 	return a.withShellState(state), nil
 }
@@ -113,6 +160,17 @@ func (a *App) CreateTerminal(projectID string, cols int, rows int) (ProjectState
 	return a.withShellState(state), nil
 }
 
+func (a *App) CreateTodoTerminal(todoProjectID string, cols int, rows int) (ProjectState, error) {
+	state, todoProject, project, err := a.projects.SelectTodoProject(todoProjectID)
+	if err != nil {
+		return ProjectState{}, err
+	}
+	if _, err := a.shells.CreateTodoProjectTerminal(todoProject, project, normalizeTerminalSize(cols, rows)); err != nil {
+		return ProjectState{}, err
+	}
+	return a.withShellState(state), nil
+}
+
 func (a *App) DeleteProject(projectID string) (ProjectState, error) {
 	state, err := a.projects.DeleteProject(projectID)
 	if err != nil {
@@ -126,6 +184,13 @@ func (a *App) SelectTerminal(terminalID string) (ProjectState, error) {
 	terminal, err := a.shells.SelectTerminal(terminalID)
 	if err != nil {
 		return ProjectState{}, err
+	}
+	if terminal.TodoProjectID != "" {
+		state, _, _, err := a.projects.SelectTodoProject(terminal.TodoProjectID)
+		if err != nil {
+			return ProjectState{}, err
+		}
+		return a.withShellState(state), nil
 	}
 	state, err := a.projects.SelectProject(terminal.ProjectID)
 	if err != nil {
@@ -142,6 +207,24 @@ func (a *App) DeleteTerminal(terminalID string) (ProjectState, error) {
 	if err != nil {
 		return ProjectState{}, err
 	}
+	return a.withShellState(state), nil
+}
+
+func (a *App) CompleteTodo(todoID string) (ProjectState, error) {
+	state, err := a.projects.CompleteTodo(todoID)
+	if err != nil {
+		return ProjectState{}, err
+	}
+	a.shells.DeleteTodoTerminals(todoID)
+	return a.withShellState(state), nil
+}
+
+func (a *App) DeleteTodo(todoID string) (ProjectState, error) {
+	state, err := a.projects.DeleteTodo(todoID)
+	if err != nil {
+		return ProjectState{}, err
+	}
+	a.shells.DeleteTodoTerminals(todoID)
 	return a.withShellState(state), nil
 }
 
@@ -247,7 +330,11 @@ func normalizeTerminalSize(cols int, rows int) TerminalSize {
 
 func (a *App) withShellState(state ProjectState) ProjectState {
 	state.Terminals = a.shells.Terminals()
-	state.ActiveTerminalID = a.shells.ActiveTerminalID(state.ActiveProjectID)
+	activeContextID := state.ActiveTodoProjectID
+	if activeContextID == "" {
+		activeContextID = state.ActiveProjectID
+	}
+	state.ActiveTerminalID = a.shells.ActiveTerminalID(activeContextID)
 	return state
 }
 

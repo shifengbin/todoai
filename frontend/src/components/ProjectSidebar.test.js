@@ -1,211 +1,113 @@
 import { mount } from '@vue/test-utils'
+import { readFileSync } from 'node:fs'
 import { nextTick } from 'vue'
 import { describe, expect, it } from 'vitest'
 import ProjectSidebar from './ProjectSidebar.vue'
 
 describe('ProjectSidebar', () => {
-  it('renders a project terminal tree and emits tree actions', async () => {
+  it('renders the TODO tree and emits TODO-scoped terminal actions', async () => {
     const wrapper = mountSidebar({
       props: {
-        projects: [
-          { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
-          { id: 'project-b', name: 'beta', path: '/work/beta', available: false }
-        ],
-        terminals: [
-          { id: 'terminal-a', projectId: 'project-a', shellName: 'zsh', currentCommand: '', state: 'running' },
-          {
-            id: 'terminal-b',
-            projectId: 'project-a',
-            shellName: 'zsh',
-            currentCommand: 'npm run dev',
-            state: 'running'
-          }
-        ],
-        activeProjectId: 'project-a',
-        activeTerminalId: 'terminal-b'
+        launchProfiles: [{ name: 'codex', command: 'codex' }]
       }
     })
 
+    expect(wrapper.find('[data-testid="workspace-tabs"]').classes()).toContain('tab-strip')
+    expect(wrapper.find('[data-testid="sidebar-tab-todos"]').classes()).toContain('active')
+    expect(wrapper.find('[data-testid="sidebar-tab-projects"]').text()).toBe('项目')
+    expect(wrapper.text()).toContain('修复登录问题')
     expect(wrapper.text()).toContain('alpha')
+    expect(wrapper.text()).toContain('codex')
+    expect(wrapper.find('[data-testid="todo-todo-a"]').classes()).toContain('active')
+    expect(wrapper.find('[data-testid="todo-project-todo-project-a"]').classes()).toContain('active')
+    expect(wrapper.find('[data-testid="todo-project-name-todo-project-a"]').text()).toBe('alpha')
+    expect(
+      wrapper
+        .find('[data-testid="todo-project-todo-project-a"]')
+        .element.closest('.todo-project-header-row')
+        .querySelector('.branch-toggle-placeholder')
+    ).toBeNull()
+    expect(wrapper.find('[data-testid="terminal-terminal-a"]').classes()).toContain('active')
+
+    await wrapper.find('[data-testid="new-todo"]').trigger('click')
+    await wrapper.find('[data-testid="add-project-to-todo-todo-a"]').trigger('click')
+    await wrapper.find('[data-testid="todo-project-todo-project-a"]').trigger('click')
+    await wrapper.find('[data-testid="add-terminal-todo-project-a"]').trigger('click')
+    await wrapper.find('[data-testid="terminal-launch-option-todo-project-a-1"]').trigger('click')
+    await wrapper.find('[data-testid="terminal-terminal-a"]').trigger('click')
+    await wrapper.find('[data-testid="complete-todo-todo-a"]').trigger('click')
+    await wrapper.find('[data-testid="delete-todo-todo-a"]').trigger('click')
+
+    expect(wrapper.emitted('create-todo')).toHaveLength(1)
+    expect(wrapper.emitted('add-project-to-todo')[0]).toEqual(['todo-a'])
+    expect(wrapper.emitted('select-todo-project')[0]).toEqual(['todo-project-a'])
+    expect(wrapper.emitted('create-terminal')[0]).toEqual(['todo-project-a', { name: 'codex', command: 'codex' }])
+    expect(wrapper.emitted('select-terminal')[0]).toEqual(['terminal-a'])
+    expect(wrapper.emitted('complete-todo')[0]).toEqual(['todo-a'])
+    expect(wrapper.emitted('delete-todo')[0]).toEqual(['todo-a'])
+  })
+
+  it('shows project library management without terminal actions', async () => {
+    const wrapper = mountSidebar()
+
+    await wrapper.find('[data-testid="sidebar-tab-projects"]').trigger('click')
+
+    expect(wrapper.find('[data-testid="project-library"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="project-name-project-a"]').text()).toBe('alpha')
     expect(wrapper.text()).toContain('/work/alpha')
-    expect(wrapper.text()).toContain('beta')
-    expect(wrapper.text()).toContain('Unavailable')
-    expect(wrapper.text()).toContain('zsh')
-    expect(wrapper.text()).toContain('npm run dev')
-    expect(wrapper.find('[data-testid="project-project-a"]').classes()).toContain('active')
-    expect(wrapper.find('[data-testid="terminal-terminal-b"]').classes()).toContain('active')
+    expect(wrapper.find('[data-testid="add-terminal-project-a"]').exists()).toBe(false)
 
     await wrapper.find('[data-testid="new-project"]').trigger('click')
-    await wrapper.find('[data-testid="add-terminal-project-a"]').trigger('click')
-    await wrapper.find('[data-testid="terminal-launch-option-project-a-0"]').trigger('click')
-    await wrapper.find('[data-testid="project-project-b"]').trigger('click')
-    await wrapper.find('[data-testid="terminal-terminal-a"]').trigger('click')
+    await wrapper.find('[data-testid="import-parent-directory"]').trigger('click')
+    await wrapper.find('[data-testid="project-project-a"]').trigger('click')
+    await wrapper.find('[data-testid="delete-project-project-a"]').trigger('click')
 
     expect(wrapper.emitted('create-project')).toHaveLength(1)
-    expect(wrapper.emitted('create-terminal')[0]).toEqual(['project-a', null])
-    expect(wrapper.emitted('select-project')[0]).toEqual(['project-b'])
-    expect(wrapper.emitted('select-terminal')[0]).toEqual(['terminal-a'])
-  })
-
-  it('opens a terminal launch menu and emits the selected launch profile', async () => {
-    const wrapper = mountSidebar({
-      props: {
-        launchProfiles: [
-          { name: 'codex', command: 'codex' },
-          { name: 'claude', command: 'claude' }
-        ]
-      }
-    })
-
-    await wrapper.find('[data-testid="add-terminal-project-a"]').trigger('click')
-
-    const menu = wrapper.find('[data-testid="terminal-launch-menu-project-a"]')
-    expect(menu.exists()).toBe(true)
-    expect(menu.classes()).toContain('terminal-launch-menu--down')
-    expect(menu.text()).toContain('Terminal')
-    expect(menu.text()).toContain('codex')
-    expect(menu.text()).toContain('claude')
-
-    await wrapper.find('[data-testid="terminal-launch-option-project-a-1"]').trigger('click')
-
-    expect(wrapper.emitted('create-terminal')[0]).toEqual(['project-a', { name: 'codex', command: 'codex' }])
-    expect(wrapper.find('[data-testid="terminal-launch-menu-project-a"]').exists()).toBe(false)
-  })
-
-  it('opens the terminal launch menu upward when a bottom project would clip it', async () => {
-    const wrapper = mountSidebar({
-      props: {
-        projects: [
-          { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
-          { id: 'project-b', name: 'beta', path: '/work/beta', available: true }
-        ],
-        launchProfiles: [
-          { name: 'codex', command: 'codex' },
-          { name: 'claude', command: 'claude' }
-        ]
-      }
-    })
-
-    wrapper.find('.project-list').element.getBoundingClientRect = () => rect({ top: 0, bottom: 120 })
-    wrapper.find('[data-testid="add-terminal-project-b"]').element.getBoundingClientRect = () =>
-      rect({ top: 96, bottom: 118 })
-
-    await wrapper.find('[data-testid="add-terminal-project-b"]').trigger('click')
-
-    const menu = wrapper.find('[data-testid="terminal-launch-menu-project-b"]')
-    expect(menu.classes()).toContain('terminal-launch-menu--up')
-    expect(menu.element.style.maxHeight).toBe('88px')
-  })
-
-  it('closes the terminal launch menu on outside click and unavailable project changes', async () => {
-    const wrapper = mountSidebar({
-      props: { launchProfiles: [{ name: 'codex', command: 'codex' }] }
-    })
-
-    await wrapper.find('[data-testid="add-terminal-project-a"]').trigger('click')
-    expect(wrapper.find('[data-testid="terminal-launch-menu-project-a"]').exists()).toBe(true)
-
-    window.dispatchEvent(new MouseEvent('click'))
-    await nextTick()
-    expect(wrapper.find('[data-testid="terminal-launch-menu-project-a"]').exists()).toBe(false)
-
-    await wrapper.find('[data-testid="add-terminal-project-a"]').trigger('click')
-    await wrapper.setProps({
-      projects: [{ id: 'project-a', name: 'alpha', path: '/work/alpha', available: false }]
-    })
-    await nextTick()
-
-    expect(wrapper.find('[data-testid="terminal-launch-menu-project-a"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="add-terminal-project-a"]').exists()).toBe(false)
-  })
-
-  it('collapses and expands a project terminal branch', async () => {
-    const wrapper = mountSidebar()
-
-    expect(wrapper.find('[data-testid="terminal-terminal-a"]').exists()).toBe(true)
-
-    await wrapper.find('[data-testid="toggle-project-project-a"]').trigger('click')
-
-    expect(wrapper.find('[data-testid="project-project-a"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="terminal-terminal-a"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="toggle-project-project-a"]').attributes('aria-expanded')).toBe('false')
-    expect(wrapper.emitted('select-project')).toBeUndefined()
-
-    await wrapper.find('[data-testid="toggle-project-project-a"]').trigger('click')
-
-    expect(wrapper.find('[data-testid="terminal-terminal-a"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="toggle-project-project-a"]').attributes('aria-expanded')).toBe('true')
-  })
-
-  it('emits delete actions without selecting rows', async () => {
-    const wrapper = mountSidebar()
-
-    await wrapper.find('[data-testid="delete-project-project-a"]').trigger('click')
-    await wrapper.find('[data-testid="delete-terminal-terminal-a"]').trigger('click')
-
+    expect(wrapper.emitted('import-projects')).toHaveLength(1)
+    expect(wrapper.emitted('select-project')[0]).toEqual(['project-a'])
     expect(wrapper.emitted('delete-project')[0]).toEqual(['project-a'])
-    expect(wrapper.emitted('delete-terminal')[0]).toEqual(['terminal-a'])
-    expect(wrapper.emitted('select-project')).toBeUndefined()
-    expect(wrapper.emitted('select-terminal')).toBeUndefined()
+    expect(wrapper.emitted('create-terminal')).toBeUndefined()
   })
 
-  it('marks only the project branch that owns the active terminal', () => {
-    const wrapper = mountSidebar({
-      props: {
-        projects: [
-          { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
-          { id: 'project-b', name: 'beta', path: '/work/beta', available: true }
-        ],
-        terminals: [
-          { id: 'terminal-a', projectId: 'project-a', shellName: 'zsh', currentCommand: '', state: 'running' },
-          { id: 'terminal-b', projectId: 'project-b', shellName: 'bash', currentCommand: '', state: 'running' }
-        ],
-        activeProjectId: 'project-b',
-        activeTerminalId: 'terminal-b'
-      }
-    })
+  it('collapses and expands a TODO branch independently', async () => {
+    const wrapper = mountSidebar()
 
-    const inactiveProjectNode = wrapper.find('[data-testid="project-project-a"]').element.closest('.project-node')
-    const activeProjectNode = wrapper.find('[data-testid="project-project-b"]').element.closest('.project-node')
+    expect(wrapper.find('[data-testid="todo-project-todo-project-a"]').exists()).toBe(true)
 
-    expect(inactiveProjectNode.classList.contains('has-active-terminal')).toBe(false)
-    expect(activeProjectNode.classList.contains('has-active-terminal')).toBe(true)
+    await wrapper.find('[data-testid="toggle-todo-todo-a"]').trigger('click')
+
+    expect(wrapper.find('[data-testid="todo-todo-a"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="todo-project-todo-project-a"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="toggle-todo-todo-a"]').attributes('aria-expanded')).toBe('false')
+    expect(wrapper.emitted('select-todo-project')).toBeUndefined()
+
+    await wrapper.find('[data-testid="toggle-todo-todo-a"]').trigger('click')
+
+    expect(wrapper.find('[data-testid="todo-project-todo-project-a"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="toggle-todo-todo-a"]').attributes('aria-expanded')).toBe('true')
   })
 
-  it('shows a busy activity indicator without replacing the terminal label', () => {
-    const wrapper = mountSidebar({
-      props: {
-        terminals: [
-          {
-            id: 'terminal-a',
-            projectId: 'project-a',
-            shellName: 'zsh',
-            currentCommand: 'codex',
-            activityState: 'busy',
-            state: 'running'
-          }
-        ]
-      }
-    })
+  it('shows archived TODO snapshots without terminal launch controls', async () => {
+    const wrapper = mountSidebar()
 
-    const terminalRow = wrapper.find('[data-testid="terminal-terminal-a"]')
-    const activity = wrapper.find('[data-testid="terminal-activity-terminal-a"]')
-    expect(terminalRow.text()).toContain('codex')
-    expect(terminalRow.classes()).toContain('activity-busy')
-    expect(terminalRow.attributes('data-activity-state')).toBe('busy')
-    expect(terminalRow.attributes('aria-label')).toContain('Running')
-    expect(activity.exists()).toBe(true)
-    expect(activity.classes()).toContain('busy')
-    expect(activity.attributes('aria-label')).toBe('Running')
+    await wrapper.find('[data-testid="todo-view-archived"]').trigger('click')
+
+    expect(wrapper.find('[data-testid="archived-todos"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('已完成任务')
+    expect(wrapper.text()).toContain('completed')
+    expect(wrapper.text()).toContain('/work/archived-alpha')
+    expect(wrapper.find('[data-testid="add-terminal-todo-project-a"]').exists()).toBe(false)
   })
 
-  it('shows a needs-input activity indicator without showing the busy state', () => {
+  it('shows terminal activity in the TODO tree', () => {
     const wrapper = mountSidebar({
       props: {
         terminals: [
           {
             id: 'terminal-a',
             projectId: 'project-a',
+            todoId: 'todo-a',
+            todoProjectId: 'todo-project-a',
             shellName: 'zsh',
             currentCommand: 'codex',
             activityState: 'needs-input',
@@ -219,109 +121,101 @@ describe('ProjectSidebar', () => {
     const activity = wrapper.find('[data-testid="terminal-activity-terminal-a"]')
     expect(terminalRow.text()).toContain('codex')
     expect(terminalRow.classes()).toContain('activity-needs-input')
-    expect(terminalRow.classes()).not.toContain('activity-busy')
     expect(terminalRow.attributes('data-activity-state')).toBe('needs-input')
     expect(terminalRow.attributes('aria-label')).toContain('Needs input')
     expect(activity.classes()).toContain('needs-input')
-    expect(activity.attributes('aria-label')).toBe('Needs input')
   })
 
-  it('keeps collapsed branch state independent per project', async () => {
+  it('renders TODO description and priority styling', () => {
     const wrapper = mountSidebar({
       props: {
-        projects: [
-          { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
-          { id: 'project-b', name: 'beta', path: '/work/beta', available: true }
-        ],
-        terminals: [
-          { id: 'terminal-a', projectId: 'project-a', shellName: 'zsh', currentCommand: '', state: 'running' },
-          { id: 'terminal-b', projectId: 'project-b', shellName: 'bash', currentCommand: '', state: 'running' }
+        todos: [
+          {
+            id: 'todo-a',
+            title: '修复登录问题',
+            description: '登录后跳回首页',
+            priority: 'high',
+            status: 'active'
+          }
         ]
       }
     })
 
-    await wrapper.find('[data-testid="toggle-project-project-a"]').trigger('click')
-
-    expect(wrapper.find('[data-testid="terminal-terminal-a"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="terminal-terminal-b"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="toggle-project-project-a"]').attributes('aria-expanded')).toBe('false')
-    expect(wrapper.find('[data-testid="toggle-project-project-b"]').attributes('aria-expanded')).toBe('true')
+    const todoRow = wrapper.find('[data-testid="todo-todo-a"]')
+    expect(todoRow.classes()).toContain('todo-row-priority-high')
+    expect(wrapper.find('[data-testid="todo-priority-todo-a"]').text()).toBe('高')
+    expect(wrapper.find('[data-testid="todo-description-todo-a"]').text()).toBe('登录后跳回首页')
   })
 
-  it('expands a collapsed branch when the active project changes to that project', async () => {
+  it('expands a collapsed TODO when the active terminal moves under it', async () => {
     const wrapper = mountSidebar({
       props: {
-        projects: [
-          { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
-          { id: 'project-b', name: 'beta', path: '/work/beta', available: true }
+        todos: [
+          { id: 'todo-a', title: '修复登录问题', status: 'active' },
+          { id: 'todo-b', title: '升级依赖', status: 'active' }
+        ],
+        todoProjects: [
+          { id: 'todo-project-a', todoId: 'todo-a', projectId: 'project-a' },
+          { id: 'todo-project-b', todoId: 'todo-b', projectId: 'project-a' }
         ],
         terminals: [
-          { id: 'terminal-a', projectId: 'project-a', shellName: 'zsh', currentCommand: '', state: 'running' },
-          { id: 'terminal-b', projectId: 'project-b', shellName: 'bash', currentCommand: '', state: 'running' }
+          {
+            id: 'terminal-a',
+            projectId: 'project-a',
+            todoId: 'todo-a',
+            todoProjectId: 'todo-project-a',
+            shellName: 'zsh',
+            currentCommand: '',
+            state: 'running'
+          },
+          {
+            id: 'terminal-b',
+            projectId: 'project-a',
+            todoId: 'todo-b',
+            todoProjectId: 'todo-project-b',
+            shellName: 'bash',
+            currentCommand: '',
+            state: 'running'
+          }
         ],
-        activeProjectId: 'project-a'
-      }
-    })
-
-    await wrapper.find('[data-testid="toggle-project-project-b"]').trigger('click')
-    await wrapper.setProps({ activeProjectId: 'project-b' })
-    await nextTick()
-
-    expect(wrapper.find('[data-testid="terminal-terminal-b"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="toggle-project-project-b"]').attributes('aria-expanded')).toBe('true')
-  })
-
-  it('expands a collapsed branch when the active terminal changes to a terminal under that project', async () => {
-    const wrapper = mountSidebar({
-      props: {
-        projects: [
-          { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
-          { id: 'project-b', name: 'beta', path: '/work/beta', available: true }
-        ],
-        terminals: [
-          { id: 'terminal-a', projectId: 'project-a', shellName: 'zsh', currentCommand: '', state: 'running' },
-          { id: 'terminal-b', projectId: 'project-b', shellName: 'bash', currentCommand: '', state: 'running' }
-        ],
+        activeTodoId: 'todo-a',
+        activeTodoProjectId: 'todo-project-a',
         activeTerminalId: 'terminal-a'
       }
     })
 
-    await wrapper.find('[data-testid="toggle-project-project-b"]').trigger('click')
-    await wrapper.setProps({ activeTerminalId: 'terminal-b' })
-    await nextTick()
-
-    expect(wrapper.find('[data-testid="terminal-terminal-b"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="toggle-project-project-b"]').attributes('aria-expanded')).toBe('true')
-  })
-
-  it('expands a collapsed branch when a new active terminal appears under that project', async () => {
-    const wrapper = mountSidebar({
-      props: {
-        projects: [
-          { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
-          { id: 'project-b', name: 'beta', path: '/work/beta', available: true }
-        ],
-        terminals: [
-          { id: 'terminal-a', projectId: 'project-a', shellName: 'zsh', currentCommand: '', state: 'running' },
-          { id: 'terminal-b', projectId: 'project-b', shellName: 'bash', currentCommand: '', state: 'running' }
-        ],
-        activeTerminalId: 'terminal-a'
-      }
-    })
-
-    await wrapper.find('[data-testid="toggle-project-project-b"]').trigger('click')
+    await wrapper.find('[data-testid="toggle-todo-todo-b"]').trigger('click')
     await wrapper.setProps({
-      terminals: [
-        { id: 'terminal-a', projectId: 'project-a', shellName: 'zsh', currentCommand: '', state: 'running' },
-        { id: 'terminal-b', projectId: 'project-b', shellName: 'bash', currentCommand: '', state: 'running' },
-        { id: 'terminal-c', projectId: 'project-b', shellName: 'fish', currentCommand: '', state: 'running' }
-      ],
-      activeTerminalId: 'terminal-c'
+      activeTodoId: 'todo-b',
+      activeTodoProjectId: 'todo-project-b',
+      activeTerminalId: 'terminal-b'
     })
     await nextTick()
 
-    expect(wrapper.find('[data-testid="terminal-terminal-c"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="toggle-project-project-b"]').attributes('aria-expanded')).toBe('true')
+    expect(wrapper.find('[data-testid="terminal-terminal-b"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="toggle-todo-todo-b"]').attributes('aria-expanded')).toBe('true')
+  })
+
+  it('keeps TODO project row layout wider than generic project rows', () => {
+    const styles = readFileSync('src/style.css', 'utf8')
+    const genericProjectRowIndex = styles.indexOf('.project-header-row')
+    const todoProjectRowIndex = styles.lastIndexOf('.todo-project-header-row')
+
+    expect(todoProjectRowIndex).toBeGreaterThan(genericProjectRowIndex)
+    expect(styles.slice(todoProjectRowIndex, todoProjectRowIndex + 120)).toContain(
+      'grid-template-columns: minmax(0, 1fr) 30px;'
+    )
+  })
+
+  it('defines priority row styles for each priority level', () => {
+    const styles = readFileSync('src/style.css', 'utf8')
+
+    expect(styles).toContain('--todo-priority-high-bg')
+    expect(styles).toContain('--todo-priority-medium-bg')
+    expect(styles).toContain('--todo-priority-low-bg')
+    expect(styles).toContain('.todo-row-priority-high')
+    expect(styles).toContain('.todo-row-priority-medium')
+    expect(styles).toContain('.todo-row-priority-low')
   })
 })
 
@@ -329,24 +223,35 @@ function mountSidebar(options = {}) {
   return mount(ProjectSidebar, {
     props: {
       projects: [{ id: 'project-a', name: 'alpha', path: '/work/alpha', available: true }],
-      terminals: [{ id: 'terminal-a', projectId: 'project-a', shellName: 'zsh', currentCommand: '', state: 'running' }],
+      todos: [
+        { id: 'todo-a', title: '修复登录问题', status: 'active' },
+        {
+          id: 'todo-archived',
+          title: '已完成任务',
+          status: 'archived',
+          archivedReason: 'completed',
+          archivedAt: '2026-06-10T10:00:00Z',
+          projectSnapshots: [{ projectId: 'project-a', name: 'archived-alpha', path: '/work/archived-alpha' }]
+        }
+      ],
+      todoProjects: [{ id: 'todo-project-a', todoId: 'todo-a', projectId: 'project-a' }],
+      terminals: [
+        {
+          id: 'terminal-a',
+          projectId: 'project-a',
+          todoId: 'todo-a',
+          todoProjectId: 'todo-project-a',
+          shellName: 'zsh',
+          currentCommand: 'codex',
+          state: 'running'
+        }
+      ],
       activeProjectId: 'project-a',
+      activeTodoId: 'todo-a',
+      activeTodoProjectId: 'todo-project-a',
       activeTerminalId: 'terminal-a',
+      launchProfiles: [],
       ...(options.props || {})
     }
   })
-}
-
-function rect({ top, bottom, left = 0, right = 0 }) {
-  return {
-    top,
-    bottom,
-    left,
-    right,
-    width: right - left,
-    height: bottom - top,
-    x: left,
-    y: top,
-    toJSON: () => {}
-  }
 }

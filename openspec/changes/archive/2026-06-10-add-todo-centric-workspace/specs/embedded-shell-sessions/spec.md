@@ -1,8 +1,39 @@
-# embedded-shell-sessions Specification
+## ADDED Requirements
 
-## Purpose
-TBD - created by archiving change desktop-project-shell. Update Purpose after archive.
-## Requirements
+### Requirement: Isolate Terminal Sessions By Todo Project Context
+
+The system SHALL isolate runtime terminal sessions by TODO project context. If the same project is associated with multiple TODOs, each TODO project context SHALL have its own terminal collection and active terminal selection.
+
+#### Scenario: Same project has isolated terminals across todos
+
+- **WHEN** project `frontend-app` is associated with TODO `fix-login`
+- **AND** project `frontend-app` is associated with TODO `upgrade-deps`
+- **AND** the user creates terminal A under `fix-login` and `frontend-app`
+- **AND** the user creates terminal B under `upgrade-deps` and `frontend-app`
+- **THEN** terminal A appears only under TODO `fix-login`
+- **AND** terminal B appears only under TODO `upgrade-deps`
+- **AND** selecting terminal A does not change the active terminal for TODO `upgrade-deps`
+
+### Requirement: Remove Todo Terminal Sessions
+
+The system SHALL close and remove all runtime terminal sessions owned by a TODO when that TODO is completed or deleted.
+
+#### Scenario: Completed todo closes owned terminals
+
+- **WHEN** TODO `fix-login` owns running terminal sessions
+- **AND** the user confirms completing TODO `fix-login`
+- **THEN** the system closes every running shell process owned by TODO `fix-login`
+- **AND** removes those terminal sessions from runtime state
+
+#### Scenario: Deleted todo cleanup preserves other todos
+
+- **WHEN** TODO `fix-login` and TODO `upgrade-deps` both have terminal sessions for project `frontend-app`
+- **AND** the user confirms deleting TODO `fix-login`
+- **THEN** terminal sessions under TODO `fix-login` are closed and removed
+- **AND** terminal sessions under TODO `upgrade-deps` remain available
+
+## MODIFIED Requirements
+
 ### Requirement: Start Shell In Project Directory
 
 The system SHALL start an embedded shell session in the owning project's directory when a terminal session is created for an available TODO project context.
@@ -47,15 +78,6 @@ The system SHALL support multiple live shell sessions per TODO project context w
 - **THEN** selecting TODO `upgrade-deps` does not show terminal A
 - **AND** creating a terminal under TODO `upgrade-deps` starts a separate shell process
 
-### Requirement: Route Terminal Input To Active Session
-
-The system SHALL send user terminal input only to the currently active terminal's shell session.
-
-#### Scenario: User types after switching terminals
-
-- **WHEN** the user switches from terminal A to terminal B and types in the terminal
-- **THEN** the input is sent to terminal B's shell session and not terminal A's shell session
-
 ### Requirement: Route Terminal Output By Project
 
 The system SHALL associate shell output with the terminal session that produced it so output is displayed in the correct terminal state under the owning TODO project context.
@@ -72,46 +94,6 @@ The system SHALL associate shell output with the terminal session that produced 
 - **AND** terminal A produces output
 - **THEN** terminal A's output is retained under TODO `fix-login`
 - **AND** terminal A's output is not shown under TODO `upgrade-deps`
-
-### Requirement: Resize Active Shell PTY
-
-The system SHALL resize the active terminal's PTY when the terminal viewport dimensions change.
-
-#### Scenario: Terminal viewport changes size
-
-- **WHEN** the user resizes the application window and the terminal rows or columns change
-- **THEN** the active terminal's PTY receives the updated terminal size
-
-### Requirement: Handle Shell Exit
-
-The system SHALL detect when a terminal shell exits and show that terminal as exited without closing the application or other terminal sessions.
-
-#### Scenario: Shell process exits
-
-- **WHEN** the active terminal's shell process exits
-- **THEN** the application marks that terminal session as exited
-- **AND** the application remains usable
-
-### Requirement: Label Terminal By Command State
-
-The system SHALL display each terminal's shell name when that terminal is idle and SHALL display the currently executing command while that terminal is running a command. When the command finishes, the terminal label SHALL return to the shell name.
-
-#### Scenario: Terminal starts a command
-
-- **WHEN** terminal A is idle with label `zsh`
-- **AND** the user starts command `npm run dev`
-- **THEN** terminal A's label becomes `npm run dev`
-
-#### Scenario: Terminal command finishes
-
-- **WHEN** terminal A is labeled `npm run dev` because that command is running
-- **AND** the command finishes and the shell returns to the prompt
-- **THEN** terminal A's label becomes `zsh`
-
-#### Scenario: Shell command state is unavailable
-
-- **WHEN** a terminal's shell does not report command start or command end state
-- **THEN** the terminal label remains the shell name
 
 ### Requirement: Use Configured Terminal Shell
 
@@ -137,53 +119,6 @@ The system SHALL start newly created embedded shell sessions with the configured
 - **AND** automatic detection selects `/bin/sh` as the fallback shell
 - **AND** the user creates a new embedded terminal under a TODO project context
 - **THEN** the shell process starts with shell path `/bin/sh`
-
-### Requirement: Copy Terminal Selection To Clipboard
-
-The system SHALL allow users to copy selected text from the active embedded terminal to the system clipboard without using plain `Ctrl+C`.
-
-#### Scenario: Copy selected terminal text with shortcut
-
-- **WHEN** the user has selected text in the active terminal and presses `Ctrl+Shift+C`
-- **THEN** the selected text is written to the system clipboard
-
-#### Scenario: Preserve shell interrupt shortcut
-
-- **WHEN** the user presses plain `Ctrl+C` in the active terminal
-- **THEN** the input is sent to the active shell instead of being handled as a clipboard copy action
-
-### Requirement: Paste Clipboard Text Into Active Shell
-
-The system SHALL allow users to paste system clipboard text into the active terminal's shell.
-
-#### Scenario: Paste clipboard text with shortcut
-
-- **WHEN** the user presses `Ctrl+Shift+V` in the active terminal and the system clipboard contains text
-- **THEN** the clipboard text is sent to the active terminal's shell input
-
-#### Scenario: Ignore empty clipboard paste
-
-- **WHEN** the user triggers paste and the system clipboard has no text
-- **THEN** no terminal input is sent to the active terminal's shell
-
-### Requirement: Provide Terminal Clipboard Context Menu
-
-The system SHALL provide a context menu in the active terminal area with Copy and Paste actions.
-
-#### Scenario: Open terminal context menu
-
-- **WHEN** the user right-clicks the active terminal area
-- **THEN** the system shows a terminal context menu with Copy and Paste actions at the pointer location
-
-#### Scenario: Copy from context menu
-
-- **WHEN** the user chooses Copy from the terminal context menu while text is selected in the active terminal
-- **THEN** the selected text is written to the system clipboard and the menu closes
-
-#### Scenario: Paste from context menu
-
-- **WHEN** the user chooses Paste from the terminal context menu and the system clipboard contains text
-- **THEN** the clipboard text is sent to the active terminal's shell input and the menu closes
 
 ### Requirement: Remove Runtime Terminal Session
 
@@ -261,45 +196,3 @@ The system SHALL execute the selected terminal launch profile startup parameters
 - **WHEN** the user chooses the built-in `Terminal` launch option under a TODO project context
 - **THEN** the system creates a new shell session in the selected project's directory
 - **AND** the system does not submit any automatic command to that shell session
-
-### Requirement: Keep Launch Profile Commands In Configured Shell
-
-The system SHALL run launch profile startup parameters inside the configured terminal shell instead of replacing the shell process with the startup command.
-
-#### Scenario: Launch profile command exits
-
-- **WHEN** a terminal launch profile command exits after running in a new terminal
-- **THEN** the terminal remains associated with its configured shell session unless the shell itself exits
-
-### Requirement: Isolate Terminal Sessions By Todo Project Context
-
-The system SHALL isolate runtime terminal sessions by TODO project context. If the same project is associated with multiple TODOs, each TODO project context SHALL have its own terminal collection and active terminal selection.
-
-#### Scenario: Same project has isolated terminals across todos
-
-- **WHEN** project `frontend-app` is associated with TODO `fix-login`
-- **AND** project `frontend-app` is associated with TODO `upgrade-deps`
-- **AND** the user creates terminal A under `fix-login` and `frontend-app`
-- **AND** the user creates terminal B under `upgrade-deps` and `frontend-app`
-- **THEN** terminal A appears only under TODO `fix-login`
-- **AND** terminal B appears only under TODO `upgrade-deps`
-- **AND** selecting terminal A does not change the active terminal for TODO `upgrade-deps`
-
-### Requirement: Remove Todo Terminal Sessions
-
-The system SHALL close and remove all runtime terminal sessions owned by a TODO when that TODO is completed or deleted.
-
-#### Scenario: Completed todo closes owned terminals
-
-- **WHEN** TODO `fix-login` owns running terminal sessions
-- **AND** the user confirms completing TODO `fix-login`
-- **THEN** the system closes every running shell process owned by TODO `fix-login`
-- **AND** removes those terminal sessions from runtime state
-
-#### Scenario: Deleted todo cleanup preserves other todos
-
-- **WHEN** TODO `fix-login` and TODO `upgrade-deps` both have terminal sessions for project `frontend-app`
-- **AND** the user confirms deleting TODO `fix-login`
-- **THEN** terminal sessions under TODO `fix-login` are closed and removed
-- **AND** terminal sessions under TODO `upgrade-deps` remain available
-

@@ -4,19 +4,35 @@ import {main} from '../models';
 
 export function AddProjectFromPath(arg1:string):Promise<main.ProjectState>;
 
+export function AddProjectToTodo(arg1:string,arg2:string):Promise<main.ProjectState>;
+
+export function AddProjectsToTodo(arg1:string,arg2:Array<string>):Promise<main.ProjectState>;
+
+export function CompleteTodo(arg1:string):Promise<main.ProjectState>;
+
 export function CreateProjectFromDialog():Promise<main.ProjectState>;
 
 export function CreateTerminal(arg1:string,arg2:number,arg3:number):Promise<main.ProjectState>;
 
+export function CreateTodo(arg1:main.CreateTodoRequest):Promise<main.ProjectState>;
+
+export function CreateTodoTerminal(arg1:string,arg2:number,arg3:number):Promise<main.ProjectState>;
+
 export function DeleteProject(arg1:string):Promise<main.ProjectState>;
 
 export function DeleteTerminal(arg1:string):Promise<main.ProjectState>;
+
+export function DeleteTodo(arg1:string):Promise<main.ProjectState>;
 
 export function DetectTerminalShell():Promise<main.TerminalShellSetting>;
 
 export function GetProjectGitStatus(arg1:string):Promise<main.GitStatus>;
 
 export function GetShellStatus(arg1:string):Promise<main.ShellStatus>;
+
+export function ImportProjectsFromParentDirectory(arg1:string):Promise<main.ProjectState>;
+
+export function ImportProjectsFromParentDirectoryDialog():Promise<main.ProjectState>;
 
 export function InitializeProjectGitRepository(arg1:string):Promise<void>;
 
@@ -35,6 +51,8 @@ export function SaveTerminalTheme(arg1:string):Promise<main.TerminalSettingsStat
 export function SelectProject(arg1:string):Promise<main.ProjectState>;
 
 export function SelectTerminal(arg1:string):Promise<main.ProjectState>;
+
+export function SelectTodoProject(arg1:string):Promise<main.ProjectState>;
 
 export function SendTerminalInput(arg1:string,arg2:string):Promise<void>;
 

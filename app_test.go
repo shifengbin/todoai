@@ -13,7 +13,6 @@ func TestAppAddsAndSelectsProjectsThroughPublicAPI(t *testing.T) {
 		filepath.Join(t.TempDir(), "projects.json"),
 		starter.Start,
 		WithShellPathResolver(func() string { return "/bin/zsh" }),
-		WithShellTerminalIDGenerator(sequenceIDs("terminal-1")),
 	)
 
 	state, err := app.AddProjectFromPath(projectDir)
@@ -37,24 +36,18 @@ func TestAppAddsAndSelectsProjectsThroughPublicAPI(t *testing.T) {
 	if state.ActiveProjectID != state.Projects[0].ID {
 		t.Fatalf("ActiveProjectID = %q, want %q", state.ActiveProjectID, state.Projects[0].ID)
 	}
-	if state.ActiveTerminalID != "terminal-1" {
-		t.Fatalf("ActiveTerminalID = %q, want terminal-1", state.ActiveTerminalID)
+	if state.ActiveTerminalID != "" {
+		t.Fatalf("ActiveTerminalID = %q, want empty for project-library selection", state.ActiveTerminalID)
 	}
-	if len(state.Terminals) != 1 {
-		t.Fatalf("Terminals length = %d, want 1", len(state.Terminals))
+	if len(state.Terminals) != 0 {
+		t.Fatalf("Terminals length = %d, want 0 after project-library selection", len(state.Terminals))
 	}
-	if state.Terminals[0].ProjectID != state.Projects[0].ID {
-		t.Fatalf("Terminal ProjectID = %q, want %q", state.Terminals[0].ProjectID, state.Projects[0].ID)
-	}
-	if len(starter.requests) != 1 {
-		t.Fatalf("shell start count = %d, want 1", len(starter.requests))
-	}
-	if starter.requests[0].TerminalID != "terminal-1" {
-		t.Fatalf("TerminalID = %q, want terminal-1", starter.requests[0].TerminalID)
+	if len(starter.requests) != 0 {
+		t.Fatalf("shell start count = %d, want 0 after project-library selection", len(starter.requests))
 	}
 }
 
-func TestAppCreatesAndSelectsAdditionalProjectTerminals(t *testing.T) {
+func TestAppCreatesAndSelectsTodoProjectTerminals(t *testing.T) {
 	projectDir := t.TempDir()
 	starter := newFakeShellStarter()
 	app := NewAppWithConfigAndShellStarter(
@@ -68,29 +61,54 @@ func TestAppCreatesAndSelectsAdditionalProjectTerminals(t *testing.T) {
 		t.Fatalf("AddProjectFromPath() error = %v", err)
 	}
 	projectID := state.Projects[0].ID
-	state, err = app.SelectProject(projectID)
+	state, err = app.CreateTodo(CreateTodoRequest{Title: "修复登录问题"})
 	if err != nil {
-		t.Fatalf("SelectProject() error = %v", err)
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	todoID := state.ActiveTodoID
+	state, err = app.AddProjectToTodo(todoID, projectID)
+	if err != nil {
+		t.Fatalf("AddProjectToTodo() error = %v", err)
+	}
+	todoProjectID := state.ActiveTodoProjectID
+	if todoProjectID == "" {
+		t.Fatal("ActiveTodoProjectID = empty, want associated todo project")
 	}
 
-	state, err = app.CreateTerminal(projectID, 100, 32)
+	state, err = app.CreateTodoTerminal(todoProjectID, 100, 32)
 	if err != nil {
-		t.Fatalf("CreateTerminal() error = %v", err)
+		t.Fatalf("CreateTodoTerminal() error = %v", err)
 	}
 
 	if state.ActiveProjectID != projectID {
 		t.Fatalf("ActiveProjectID = %q, want %q", state.ActiveProjectID, projectID)
 	}
-	if state.ActiveTerminalID != "terminal-2" {
-		t.Fatalf("ActiveTerminalID = %q, want terminal-2", state.ActiveTerminalID)
+	if state.ActiveTodoID != todoID {
+		t.Fatalf("ActiveTodoID = %q, want %q", state.ActiveTodoID, todoID)
 	}
-	if len(state.Terminals) != 2 {
-		t.Fatalf("Terminals length = %d, want 2", len(state.Terminals))
+	if state.ActiveTerminalID != "terminal-1" {
+		t.Fatalf("ActiveTerminalID = %q, want terminal-1", state.ActiveTerminalID)
 	}
-	if len(starter.requests) != 2 {
-		t.Fatalf("shell start count = %d, want 2", len(starter.requests))
+	if len(state.Terminals) != 1 {
+		t.Fatalf("Terminals length = %d, want 1", len(state.Terminals))
+	}
+	if state.Terminals[0].TodoID != todoID || state.Terminals[0].TodoProjectID != todoProjectID {
+		t.Fatalf("terminal TODO context = %q/%q, want %q/%q", state.Terminals[0].TodoID, state.Terminals[0].TodoProjectID, todoID, todoProjectID)
+	}
+	if len(starter.requests) != 1 {
+		t.Fatalf("shell start count = %d, want 1", len(starter.requests))
+	}
+	if starter.requests[0].TodoID != todoID || starter.requests[0].TodoProjectID != todoProjectID {
+		t.Fatalf("shell request TODO context = %q/%q, want %q/%q", starter.requests[0].TodoID, starter.requests[0].TodoProjectID, todoID, todoProjectID)
 	}
 
+	state, err = app.CreateTodoTerminal(todoProjectID, 80, 24)
+	if err != nil {
+		t.Fatalf("CreateTodoTerminal(second) error = %v", err)
+	}
+	if state.ActiveTerminalID != "terminal-2" {
+		t.Fatalf("ActiveTerminalID after second terminal = %q, want terminal-2", state.ActiveTerminalID)
+	}
 	state, err = app.SelectTerminal("terminal-1")
 	if err != nil {
 		t.Fatalf("SelectTerminal() error = %v", err)
@@ -98,8 +116,177 @@ func TestAppCreatesAndSelectsAdditionalProjectTerminals(t *testing.T) {
 	if state.ActiveTerminalID != "terminal-1" {
 		t.Fatalf("ActiveTerminalID after SelectTerminal = %q, want terminal-1", state.ActiveTerminalID)
 	}
-	if state.ActiveProjectID != projectID {
-		t.Fatalf("ActiveProjectID after SelectTerminal = %q, want %q", state.ActiveProjectID, projectID)
+}
+
+func TestAppCreateTodoAcceptsStructuredRequestAndOptionalProjects(t *testing.T) {
+	projectDir := t.TempDir()
+	otherProjectDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	projectID := state.Projects[0].ID
+	state, err = app.AddProjectFromPath(otherProjectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath(other) error = %v", err)
+	}
+	otherProjectID := state.ActiveProjectID
+
+	state, err = app.CreateTodo(CreateTodoRequest{
+		Title:       "修复登录问题",
+		Description: "登录后跳回首页",
+		Priority:    TodoPriorityHigh,
+		ProjectIDs:  []string{projectID, otherProjectID},
+	})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+
+	if len(state.Todos) != 1 {
+		t.Fatalf("Todos length = %d, want 1", len(state.Todos))
+	}
+	if state.Todos[0].Description != "登录后跳回首页" || state.Todos[0].Priority != TodoPriorityHigh {
+		t.Fatalf("Todo = %#v, want description and high priority", state.Todos[0])
+	}
+	if len(state.TodoProjects) != 2 || state.TodoProjects[0].ProjectID != projectID || state.TodoProjects[1].ProjectID != otherProjectID {
+		t.Fatalf("TodoProjects = %#v, want optional project associations in request order", state.TodoProjects)
+	}
+	if state.ActiveTodoProjectID != state.TodoProjects[0].ID || state.ActiveProjectID != projectID {
+		t.Fatalf("active context = %q/%q, want first created todo project and project %q", state.ActiveTodoProjectID, state.ActiveProjectID, projectID)
+	}
+	if len(state.Terminals) != 0 {
+		t.Fatalf("Terminals length = %d, want no terminal during TODO creation", len(state.Terminals))
+	}
+}
+
+func TestAppAddsMultipleProjectsToExistingTodo(t *testing.T) {
+	projectDir := t.TempDir()
+	otherProjectDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	projectID := state.Projects[0].ID
+	state, err = app.AddProjectFromPath(otherProjectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath(other) error = %v", err)
+	}
+	otherProjectID := state.ActiveProjectID
+	state, err = app.CreateTodo(CreateTodoRequest{Title: "修复登录问题"})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	todoID := state.ActiveTodoID
+
+	state, err = app.AddProjectsToTodo(todoID, []string{projectID, otherProjectID})
+	if err != nil {
+		t.Fatalf("AddProjectsToTodo() error = %v", err)
+	}
+
+	if len(state.TodoProjects) != 2 || state.TodoProjects[0].ProjectID != projectID || state.TodoProjects[1].ProjectID != otherProjectID {
+		t.Fatalf("TodoProjects = %#v, want both projects associated", state.TodoProjects)
+	}
+	if state.ActiveTodoProjectID != state.TodoProjects[0].ID || state.ActiveProjectID != projectID {
+		t.Fatalf("active context = %q/%q, want first added project", state.ActiveTodoProjectID, state.ActiveProjectID)
+	}
+}
+
+func TestAppCompletesTodoAndClosesOnlyOwnedTerminals(t *testing.T) {
+	projectDir := t.TempDir()
+	starter := newFakeShellStarter()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		starter.Start,
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-a", "terminal-b")),
+	)
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	projectID := state.Projects[0].ID
+	state, err = app.CreateTodo(CreateTodoRequest{Title: "修复登录问题"})
+	if err != nil {
+		t.Fatalf("CreateTodo(A) error = %v", err)
+	}
+	todoAID := state.ActiveTodoID
+	state, err = app.AddProjectToTodo(todoAID, projectID)
+	if err != nil {
+		t.Fatalf("AddProjectToTodo(A) error = %v", err)
+	}
+	todoProjectAID := state.ActiveTodoProjectID
+	if _, err := app.CreateTodoTerminal(todoProjectAID, 80, 24); err != nil {
+		t.Fatalf("CreateTodoTerminal(A) error = %v", err)
+	}
+	state, err = app.CreateTodo(CreateTodoRequest{Title: "升级依赖"})
+	if err != nil {
+		t.Fatalf("CreateTodo(B) error = %v", err)
+	}
+	todoBID := state.ActiveTodoID
+	state, err = app.AddProjectToTodo(todoBID, projectID)
+	if err != nil {
+		t.Fatalf("AddProjectToTodo(B) error = %v", err)
+	}
+	todoProjectBID := state.ActiveTodoProjectID
+	if _, err := app.CreateTodoTerminal(todoProjectBID, 80, 24); err != nil {
+		t.Fatalf("CreateTodoTerminal(B) error = %v", err)
+	}
+
+	state, err = app.CompleteTodo(todoAID)
+	if err != nil {
+		t.Fatalf("CompleteTodo() error = %v", err)
+	}
+
+	if !starter.processes[0].closed {
+		t.Fatal("completed todo terminal process was not closed")
+	}
+	if starter.processes[1].closed {
+		t.Fatal("other todo terminal process was closed")
+	}
+	if len(state.Terminals) != 1 || state.Terminals[0].TodoID != todoBID {
+		t.Fatalf("Terminals = %#v, want only todo B terminal", state.Terminals)
+	}
+	archived := findTodo(state.Todos, todoAID)
+	if archived == nil || archived.ArchivedReason != TodoArchiveReasonCompleted {
+		t.Fatalf("archived todo = %#v, want completed archive", archived)
+	}
+}
+
+func TestAppImportsProjectsFromParentDirectory(t *testing.T) {
+	parentDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(parentDir, "frontend-app"), 0o755); err != nil {
+		t.Fatalf("mkdir frontend-app: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(parentDir, "api-service"), 0o755); err != nil {
+		t.Fatalf("mkdir api-service: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(parentDir, "README.md"), []byte("ignore"), 0o600); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+
+	state, err := app.ImportProjectsFromParentDirectory(parentDir)
+	if err != nil {
+		t.Fatalf("ImportProjectsFromParentDirectory() error = %v", err)
+	}
+
+	if len(state.Projects) != 2 {
+		t.Fatalf("Projects length = %d, want 2", len(state.Projects))
+	}
+	if state.ImportSummary == nil || state.ImportSummary.AddedCount != 2 || state.ImportSummary.SkippedCount != 0 {
+		t.Fatalf("ImportSummary = %#v, want 2 added", state.ImportSummary)
 	}
 }
 
@@ -121,8 +308,9 @@ func TestAppUsesSavedTerminalShellForNewTerminals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddProjectFromPath() error = %v", err)
 	}
-	if _, err := app.SelectProject(state.Projects[0].ID); err != nil {
-		t.Fatalf("SelectProject() error = %v", err)
+	_, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", state.Projects[0].ID)
+	if _, err := app.CreateTodoTerminal(todoProjectID, 80, 24); err != nil {
+		t.Fatalf("CreateTodoTerminal() error = %v", err)
 	}
 
 	if len(starter.requests) != 1 {
@@ -190,8 +378,9 @@ func TestAppSavesTerminalThemeWithoutChangingProjectShellBehavior(t *testing.T) 
 	if err != nil {
 		t.Fatalf("AddProjectFromPath() error = %v", err)
 	}
-	if _, err := app.SelectProject(state.Projects[0].ID); err != nil {
-		t.Fatalf("SelectProject() error = %v", err)
+	_, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", state.Projects[0].ID)
+	if _, err := app.CreateTodoTerminal(todoProjectID, 80, 24); err != nil {
+		t.Fatalf("CreateTodoTerminal() error = %v", err)
 	}
 	if len(starter.requests) != 1 {
 		t.Fatalf("shell start count = %d, want 1", len(starter.requests))
@@ -228,15 +417,16 @@ func TestAppKeepsExistingTerminalShellAfterSettingChanges(t *testing.T) {
 		t.Fatalf("AddProjectFromPath() error = %v", err)
 	}
 	projectID := state.Projects[0].ID
-	if _, err := app.SelectProject(projectID); err != nil {
-		t.Fatalf("SelectProject() error = %v", err)
+	_, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", projectID)
+	if _, err := app.CreateTodoTerminal(todoProjectID, 80, 24); err != nil {
+		t.Fatalf("CreateTodoTerminal(first) error = %v", err)
 	}
 
 	if _, err := app.SaveTerminalShell(shellB, ShellSourceManual); err != nil {
 		t.Fatalf("SaveTerminalShell(shellB) error = %v", err)
 	}
-	if _, err := app.CreateTerminal(projectID, 80, 24); err != nil {
-		t.Fatalf("CreateTerminal() error = %v", err)
+	if _, err := app.CreateTodoTerminal(todoProjectID, 80, 24); err != nil {
+		t.Fatalf("CreateTodoTerminal(second) error = %v", err)
 	}
 
 	if len(starter.requests) != 2 {
@@ -267,8 +457,9 @@ func TestAppFallsBackWhenSavedTerminalShellIsUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddProjectFromPath() error = %v", err)
 	}
-	if _, err := app.SelectProject(state.Projects[0].ID); err != nil {
-		t.Fatalf("SelectProject() error = %v", err)
+	_, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", state.Projects[0].ID)
+	if _, err := app.CreateTodoTerminal(todoProjectID, 80, 24); err != nil {
+		t.Fatalf("CreateTodoTerminal() error = %v", err)
 	}
 
 	if len(starter.requests) != 1 {
@@ -294,19 +485,21 @@ func TestAppDeletesProjectAndOwnedTerminals(t *testing.T) {
 		t.Fatalf("AddProjectFromPath(A) error = %v", err)
 	}
 	projectAID := state.Projects[0].ID
-	if _, err := app.SelectProject(projectAID); err != nil {
-		t.Fatalf("SelectProject(A) error = %v", err)
+	_, todoProjectAID := createTodoProjectForApp(t, app, "修复登录问题", projectAID)
+	if _, err := app.CreateTodoTerminal(todoProjectAID, 80, 24); err != nil {
+		t.Fatalf("CreateTodoTerminal(A1) error = %v", err)
 	}
-	if _, err := app.CreateTerminal(projectAID, 80, 24); err != nil {
-		t.Fatalf("CreateTerminal(A) error = %v", err)
+	if _, err := app.CreateTodoTerminal(todoProjectAID, 80, 24); err != nil {
+		t.Fatalf("CreateTodoTerminal(A2) error = %v", err)
 	}
 	state, err = app.AddProjectFromPath(projectDirB)
 	if err != nil {
 		t.Fatalf("AddProjectFromPath(B) error = %v", err)
 	}
 	projectBID := state.ActiveProjectID
-	if _, err := app.SelectProject(projectBID); err != nil {
-		t.Fatalf("SelectProject(B) error = %v", err)
+	_, todoProjectBID := createTodoProjectForApp(t, app, "升级依赖", projectBID)
+	if _, err := app.CreateTodoTerminal(todoProjectBID, 80, 24); err != nil {
+		t.Fatalf("CreateTodoTerminal(B) error = %v", err)
 	}
 
 	state, err = app.DeleteProject(projectAID)
@@ -348,12 +541,14 @@ func TestAppDeletesTerminalAndReturnsUpdatedState(t *testing.T) {
 		t.Fatalf("AddProjectFromPath() error = %v", err)
 	}
 	projectID := state.Projects[0].ID
-	if _, err := app.SelectProject(projectID); err != nil {
-		t.Fatalf("SelectProject() error = %v", err)
-	}
-	state, err = app.CreateTerminal(projectID, 100, 32)
+	_, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", projectID)
+	state, err = app.CreateTodoTerminal(todoProjectID, 100, 32)
 	if err != nil {
-		t.Fatalf("CreateTerminal() error = %v", err)
+		t.Fatalf("CreateTodoTerminal(A) error = %v", err)
+	}
+	state, err = app.CreateTodoTerminal(todoProjectID, 100, 32)
+	if err != nil {
+		t.Fatalf("CreateTodoTerminal(B) error = %v", err)
 	}
 	if state.ActiveTerminalID != "terminal-b" {
 		t.Fatalf("ActiveTerminalID setup = %q, want terminal-b", state.ActiveTerminalID)
@@ -559,4 +754,22 @@ func TestAppInitializeProjectGitRepositoryReturnsGitInitError(t *testing.T) {
 	if err := app.InitializeProjectGitRepository(projectID); err == nil {
 		t.Fatal("InitializeProjectGitRepository() error = nil, want error")
 	}
+}
+
+func createTodoProjectForApp(t *testing.T, app *App, title string, projectID string) (string, string) {
+	t.Helper()
+
+	state, err := app.CreateTodo(CreateTodoRequest{Title: title})
+	if err != nil {
+		t.Fatalf("CreateTodo(%q) error = %v", title, err)
+	}
+	todoID := state.ActiveTodoID
+	state, err = app.AddProjectToTodo(todoID, projectID)
+	if err != nil {
+		t.Fatalf("AddProjectToTodo(%q, %q) error = %v", todoID, projectID, err)
+	}
+	if state.ActiveTodoProjectID == "" {
+		t.Fatal("ActiveTodoProjectID = empty, want associated todo project")
+	}
+	return todoID, state.ActiveTodoProjectID
 }

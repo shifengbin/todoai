@@ -104,6 +104,50 @@ func TestShellSessionManagerCreatesMultipleTerminalsForSameProject(t *testing.T)
 	}
 }
 
+func TestShellSessionManagerIsolatesTerminalsByTodoProjectContext(t *testing.T) {
+	starter := newFakeShellStarter()
+	manager := NewShellSessionManager(
+		starter.Start,
+		ShellSessionCallbacks{},
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-a", "terminal-b")),
+	)
+	project := Project{ID: "project-a", Path: t.TempDir(), Available: true}
+	todoProjectA := TodoProject{ID: "todo-project-a", TodoID: "todo-a", ProjectID: project.ID}
+	todoProjectB := TodoProject{ID: "todo-project-b", TodoID: "todo-b", ProjectID: project.ID}
+
+	terminalA, err := manager.CreateTodoProjectTerminal(todoProjectA, project, TerminalSize{Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatalf("CreateTodoProjectTerminal(A) error = %v", err)
+	}
+	terminalB, err := manager.CreateTodoProjectTerminal(todoProjectB, project, TerminalSize{Cols: 100, Rows: 32})
+	if err != nil {
+		t.Fatalf("CreateTodoProjectTerminal(B) error = %v", err)
+	}
+
+	if terminalA.TodoID != "todo-a" || terminalA.TodoProjectID != "todo-project-a" {
+		t.Fatalf("terminal A TODO context = %q/%q, want todo-a/todo-project-a", terminalA.TodoID, terminalA.TodoProjectID)
+	}
+	if terminalB.TodoID != "todo-b" || terminalB.TodoProjectID != "todo-project-b" {
+		t.Fatalf("terminal B TODO context = %q/%q, want todo-b/todo-project-b", terminalB.TodoID, terminalB.TodoProjectID)
+	}
+	if manager.ActiveTerminalID("todo-project-a") != terminalA.ID {
+		t.Fatalf("ActiveTerminalID(todo-project-a) = %q, want %q", manager.ActiveTerminalID("todo-project-a"), terminalA.ID)
+	}
+	if manager.ActiveTerminalID("todo-project-b") != terminalB.ID {
+		t.Fatalf("ActiveTerminalID(todo-project-b) = %q, want %q", manager.ActiveTerminalID("todo-project-b"), terminalB.ID)
+	}
+
+	if _, err := manager.SelectTerminal(terminalA.ID); err != nil {
+		t.Fatalf("SelectTerminal(A) error = %v", err)
+	}
+	if manager.ActiveTerminalID("todo-project-b") != terminalB.ID {
+		t.Fatalf("selecting terminal A changed todo-project-b active terminal to %q", manager.ActiveTerminalID("todo-project-b"))
+	}
+	if len(starter.requests) != 2 {
+		t.Fatalf("start count = %d, want 2", len(starter.requests))
+	}
+}
+
 func TestShellSessionManagerRoutesInputAndResizeByTerminalID(t *testing.T) {
 	starter := newFakeShellStarter()
 	manager := NewShellSessionManager(
@@ -535,6 +579,40 @@ func TestShellSessionManagerDeleteTerminalSelectsRemainingProjectTerminal(t *tes
 	}
 }
 
+func TestShellSessionManagerDeleteTerminalSelectsRemainingTodoProjectTerminal(t *testing.T) {
+	starter := newFakeShellStarter()
+	now := time.Date(2026, 6, 10, 9, 0, 0, 0, time.UTC)
+	manager := NewShellSessionManager(
+		starter.Start,
+		ShellSessionCallbacks{},
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-a", "terminal-b")),
+		WithShellClock(func() time.Time { return now }),
+	)
+	project := Project{ID: "project-a", Path: t.TempDir(), Available: true}
+	todoProject := TodoProject{ID: "todo-project-a", TodoID: "todo-a", ProjectID: project.ID}
+
+	terminalA, err := manager.CreateTodoProjectTerminal(todoProject, project, TerminalSize{Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatalf("CreateTodoProjectTerminal(A) error = %v", err)
+	}
+	now = now.Add(time.Minute)
+	terminalB, err := manager.CreateTodoProjectTerminal(todoProject, project, TerminalSize{Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatalf("CreateTodoProjectTerminal(B) error = %v", err)
+	}
+	if manager.ActiveTerminalID(todoProject.ID) != terminalB.ID {
+		t.Fatalf("ActiveTerminalID setup = %q, want %q", manager.ActiveTerminalID(todoProject.ID), terminalB.ID)
+	}
+
+	if err := manager.DeleteTerminal(terminalB.ID); err != nil {
+		t.Fatalf("DeleteTerminal(B) error = %v", err)
+	}
+
+	if manager.ActiveTerminalID(todoProject.ID) != terminalA.ID {
+		t.Fatalf("ActiveTerminalID after delete = %q, want %q", manager.ActiveTerminalID(todoProject.ID), terminalA.ID)
+	}
+}
+
 func TestShellSessionManagerDeleteTerminalReturnsErrorWhenMissing(t *testing.T) {
 	starter := newFakeShellStarter()
 	manager := NewShellSessionManager(
@@ -596,6 +674,41 @@ func TestShellSessionManagerDeletesProjectTerminalsAndPreservesOtherProjects(t *
 	}
 	if starter.processes[2].closed {
 		t.Fatal("project B terminal process was closed")
+	}
+}
+
+func TestShellSessionManagerDeletesTodoTerminalsAndPreservesOtherTodos(t *testing.T) {
+	starter := newFakeShellStarter()
+	manager := NewShellSessionManager(
+		starter.Start,
+		ShellSessionCallbacks{},
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-a", "terminal-b")),
+	)
+	project := Project{ID: "project-a", Path: t.TempDir(), Available: true}
+	todoProjectA := TodoProject{ID: "todo-project-a", TodoID: "todo-a", ProjectID: project.ID}
+	todoProjectB := TodoProject{ID: "todo-project-b", TodoID: "todo-b", ProjectID: project.ID}
+	terminalA, err := manager.CreateTodoProjectTerminal(todoProjectA, project, TerminalSize{Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatalf("CreateTodoProjectTerminal(A) error = %v", err)
+	}
+	terminalB, err := manager.CreateTodoProjectTerminal(todoProjectB, project, TerminalSize{Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatalf("CreateTodoProjectTerminal(B) error = %v", err)
+	}
+
+	manager.DeleteTodoTerminals("todo-a")
+
+	if _, err := manager.Terminal(terminalA.ID); err == nil {
+		t.Fatal("Terminal(A) error = nil, want deleted terminal")
+	}
+	if remaining, err := manager.Terminal(terminalB.ID); err != nil || remaining.ID != terminalB.ID {
+		t.Fatalf("Terminal(B) = %#v, %v; want preserved terminal B", remaining, err)
+	}
+	if !starter.processes[0].closed {
+		t.Fatal("deleted todo terminal process was not closed")
+	}
+	if starter.processes[1].closed {
+		t.Fatal("other todo terminal process was closed")
 	}
 }
 

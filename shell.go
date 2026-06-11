@@ -26,31 +26,39 @@ type TerminalSize struct {
 }
 
 type ShellStartRequest struct {
-	TerminalID string
-	ProjectID  string
-	WorkingDir string
-	ShellPath  string
-	ShellArgs  []string
-	ShellName  string
-	Size       TerminalSize
-	Env        []string
+	TerminalID    string
+	ProjectID     string
+	TodoID        string
+	TodoProjectID string
+	WorkingDir    string
+	ShellPath     string
+	ShellArgs     []string
+	ShellName     string
+	Size          TerminalSize
+	Env           []string
 }
 
 type ShellStatus struct {
-	ProjectID  string `json:"projectId"`
-	TerminalID string `json:"terminalId"`
-	State      string `json:"state"`
+	ProjectID     string `json:"projectId"`
+	TodoID        string `json:"todoId,omitempty"`
+	TodoProjectID string `json:"todoProjectId,omitempty"`
+	TerminalID    string `json:"terminalId"`
+	State         string `json:"state"`
 }
 
 type TerminalOutputEvent struct {
-	ProjectID  string `json:"projectId"`
-	TerminalID string `json:"terminalId"`
-	Data       string `json:"data"`
+	ProjectID     string `json:"projectId"`
+	TodoID        string `json:"todoId,omitempty"`
+	TodoProjectID string `json:"todoProjectId,omitempty"`
+	TerminalID    string `json:"terminalId"`
+	Data          string `json:"data"`
 }
 
 type ProjectTerminal struct {
 	ID             string `json:"id"`
 	ProjectID      string `json:"projectId"`
+	TodoID         string `json:"todoId,omitempty"`
+	TodoProjectID  string `json:"todoProjectId,omitempty"`
 	ShellName      string `json:"shellName"`
 	CurrentCommand string `json:"currentCommand"`
 	State          string `json:"state"`
@@ -87,17 +95,19 @@ type ShellSessionManager struct {
 	now               func() time.Time
 	sessions          map[string]*ShellSession
 	terminals         map[string]*ProjectTerminal
-	activeByProject   map[string]string
+	activeByContext   map[string]string
 }
 
 type ShellSession struct {
-	terminalID  string
-	projectID   string
-	process     PtyProcess
-	size        TerminalSize
-	state       string
-	cleanup     func()
-	cleanupOnce sync.Once
+	terminalID    string
+	projectID     string
+	todoID        string
+	todoProjectID string
+	process       PtyProcess
+	size          TerminalSize
+	state         string
+	cleanup       func()
+	cleanupOnce   sync.Once
 }
 
 func NewShellSessionManager(starter ShellStarter, callbacks ShellSessionCallbacks, opts ...ShellSessionManagerOption) *ShellSessionManager {
@@ -109,7 +119,7 @@ func NewShellSessionManager(starter ShellStarter, callbacks ShellSessionCallback
 		now:               time.Now,
 		sessions:          map[string]*ShellSession{},
 		terminals:         map[string]*ProjectTerminal{},
-		activeByProject:   map[string]string{},
+		activeByContext:   map[string]string{},
 	}
 	for _, opt := range opts {
 		opt(manager)
@@ -140,7 +150,7 @@ func (manager *ShellSessionManager) EnsureSession(project Project, size Terminal
 	if err != nil {
 		return ShellStatus{}, err
 	}
-	return ShellStatus{ProjectID: terminal.ProjectID, TerminalID: terminal.ID, State: terminal.State}, nil
+	return shellStatusFromTerminal(terminal), nil
 }
 
 func (manager *ShellSessionManager) RegisterTerminal(project Project) (ProjectTerminal, error) {
@@ -151,7 +161,18 @@ func (manager *ShellSessionManager) RegisterTerminal(project Project) (ProjectTe
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 
-	return manager.registerTerminalLocked(project), nil
+	return manager.registerTerminalLocked(TodoProject{}, project), nil
+}
+
+func (manager *ShellSessionManager) RegisterTodoProjectTerminal(todoProject TodoProject, project Project) (ProjectTerminal, error) {
+	if err := validateTodoProjectTerminalContext(todoProject, project); err != nil {
+		return ProjectTerminal{}, err
+	}
+
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	return manager.registerTerminalLocked(todoProject, project), nil
 }
 
 func (manager *ShellSessionManager) EnsureProjectTerminal(project Project, size TerminalSize) (ProjectTerminal, error) {
@@ -159,8 +180,20 @@ func (manager *ShellSessionManager) EnsureProjectTerminal(project Project, size 
 		return ProjectTerminal{}, errors.New("project path is unavailable")
 	}
 
+	return manager.ensureTerminal(TodoProject{}, project, size)
+}
+
+func (manager *ShellSessionManager) EnsureTodoProjectTerminal(todoProject TodoProject, project Project, size TerminalSize) (ProjectTerminal, error) {
+	if err := validateTodoProjectTerminalContext(todoProject, project); err != nil {
+		return ProjectTerminal{}, err
+	}
+	return manager.ensureTerminal(todoProject, project, size)
+}
+
+func (manager *ShellSessionManager) ensureTerminal(todoProject TodoProject, project Project, size TerminalSize) (ProjectTerminal, error) {
 	manager.mu.Lock()
-	if terminalID := manager.activeByProject[project.ID]; terminalID != "" {
+	contextKey := terminalContextKey(todoProject.ID, project.ID)
+	if terminalID := manager.activeByContext[contextKey]; terminalID != "" {
 		if terminal, ok := manager.terminals[terminalID]; ok {
 			manager.touchTerminalLocked(terminal)
 			result := *terminal
@@ -169,14 +202,14 @@ func (manager *ShellSessionManager) EnsureProjectTerminal(project Project, size 
 		}
 	}
 	for _, terminal := range manager.terminals {
-		if terminal.ProjectID == project.ID {
+		if terminal.ProjectID == project.ID && terminalContextKey(terminal.TodoProjectID, terminal.ProjectID) == contextKey {
 			manager.touchTerminalLocked(terminal)
 			result := *terminal
 			manager.mu.Unlock()
 			return result, nil
 		}
 	}
-	terminal := manager.registerTerminalLocked(project)
+	terminal := manager.registerTerminalLocked(todoProject, project)
 	manager.mu.Unlock()
 
 	if _, err := manager.StartTerminal(terminal.ID, size); err != nil {
@@ -190,14 +223,25 @@ func (manager *ShellSessionManager) CreateTerminal(project Project, size Termina
 		return ProjectTerminal{}, errors.New("project path is unavailable")
 	}
 
+	return manager.createTerminal(TodoProject{}, project, size)
+}
+
+func (manager *ShellSessionManager) CreateTodoProjectTerminal(todoProject TodoProject, project Project, size TerminalSize) (ProjectTerminal, error) {
+	if err := validateTodoProjectTerminalContext(todoProject, project); err != nil {
+		return ProjectTerminal{}, err
+	}
+	return manager.createTerminal(todoProject, project, size)
+}
+
+func (manager *ShellSessionManager) createTerminal(todoProject TodoProject, project Project, size TerminalSize) (ProjectTerminal, error) {
 	manager.mu.Lock()
-	terminal := manager.registerTerminalLocked(project)
+	terminal := manager.registerTerminalLocked(todoProject, project)
 	manager.mu.Unlock()
 
 	if _, err := manager.StartTerminal(terminal.ID, size); err != nil {
 		manager.mu.Lock()
 		delete(manager.terminals, terminal.ID)
-		delete(manager.activeByProject, project.ID)
+		delete(manager.activeByContext, terminalContextKey(terminal.TodoProjectID, terminal.ProjectID))
 		manager.mu.Unlock()
 		return ProjectTerminal{}, err
 	}
@@ -213,7 +257,13 @@ func (manager *ShellSessionManager) StartTerminal(terminalID string, size Termin
 		return ShellStatus{}, errors.New("terminal not found")
 	}
 	if session, ok := manager.sessions[terminalID]; ok && session.state == ShellStateRunning {
-		status := ShellStatus{ProjectID: terminal.ProjectID, TerminalID: terminal.ID, State: session.state}
+		status := ShellStatus{
+			ProjectID:     terminal.ProjectID,
+			TodoID:        terminal.TodoID,
+			TodoProjectID: terminal.TodoProjectID,
+			TerminalID:    terminal.ID,
+			State:         session.state,
+		}
 		terminal.State = session.state
 		manager.touchTerminalLocked(terminal)
 		return status, nil
@@ -226,14 +276,16 @@ func (manager *ShellSessionManager) StartTerminal(terminalID string, size Termin
 	}
 
 	request := ShellStartRequest{
-		TerminalID: terminal.ID,
-		ProjectID:  terminal.ProjectID,
-		WorkingDir: terminal.projectPath,
-		ShellPath:  launch.Path,
-		ShellArgs:  launch.Args,
-		ShellName:  launch.ShellName,
-		Size:       size,
-		Env:        launch.Env,
+		TerminalID:    terminal.ID,
+		ProjectID:     terminal.ProjectID,
+		TodoID:        terminal.TodoID,
+		TodoProjectID: terminal.TodoProjectID,
+		WorkingDir:    terminal.projectPath,
+		ShellPath:     launch.Path,
+		ShellArgs:     launch.Args,
+		ShellName:     launch.ShellName,
+		Size:          size,
+		Env:           launch.Env,
 	}
 	process, err := manager.starter(request)
 	if err != nil {
@@ -243,12 +295,14 @@ func (manager *ShellSessionManager) StartTerminal(terminalID string, size Termin
 	}
 
 	session := &ShellSession{
-		terminalID: terminal.ID,
-		projectID:  terminal.ProjectID,
-		process:    process,
-		size:       size,
-		state:      ShellStateRunning,
-		cleanup:    launch.Cleanup,
+		terminalID:    terminal.ID,
+		projectID:     terminal.ProjectID,
+		todoID:        terminal.TodoID,
+		todoProjectID: terminal.TodoProjectID,
+		process:       process,
+		size:          size,
+		state:         ShellStateRunning,
+		cleanup:       launch.Cleanup,
 	}
 
 	manager.sessions[terminal.ID] = session
@@ -257,7 +311,13 @@ func (manager *ShellSessionManager) StartTerminal(terminalID string, size Termin
 	go manager.readOutput(session)
 	go manager.waitForExit(session)
 
-	return ShellStatus{ProjectID: terminal.ProjectID, TerminalID: terminal.ID, State: ShellStateRunning}, nil
+	return ShellStatus{
+		ProjectID:     terminal.ProjectID,
+		TodoID:        terminal.TodoID,
+		TodoProjectID: terminal.TodoProjectID,
+		TerminalID:    terminal.ID,
+		State:         ShellStateRunning,
+	}, nil
 }
 
 func (manager *ShellSessionManager) SelectTerminal(terminalID string) (ProjectTerminal, error) {
@@ -280,16 +340,16 @@ func (manager *ShellSessionManager) DeleteTerminal(terminalID string) error {
 		return errors.New("terminal not found")
 	}
 
-	projectID := terminal.ProjectID
+	contextKey := terminalContextKey(terminal.TodoProjectID, terminal.ProjectID)
 	session, hasSession := manager.sessions[terminalID]
 	shouldClose := hasSession && session.state == ShellStateRunning
 	delete(manager.terminals, terminalID)
 	delete(manager.sessions, terminalID)
-	if manager.activeByProject[projectID] == terminalID {
-		if nextTerminalID := manager.mostRecentlySelectedTerminalIDLocked(projectID); nextTerminalID != "" {
-			manager.activeByProject[projectID] = nextTerminalID
+	if manager.activeByContext[contextKey] == terminalID {
+		if nextTerminalID := manager.mostRecentlySelectedTerminalIDLocked(contextKey); nextTerminalID != "" {
+			manager.activeByContext[contextKey] = nextTerminalID
 		} else {
-			delete(manager.activeByProject, projectID)
+			delete(manager.activeByContext, contextKey)
 		}
 	}
 	manager.mu.Unlock()
@@ -324,8 +384,41 @@ func (manager *ShellSessionManager) DeleteProjectTerminals(projectID string) {
 			delete(manager.sessions, terminalID)
 		}
 		delete(manager.terminals, terminalID)
+		delete(manager.activeByContext, terminalContextKey(terminal.TodoProjectID, terminal.ProjectID))
 	}
-	delete(manager.activeByProject, projectID)
+	manager.mu.Unlock()
+
+	for _, item := range sessions {
+		if item.shouldClose {
+			_ = item.session.process.Close()
+		}
+		item.session.cleanupSession()
+	}
+}
+
+func (manager *ShellSessionManager) DeleteTodoTerminals(todoID string) {
+	manager.mu.Lock()
+	sessions := []struct {
+		session     *ShellSession
+		shouldClose bool
+	}{}
+	for terminalID, terminal := range manager.terminals {
+		if terminal.TodoID != todoID {
+			continue
+		}
+		if session, ok := manager.sessions[terminalID]; ok {
+			sessions = append(sessions, struct {
+				session     *ShellSession
+				shouldClose bool
+			}{
+				session:     session,
+				shouldClose: session.state == ShellStateRunning,
+			})
+			delete(manager.sessions, terminalID)
+		}
+		delete(manager.terminals, terminalID)
+		delete(manager.activeByContext, terminalContextKey(terminal.TodoProjectID, terminal.ProjectID))
+	}
 	manager.mu.Unlock()
 
 	for _, item := range sessions {
@@ -364,19 +457,21 @@ func (manager *ShellSessionManager) Terminals() []ProjectTerminal {
 	return terminals
 }
 
-func (manager *ShellSessionManager) ActiveTerminalID(projectID string) string {
+func (manager *ShellSessionManager) ActiveTerminalID(contextID string) string {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 
-	return manager.activeByProject[projectID]
+	return manager.activeByContext[contextID]
 }
 
-func (manager *ShellSessionManager) registerTerminalLocked(project Project) ProjectTerminal {
+func (manager *ShellSessionManager) registerTerminalLocked(todoProject TodoProject, project Project) ProjectTerminal {
 	shellPath := manager.shellPathResolver()
 	now := manager.now().UTC().Format(time.RFC3339)
 	terminal := &ProjectTerminal{
 		ID:             manager.newID(),
 		ProjectID:      project.ID,
+		TodoID:         todoProject.TodoID,
+		TodoProjectID:  todoProject.ID,
 		ShellName:      shellNameFromPath(shellPath),
 		State:          ShellStateExited,
 		CreatedAt:      now,
@@ -385,20 +480,20 @@ func (manager *ShellSessionManager) registerTerminalLocked(project Project) Proj
 		shellPath:      shellPath,
 	}
 	manager.terminals[terminal.ID] = terminal
-	manager.activeByProject[project.ID] = terminal.ID
+	manager.activeByContext[terminalContextKey(terminal.TodoProjectID, terminal.ProjectID)] = terminal.ID
 	return *terminal
 }
 
 func (manager *ShellSessionManager) touchTerminalLocked(terminal *ProjectTerminal) {
 	terminal.LastSelectedAt = manager.now().UTC().Format(time.RFC3339)
-	manager.activeByProject[terminal.ProjectID] = terminal.ID
+	manager.activeByContext[terminalContextKey(terminal.TodoProjectID, terminal.ProjectID)] = terminal.ID
 }
 
-func (manager *ShellSessionManager) mostRecentlySelectedTerminalIDLocked(projectID string) string {
+func (manager *ShellSessionManager) mostRecentlySelectedTerminalIDLocked(contextKey string) string {
 	selectedTerminalID := ""
 	selectedAt := ""
 	for _, terminal := range manager.terminals {
-		if terminal.ProjectID != projectID {
+		if terminalContextKey(terminal.TodoProjectID, terminal.ProjectID) != contextKey {
 			continue
 		}
 		if selectedTerminalID == "" || terminal.LastSelectedAt > selectedAt ||
@@ -408,6 +503,26 @@ func (manager *ShellSessionManager) mostRecentlySelectedTerminalIDLocked(project
 		}
 	}
 	return selectedTerminalID
+}
+
+func terminalContextKey(todoProjectID string, projectID string) string {
+	if todoProjectID != "" {
+		return todoProjectID
+	}
+	return projectID
+}
+
+func validateTodoProjectTerminalContext(todoProject TodoProject, project Project) error {
+	if !project.Available {
+		return errors.New("project path is unavailable")
+	}
+	if todoProject.ID == "" || todoProject.TodoID == "" {
+		return errors.New("todo project context is required")
+	}
+	if todoProject.ProjectID != project.ID {
+		return errors.New("todo project does not reference project")
+	}
+	return nil
 }
 
 func (manager *ShellSessionManager) WriteInput(terminalID string, data string) error {
@@ -439,10 +554,16 @@ func (manager *ShellSessionManager) Status(terminalID string) ShellStatus {
 	defer manager.mu.Unlock()
 
 	if session, ok := manager.sessions[terminalID]; ok {
-		return ShellStatus{ProjectID: session.projectID, TerminalID: terminalID, State: session.state}
+		return ShellStatus{
+			ProjectID:     session.projectID,
+			TodoID:        session.todoID,
+			TodoProjectID: session.todoProjectID,
+			TerminalID:    terminalID,
+			State:         session.state,
+		}
 	}
 	if terminal, ok := manager.terminals[terminalID]; ok {
-		return ShellStatus{ProjectID: terminal.ProjectID, TerminalID: terminalID, State: terminal.State}
+		return shellStatusFromTerminal(*terminal)
 	}
 	return ShellStatus{TerminalID: terminalID, State: ShellStateExited}
 }
@@ -478,9 +599,11 @@ func (manager *ShellSessionManager) readOutput(session *ShellSession) {
 		n, err := session.process.Read(buffer)
 		if n > 0 && manager.callbacks.OnOutput != nil {
 			manager.callbacks.OnOutput(TerminalOutputEvent{
-				ProjectID:  session.projectID,
-				TerminalID: session.terminalID,
-				Data:       string(buffer[:n]),
+				ProjectID:     session.projectID,
+				TodoID:        session.todoID,
+				TodoProjectID: session.todoProjectID,
+				TerminalID:    session.terminalID,
+				Data:          string(buffer[:n]),
 			})
 		}
 		if err != nil {
@@ -503,7 +626,23 @@ func (manager *ShellSessionManager) waitForExit(session *ShellSession) {
 	session.cleanupSession()
 
 	if manager.callbacks.OnStatus != nil {
-		manager.callbacks.OnStatus(ShellStatus{ProjectID: session.projectID, TerminalID: session.terminalID, State: ShellStateExited})
+		manager.callbacks.OnStatus(ShellStatus{
+			ProjectID:     session.projectID,
+			TodoID:        session.todoID,
+			TodoProjectID: session.todoProjectID,
+			TerminalID:    session.terminalID,
+			State:         ShellStateExited,
+		})
+	}
+}
+
+func shellStatusFromTerminal(terminal ProjectTerminal) ShellStatus {
+	return ShellStatus{
+		ProjectID:     terminal.ProjectID,
+		TodoID:        terminal.TodoID,
+		TodoProjectID: terminal.TodoProjectID,
+		TerminalID:    terminal.ID,
+		State:         terminal.State,
 	}
 }
 
