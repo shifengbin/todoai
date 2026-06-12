@@ -114,7 +114,7 @@ const launchMenuViewportPadding = 8
 
 const terminalLaunchOptions = computed(() => [
   { name: 'Terminal', command: '' },
-  ...props.launchProfiles
+  ...props.launchProfiles.filter((profile) => profile?.enabled !== false)
 ])
 
 const todoPriorityOrder = {
@@ -1021,16 +1021,47 @@ watch(
               role="group"
               :aria-label="`${todo.title} actions`"
             >
-              <button
-                type="button"
-                class="todo-action-button"
-                :data-testid="`todo-menu-button-${todo.id}`"
-                :title="`${todo.title} menu`"
-                aria-label="Open TODO menu"
-                @click.stop="openTodoContextMenuFromButton(todo.id, $event)"
-              >
-                <EllipsisVertical :size="14" />
-              </button>
+              <div class="todo-action-confirm-control">
+                <button
+                  type="button"
+                  class="todo-action-button"
+                  :data-testid="`todo-menu-button-${todo.id}`"
+                  :title="`${todo.title} menu`"
+                  aria-label="Open TODO menu"
+                  @click.stop="openTodoContextMenuFromButton(todo.id, $event)"
+                >
+                  <EllipsisVertical :size="14" />
+                </button>
+                <div
+                  v-if="isTodoActionPopoverOpen(todo.id, 'delete')"
+                  :id="`delete-todo-popover-${todo.id}`"
+                  class="todo-action-popover"
+                  :data-testid="`delete-todo-popover-${todo.id}`"
+                  @click.stop
+                >
+                  <span class="todo-action-confirm-copy">Delete TODO?</span>
+                  <div class="todo-action-confirm-actions">
+                    <button
+                      type="button"
+                      class="todo-action-confirm-cancel"
+                      :data-testid="`cancel-delete-todo-${todo.id}`"
+                      aria-label="Cancel deleting TODO"
+                      @click="closeTodoActionPopover"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      class="todo-action-confirm-button todo-action-confirm-button-delete"
+                      :data-testid="`confirm-delete-todo-${todo.id}`"
+                      aria-label="Confirm deleting TODO"
+                      @click="confirmTodoAction(todo.id, 'delete')"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              </div>
               <button
                 v-if="todoWorkflowStatus(todo) === 'not-started'"
                 type="button"
@@ -1131,36 +1162,6 @@ watch(
               <Trash2 :size="14" />
               <span>Delete TODO</span>
             </button>
-          </div>
-
-          <div
-            v-if="isTodoActionPopoverOpen(todo.id, 'delete')"
-            :id="`delete-todo-popover-${todo.id}`"
-            class="todo-action-popover"
-            :data-testid="`delete-todo-popover-${todo.id}`"
-            @click.stop
-          >
-            <span class="todo-action-confirm-copy">Delete TODO?</span>
-            <div class="todo-action-confirm-actions">
-              <button
-                type="button"
-                class="todo-action-confirm-cancel"
-                :data-testid="`cancel-delete-todo-${todo.id}`"
-                aria-label="Cancel deleting TODO"
-                @click="closeTodoActionPopover"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                class="todo-action-confirm-button todo-action-confirm-button-delete"
-                :data-testid="`confirm-delete-todo-${todo.id}`"
-                aria-label="Confirm deleting TODO"
-                @click="confirmTodoAction(todo.id, 'delete')"
-              >
-                Delete
-              </button>
-            </div>
           </div>
 
           <div

@@ -296,6 +296,7 @@ export namespace main {
 	export class TerminalLaunchProfileSetting {
 	    name: string;
 	    command: string;
+	    enabled: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new TerminalLaunchProfileSetting(source);
@@ -305,6 +306,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
 	        this.command = source["command"];
+	        this.enabled = source["enabled"];
 	    }
 	}
 	export class TerminalShellSetting {

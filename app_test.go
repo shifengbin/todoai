@@ -500,7 +500,7 @@ func TestAppSavesTerminalLaunchProfiles(t *testing.T) {
 	}
 
 	state, err := app.SaveTerminalLaunchProfiles([]TerminalLaunchProfileSetting{
-		{Name: "Codex", Command: "codex --model gpt-5"},
+		{Name: "Codex", Command: "codex --model gpt-5", Enabled: true},
 	})
 	if err != nil {
 		t.Fatalf("SaveTerminalLaunchProfiles() error = %v", err)
@@ -509,7 +509,7 @@ func TestAppSavesTerminalLaunchProfiles(t *testing.T) {
 		t.Fatalf("Selected.Path = %q, want %q", state.Selected.Path, shellPath)
 	}
 	assertLaunchProfiles(t, state.LaunchProfiles, []TerminalLaunchProfileSetting{
-		{Name: "Codex", Command: "codex --model gpt-5"},
+		{Name: "Codex", Command: "codex --model gpt-5", Enabled: true},
 	})
 
 	loaded, err := app.LoadTerminalSettings()

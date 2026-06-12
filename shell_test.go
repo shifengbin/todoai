@@ -300,6 +300,64 @@ func TestShellSessionManagerEmitsOutputWithProjectAndTerminalID(t *testing.T) {
 	}
 }
 
+func TestShellSessionManagerFiltersCommandStatePayloadFromOutputAndHistory(t *testing.T) {
+	starter := newFakeShellStarter()
+	outputs := make(chan TerminalOutputEvent, 1)
+	commandStates := make(chan TerminalCommandStateEvent, 1)
+	store := NewTerminalHistoryStore(t.TempDir())
+	manager := NewShellSessionManager(
+		starter.Start,
+		ShellSessionCallbacks{
+			OnOutput: func(event TerminalOutputEvent) {
+				outputs <- event
+			},
+			OnCommandState: func(event TerminalCommandStateEvent) {
+				commandStates <- event
+			},
+		},
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-1")),
+		WithTerminalHistoryStore(store),
+	)
+	project := Project{ID: "project-a", Path: t.TempDir(), Available: true}
+
+	if _, err := manager.CreateTerminal(project, TerminalSize{Cols: 80, Rows: 24}); err != nil {
+		t.Fatalf("CreateTerminal() error = %v", err)
+	}
+	starter.processes[0].emit("before\x1b]777;tui-helper;command-start;Y29kZXg=\aafter")
+
+	select {
+	case event := <-outputs:
+		if event.Data != "beforeafter" {
+			t.Fatalf("Data = %q, want beforeafter", event.Data)
+		}
+		if strings.Contains(event.Data, "tui-helper") || strings.Contains(event.Data, "Y29kZXg") {
+			t.Fatalf("Data contains private payload: %q", event.Data)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for terminal output event")
+	}
+
+	select {
+	case event := <-commandStates:
+		if event.ProjectID != "project-a" || event.TerminalID != "terminal-1" {
+			t.Fatalf("Command state identity = %#v, want project-a/terminal-1", event)
+		}
+		if event.Type != "command-start" || event.Command != "codex" {
+			t.Fatalf("Command state = %#v, want command-start codex", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for command-state event")
+	}
+
+	eventually(t, func() bool {
+		history, err := store.Load()
+		if err != nil || len(history.Records) != 1 {
+			return false
+		}
+		return history.Records[0].Output == "beforeafter"
+	})
+}
+
 func TestShellSessionManagerEmitsExitedStatusWithProjectAndTerminalID(t *testing.T) {
 	starter := newFakeShellStarter()
 	statuses := make(chan ShellStatus, 1)

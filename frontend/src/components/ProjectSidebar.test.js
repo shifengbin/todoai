@@ -13,7 +13,7 @@ describe('ProjectSidebar', () => {
   it('renders the TODO tree and emits TODO-scoped terminal actions', async () => {
     const wrapper = mountInProgressSidebar({
       props: {
-        launchProfiles: [{ name: 'codex', command: 'codex' }]
+        launchProfiles: [{ name: 'codex', command: 'codex', enabled: true }]
       }
     })
 
@@ -55,10 +55,53 @@ describe('ProjectSidebar', () => {
     expect(wrapper.emitted('edit-todo')[0]).toEqual(['todo-a'])
     expect(wrapper.emitted('add-project-to-todo')[0]).toEqual(['todo-a'])
     expect(wrapper.emitted('select-todo-project')[0]).toEqual(['todo-project-a'])
-    expect(wrapper.emitted('create-terminal')[0]).toEqual(['todo-project-a', { name: 'codex', command: 'codex' }])
+    expect(wrapper.emitted('create-terminal')[0]).toEqual(['todo-project-a', { name: 'codex', command: 'codex', enabled: true }])
     expect(wrapper.emitted('select-terminal')[0]).toEqual(['terminal-a'])
     expect(wrapper.emitted('complete-todo')[0]).toEqual(['todo-a'])
     expect(wrapper.emitted('delete-todo')[0]).toEqual(['todo-a'])
+  })
+
+  it('hides disabled launch profiles while keeping Terminal available', async () => {
+    const wrapper = mountInProgressSidebar({
+      props: {
+        launchProfiles: [
+          { name: 'codex', command: 'codex', enabled: true },
+          { name: 'claude', command: 'claude', enabled: false }
+        ]
+      }
+    })
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+    await wrapper.find('[data-testid="add-terminal-todo-project-a"]').trigger('click')
+    await nextTick()
+
+    const menu = wrapper.find('[data-testid="terminal-launch-menu-todo-project-a"]')
+    expect(menu.text()).toContain('Terminal')
+    expect(menu.text()).toContain('codex')
+    expect(menu.text()).not.toContain('claude')
+
+    await wrapper.find('[data-testid="terminal-launch-option-todo-project-a-1"]').trigger('click')
+
+    expect(wrapper.emitted('create-terminal')[0]).toEqual(['todo-project-a', { name: 'codex', command: 'codex', enabled: true }])
+  })
+
+  it('shows only Terminal when all custom launch profiles are disabled', async () => {
+    const wrapper = mountInProgressSidebar({
+      props: {
+        launchProfiles: [
+          { name: 'codex', command: 'codex', enabled: false },
+          { name: 'claude', command: 'claude', enabled: false }
+        ]
+      }
+    })
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+    await wrapper.find('[data-testid="add-terminal-todo-project-a"]').trigger('click')
+    await nextTick()
+
+    const options = wrapper.findAll('[data-testid^="terminal-launch-option-todo-project-a-"]')
+    expect(options).toHaveLength(1)
+    expect(options[0].text()).toBe('Terminal')
   })
 
   it('shows TODOs in not-started, in-progress, and completed views', async () => {
@@ -855,6 +898,22 @@ describe('ProjectSidebar', () => {
 
     expect(wrapper.find('[data-testid="delete-todo-popover-todo-a"]').exists()).toBe(true)
     expect(wrapper.emitted('delete-todo')).toBeUndefined()
+  })
+
+  it('anchors the TODO delete confirmation popover to the TODO action control', async () => {
+    const wrapper = mountInProgressSidebar()
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+    await openTodoContextMenu(wrapper, 'todo-a')
+    await wrapper.find('[data-testid="todo-menu-delete-todo-a"]').trigger('click')
+    await nextTick()
+
+    const popover = wrapper.find('[data-testid="delete-todo-popover-todo-a"]')
+
+    expect(popover.exists()).toBe(true)
+    const actionControl = popover.element.closest('.todo-action-confirm-control')
+    expect(actionControl).not.toBeNull()
+    expect(actionControl.closest('[data-testid="todo-actions-todo-a"]')).not.toBeNull()
   })
 
   it('confirms and cancels TODO action popovers', async () => {

@@ -82,8 +82,9 @@ type PtyProcess interface {
 type ShellStarter func(request ShellStartRequest) (PtyProcess, error)
 
 type ShellSessionCallbacks struct {
-	OnOutput func(event TerminalOutputEvent)
-	OnStatus func(status ShellStatus)
+	OnOutput       func(event TerminalOutputEvent)
+	OnStatus       func(status ShellStatus)
+	OnCommandState func(event TerminalCommandStateEvent)
 }
 
 type ShellSessionManagerOption func(*ShellSessionManager)
@@ -111,6 +112,7 @@ type ShellSession struct {
 	state         string
 	cleanup       func()
 	cleanupOnce   sync.Once
+	outputFilter  *commandStateOutputFilter
 }
 
 func NewShellSessionManager(starter ShellStarter, callbacks ShellSessionCallbacks, opts ...ShellSessionManagerOption) *ShellSessionManager {
@@ -338,6 +340,7 @@ func (manager *ShellSessionManager) StartTerminal(terminalID string, size Termin
 		size:          size,
 		state:         ShellStateRunning,
 		cleanup:       launch.Cleanup,
+		outputFilter:  newCommandStateOutputFilter(),
 	}
 
 	manager.sessions[terminal.ID] = session
@@ -767,21 +770,39 @@ func (manager *ShellSessionManager) readOutput(session *ShellSession) {
 	buffer := make([]byte, 4096)
 	for {
 		n, err := session.process.Read(buffer)
-		if n > 0 && manager.callbacks.OnOutput != nil {
-			data := string(buffer[:n])
-			manager.callbacks.OnOutput(TerminalOutputEvent{
-				ProjectID:     session.projectID,
-				TodoID:        session.todoID,
-				TodoProjectID: session.todoProjectID,
-				TerminalID:    session.terminalID,
-				Data:          data,
-			})
-			manager.appendOutputToHistory(session.terminalID, data)
+		if n > 0 {
+			result := session.outputFilter.Filter(string(buffer[:n]))
+			for _, event := range result.Events {
+				manager.emitCommandState(session, event)
+			}
+			if result.Data != "" && manager.callbacks.OnOutput != nil {
+				manager.callbacks.OnOutput(TerminalOutputEvent{
+					ProjectID:     session.projectID,
+					TodoID:        session.todoID,
+					TodoProjectID: session.todoProjectID,
+					TerminalID:    session.terminalID,
+					Data:          result.Data,
+				})
+			}
+			if result.Data != "" {
+				manager.appendOutputToHistory(session.terminalID, result.Data)
+			}
 		}
 		if err != nil {
 			return
 		}
 	}
+}
+
+func (manager *ShellSessionManager) emitCommandState(session *ShellSession, event TerminalCommandStateEvent) {
+	if manager.callbacks.OnCommandState == nil {
+		return
+	}
+	event.ProjectID = session.projectID
+	event.TodoID = session.todoID
+	event.TodoProjectID = session.todoProjectID
+	event.TerminalID = session.terminalID
+	manager.callbacks.OnCommandState(event)
 }
 
 func (manager *ShellSessionManager) waitForExit(session *ShellSession) {

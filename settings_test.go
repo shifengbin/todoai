@@ -85,8 +85,8 @@ func TestSettingsManagerAddsDefaultLaunchProfilesOnFirstLoad(t *testing.T) {
 	}
 
 	assertLaunchProfiles(t, state.LaunchProfiles, []TerminalLaunchProfileSetting{
-		{Name: "codex", Command: "codex --dangerously-bypass-hook-trust --dangerously-bypass-approvals-and-sandbox"},
-		{Name: "claude", Command: "claude --dangerously-skip-permissions"},
+		{Name: "codex", Command: "codex --dangerously-bypass-hook-trust --dangerously-bypass-approvals-and-sandbox", Enabled: true},
+		{Name: "claude", Command: "claude --dangerously-skip-permissions", Enabled: true},
 	})
 }
 
@@ -106,9 +106,9 @@ func TestSettingsManagerMigratesLegacyDefaultLaunchProfileCommands(t *testing.T)
 	}
 
 	wantProfiles := []TerminalLaunchProfileSetting{
-		{Name: "codex", Command: "codex --dangerously-bypass-hook-trust --dangerously-bypass-approvals-and-sandbox"},
-		{Name: "claude", Command: "claude --dangerously-skip-permissions"},
-		{Name: "Codex Custom", Command: "codex"},
+		{Name: "codex", Command: "codex --dangerously-bypass-hook-trust --dangerously-bypass-approvals-and-sandbox", Enabled: true},
+		{Name: "claude", Command: "claude --dangerously-skip-permissions", Enabled: true},
+		{Name: "Codex Custom", Command: "codex", Enabled: true},
 	}
 	assertLaunchProfiles(t, state.LaunchProfiles, wantProfiles)
 
@@ -121,6 +121,46 @@ func TestSettingsManagerMigratesLegacyDefaultLaunchProfileCommands(t *testing.T)
 		t.Fatalf("Unmarshal(settings) error = %v", err)
 	}
 	assertLaunchProfiles(t, saved.LaunchProfiles, wantProfiles)
+}
+
+func TestSettingsManagerPreservesSavedLaunchProfileEnabledState(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "settings.json")
+	shellPath := executableFile(t, "zsh")
+	writeSettingsFileWithLaunchProfiles(t, configPath, shellPath, "manual", `[
+    {"name": "codex", "command": "codex", "enabled": true},
+    {"name": "claude", "command": "claude", "enabled": false}
+  ]`)
+	manager := NewSettingsManager(configPath)
+
+	state, err := manager.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	assertLaunchProfiles(t, state.LaunchProfiles, []TerminalLaunchProfileSetting{
+		{Name: "codex", Command: "codex --dangerously-bypass-hook-trust --dangerously-bypass-approvals-and-sandbox", Enabled: true},
+		{Name: "claude", Command: "claude --dangerously-skip-permissions", Enabled: false},
+	})
+}
+
+func TestSettingsManagerTreatsLegacyLaunchProfilesWithoutEnabledStateAsEnabled(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "settings.json")
+	shellPath := executableFile(t, "zsh")
+	writeSettingsFileWithLaunchProfiles(t, configPath, shellPath, "manual", `[
+    {"name": "Codex GPT-5", "command": "codex --model gpt-5"},
+    {"name": "Claude Plan", "command": "claude"}
+  ]`)
+	manager := NewSettingsManager(configPath)
+
+	state, err := manager.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	assertLaunchProfiles(t, state.LaunchProfiles, []TerminalLaunchProfileSetting{
+		{Name: "Codex GPT-5", Command: "codex --model gpt-5", Enabled: true},
+		{Name: "Claude Plan", Command: "claude", Enabled: true},
+	})
 }
 
 func TestSettingsManagerUsesLightThemeWhenSavedThemeIsMissing(t *testing.T) {
@@ -176,7 +216,7 @@ func TestSettingsManagerSavesThemeAndPreservesOtherSettings(t *testing.T) {
 	if _, err := manager.SaveShellPath(shellPath, ShellSourceManual); err != nil {
 		t.Fatalf("SaveShellPath() error = %v", err)
 	}
-	wantProfiles := []TerminalLaunchProfileSetting{{Name: "Codex", Command: "codex"}}
+	wantProfiles := []TerminalLaunchProfileSetting{{Name: "Codex", Command: "codex", Enabled: true}}
 	if _, err := manager.SaveLaunchProfiles(wantProfiles); err != nil {
 		t.Fatalf("SaveLaunchProfiles() error = %v", err)
 	}
@@ -278,8 +318,8 @@ func TestSettingsManagerSavesLaunchProfilesAndPreservesShellSetting(t *testing.T
 	}
 
 	state, err := manager.SaveLaunchProfiles([]TerminalLaunchProfileSetting{
-		{Name: " Codex GPT-5 ", Command: " codex --model gpt-5 "},
-		{Name: "Claude Plan", Command: "claude --dangerously-skip-permissions"},
+		{Name: " Codex GPT-5 ", Command: " codex --model gpt-5 ", Enabled: true},
+		{Name: "Claude Plan", Command: "claude --dangerously-skip-permissions", Enabled: false},
 	})
 	if err != nil {
 		t.Fatalf("SaveLaunchProfiles() error = %v", err)
@@ -288,8 +328,8 @@ func TestSettingsManagerSavesLaunchProfilesAndPreservesShellSetting(t *testing.T
 		t.Fatalf("Selected.Path = %q, want %q", state.Selected.Path, shellPath)
 	}
 	assertLaunchProfiles(t, state.LaunchProfiles, []TerminalLaunchProfileSetting{
-		{Name: "Codex GPT-5", Command: "codex --model gpt-5"},
-		{Name: "Claude Plan", Command: "claude --dangerously-skip-permissions"},
+		{Name: "Codex GPT-5", Command: "codex --model gpt-5", Enabled: true},
+		{Name: "Claude Plan", Command: "claude --dangerously-skip-permissions", Enabled: false},
 	})
 
 	reloaded, err := manager.Load()
@@ -309,7 +349,7 @@ func TestSettingsManagerRejectsInvalidLaunchProfilesWithoutChangingSavedProfiles
 	if _, err := manager.SaveShellPath(shellPath, ShellSourceManual); err != nil {
 		t.Fatalf("SaveShellPath() error = %v", err)
 	}
-	want := []TerminalLaunchProfileSetting{{Name: "Codex", Command: "codex"}}
+	want := []TerminalLaunchProfileSetting{{Name: "Codex", Command: "codex", Enabled: false}}
 	if _, err := manager.SaveLaunchProfiles(want); err != nil {
 		t.Fatalf("SaveLaunchProfiles(valid) error = %v", err)
 	}
@@ -318,10 +358,10 @@ func TestSettingsManagerRejectsInvalidLaunchProfilesWithoutChangingSavedProfiles
 		name     string
 		profiles []TerminalLaunchProfileSetting
 	}{
-		{name: "empty name", profiles: []TerminalLaunchProfileSetting{{Name: " ", Command: "codex"}}},
-		{name: "empty command", profiles: []TerminalLaunchProfileSetting{{Name: "Codex", Command: " "}}},
-		{name: "reserved terminal", profiles: []TerminalLaunchProfileSetting{{Name: "terminal", Command: "bash"}}},
-		{name: "duplicate names", profiles: []TerminalLaunchProfileSetting{{Name: "Codex", Command: "codex"}, {Name: "codex", Command: "codex --model gpt-5"}}},
+		{name: "empty name", profiles: []TerminalLaunchProfileSetting{{Name: " ", Command: "codex", Enabled: false}}},
+		{name: "empty command", profiles: []TerminalLaunchProfileSetting{{Name: "Codex", Command: " ", Enabled: false}}},
+		{name: "reserved terminal", profiles: []TerminalLaunchProfileSetting{{Name: "terminal", Command: "bash", Enabled: false}}},
+		{name: "duplicate names", profiles: []TerminalLaunchProfileSetting{{Name: "Codex", Command: "codex", Enabled: true}, {Name: "codex", Command: "codex --model gpt-5", Enabled: false}}},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {

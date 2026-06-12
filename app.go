@@ -42,8 +42,9 @@ func NewAppWithConfigAndShellStarter(configPath string, starter ShellStarter, sh
 		WithTerminalHistoryStore(historyStore),
 	}, shellOpts...)
 	app.shells = NewShellSessionManager(starter, ShellSessionCallbacks{
-		OnOutput: app.emitTerminalOutput,
-		OnStatus: app.emitShellStatus,
+		OnOutput:       app.emitTerminalOutput,
+		OnStatus:       app.emitShellStatus,
+		OnCommandState: app.emitTerminalCommandState,
 	}, shellOpts...)
 	return app
 }
@@ -360,6 +361,12 @@ func (a *App) DetectTerminalShell() (TerminalShellSetting, error) {
 func (a *App) emitTerminalOutput(event TerminalOutputEvent) {
 	if a.ctx != nil {
 		wailsruntime.EventsEmit(a.ctx, "terminal-output", event)
+	}
+}
+
+func (a *App) emitTerminalCommandState(event TerminalCommandStateEvent) {
+	if a.ctx != nil {
+		wailsruntime.EventsEmit(a.ctx, "terminal-command-state", event)
 	}
 }
 

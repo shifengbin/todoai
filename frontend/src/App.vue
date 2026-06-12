@@ -69,8 +69,8 @@ const sidebarResize = reactive({
 const sidebarMinWidth = 220
 const sidebarMaxWidth = 520
 const defaultTerminalLaunchProfiles = [
-  { name: 'codex', command: 'codex --dangerously-bypass-hook-trust --dangerously-bypass-approvals-and-sandbox' },
-  { name: 'claude', command: 'claude --dangerously-skip-permissions' }
+  { name: 'codex', command: 'codex --dangerously-bypass-hook-trust --dangerously-bypass-approvals-and-sandbox', enabled: true },
+  { name: 'claude', command: 'claude --dangerously-skip-permissions', enabled: true }
 ]
 const todoPriorities = [
   { value: 'high', label: '高' },
@@ -306,6 +306,9 @@ onMounted(async () => {
   EventsOn('terminal-output', (event) => {
     terminalManager.write(event.terminalId, event.data)
   })
+  EventsOn('terminal-command-state', (event) => {
+    terminalManager.onCommandState(event.terminalId, event)
+  })
   EventsOn('terminal-status', (status) => {
     updateTerminalState(status.terminalId, status.state)
   })
@@ -329,6 +332,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   EventsOff('terminal-output')
+  EventsOff('terminal-command-state')
   EventsOff('terminal-status')
   window.removeEventListener('resize', fitActiveTerminal)
   window.removeEventListener('focus', refreshProjectGitStatusOnFocus)
@@ -848,12 +852,13 @@ function launchProfilesFromState(state) {
 function cloneLaunchProfiles(profiles) {
   return profiles.map((profile) => ({
     name: profile.name || '',
-    command: profile.command || ''
+    command: profile.command || '',
+    enabled: profile.enabled !== false
   }))
 }
 
 function addTerminalLaunchProfile() {
-  settingsPanel.launchProfiles.push({ name: '', command: '' })
+  settingsPanel.launchProfiles.push({ name: '', command: '', enabled: true })
 }
 
 function removeTerminalLaunchProfile(index) {
@@ -872,7 +877,8 @@ function moveTerminalLaunchProfile(index, direction) {
 function normalizedLaunchProfiles() {
   return settingsPanel.launchProfiles.map((profile) => ({
     name: (profile.name || '').trim(),
-    command: (profile.command || '').trim()
+    command: (profile.command || '').trim(),
+    enabled: profile.enabled !== false
   }))
 }
 
@@ -1811,6 +1817,14 @@ function showError(error) {
               class="launch-profile-row"
               :data-testid="`terminal-launch-profile-${index}`"
             >
+              <label class="launch-profile-enabled" :title="profile.enabled ? 'Enabled' : 'Disabled'">
+                <input
+                  v-model="profile.enabled"
+                  type="checkbox"
+                  :data-testid="`terminal-launch-profile-enabled-${index}`"
+                />
+                <span class="visually-hidden">Enabled</span>
+              </label>
               <input
                 v-model="profile.name"
                 type="text"

@@ -347,6 +347,15 @@ button {
     color: var(--accent);
 }
 
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+}
+
 .project-list {
     flex: 1 1 auto;
     min-height: 0;
@@ -1946,9 +1955,23 @@ button {
 .launch-profile-row {
     display: grid;
     min-width: 0;
-    grid-template-columns: minmax(110px, 0.9fr) minmax(160px, 1.4fr) 32px 32px 32px;
+    grid-template-columns: 32px minmax(110px, 0.9fr) minmax(160px, 1.4fr) 32px 32px 32px;
     gap: 6px;
     align-items: center;
+}
+
+.launch-profile-enabled {
+    display: inline-grid;
+    width: 32px;
+    height: 32px;
+    place-items: center;
+    border: 1px solid var(--control-border);
+    background: var(--surface-bg);
+    cursor: pointer;
+}
+
+.launch-profile-enabled input {
+    margin: 0;
 }
 
 .launch-profile-row input[type="text"] {
@@ -1974,7 +1997,7 @@ button {
 
 @media (max-width: 680px) {
     .launch-profile-row {
-        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 32px 32px 32px;
+        grid-template-columns: 32px minmax(0, 1fr) minmax(0, 1fr) 32px 32px 32px;
     }
 }
 

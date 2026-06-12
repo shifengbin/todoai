@@ -34,6 +34,26 @@ type TerminalShellSetting struct {
 type TerminalLaunchProfileSetting struct {
 	Name    string `json:"name"`
 	Command string `json:"command"`
+	Enabled bool   `json:"enabled"`
+}
+
+func (profile *TerminalLaunchProfileSetting) UnmarshalJSON(data []byte) error {
+	type terminalLaunchProfileSettingJSON struct {
+		Name    string `json:"name"`
+		Command string `json:"command"`
+		Enabled *bool  `json:"enabled"`
+	}
+	var decoded terminalLaunchProfileSettingJSON
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	profile.Name = decoded.Name
+	profile.Command = decoded.Command
+	profile.Enabled = true
+	if decoded.Enabled != nil {
+		profile.Enabled = *decoded.Enabled
+	}
+	return nil
 }
 
 type TerminalSettingsState struct {
@@ -301,15 +321,15 @@ func normalizeTerminalLaunchProfiles(profiles []TerminalLaunchProfileSetting) ([
 			return nil, fmt.Errorf("terminal launch profile name is duplicated: %s", name)
 		}
 		seen[key] = struct{}{}
-		normalized = append(normalized, TerminalLaunchProfileSetting{Name: name, Command: command})
+		normalized = append(normalized, TerminalLaunchProfileSetting{Name: name, Command: command, Enabled: profile.Enabled})
 	}
 	return normalized, nil
 }
 
 func defaultTerminalLaunchProfiles() []TerminalLaunchProfileSetting {
 	return []TerminalLaunchProfileSetting{
-		{Name: "codex", Command: defaultCodexLaunchCommand},
-		{Name: "claude", Command: defaultClaudeLaunchCommand},
+		{Name: "codex", Command: defaultCodexLaunchCommand, Enabled: true},
+		{Name: "claude", Command: defaultClaudeLaunchCommand, Enabled: true},
 	}
 }
 
