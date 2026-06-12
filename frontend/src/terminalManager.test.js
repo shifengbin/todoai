@@ -2,6 +2,111 @@ import { describe, expect, it, vi } from 'vitest'
 import { TerminalSessionManager } from './terminalManager'
 
 describe('TerminalSessionManager', () => {
+  it('replays restored output into the xterm session once', () => {
+    const factory = createFakeTerminalFactory()
+    const manager = new TerminalSessionManager({
+      createSession: factory.createSession,
+      sendInput: vi.fn(),
+      resizeTerminal: vi.fn()
+    })
+    const container = document.createElement('div')
+
+    manager.activate('terminal-a', container)
+    manager.replayHistory('terminal-a', 'restored output line 1\nrestored output line 2\n')
+
+    const session = factory.sessions.get('terminal-a')
+    expect(session.terminal.writes).toEqual(['restored output line 1\nrestored output line 2\n'])
+  })
+
+  it('does not replay history a second time for the same terminal', () => {
+    const factory = createFakeTerminalFactory()
+    const manager = new TerminalSessionManager({
+      createSession: factory.createSession,
+      sendInput: vi.fn(),
+      resizeTerminal: vi.fn()
+    })
+    const container = document.createElement('div')
+
+    manager.activate('terminal-a', container)
+    manager.replayHistory('terminal-a', 'first replay\n')
+    manager.replayHistory('terminal-a', 'second replay\n')
+
+    const session = factory.sessions.get('terminal-a')
+    expect(session.terminal.writes).toEqual(['first replay\n'])
+  })
+
+  it('does not send terminal responses generated while replaying restored history', () => {
+    const sendInput = vi.fn()
+    const factory = createFakeTerminalFactory()
+    const manager = new TerminalSessionManager({
+      createSession: factory.createSession,
+      sendInput,
+      resizeTerminal: vi.fn()
+    })
+    const container = document.createElement('div')
+
+    manager.activate('terminal-a', container)
+    factory.sessions.get('terminal-a').terminal.responseForNextWrite = '\x1b[?1;2c'
+
+    manager.replayHistory('terminal-a', '\x1b[c')
+    factory.sessions.get('terminal-a').terminal.emitData('typed command\n')
+
+    expect(sendInput).toHaveBeenCalledTimes(1)
+    expect(sendInput).toHaveBeenCalledWith('terminal-a', 'typed command\n')
+  })
+
+  it('does not replay empty history', () => {
+    const factory = createFakeTerminalFactory()
+    const manager = new TerminalSessionManager({
+      createSession: factory.createSession,
+      sendInput: vi.fn(),
+      resizeTerminal: vi.fn()
+    })
+    const container = document.createElement('div')
+
+    manager.activate('terminal-a', container)
+    manager.replayHistory('terminal-a', '')
+
+    const session = factory.sessions.get('terminal-a')
+    expect(session.terminal.writes).toEqual([])
+  })
+
+  it('clears replay flag when terminal is disposed', () => {
+    const factory = createFakeTerminalFactory()
+    const manager = new TerminalSessionManager({
+      createSession: factory.createSession,
+      sendInput: vi.fn(),
+      resizeTerminal: vi.fn()
+    })
+    const container = document.createElement('div')
+
+    manager.activate('terminal-a', container)
+    manager.replayHistory('terminal-a', 'first\n')
+    manager.dispose('terminal-a')
+    manager.activate('terminal-a', container)
+    manager.replayHistory('terminal-a', 'second\n')
+
+    const session = factory.sessions.get('terminal-a')
+    expect(session.terminal.writes).toEqual(['second\n'])
+  })
+
+  it('does not interfere with live output after replay', () => {
+    const factory = createFakeTerminalFactory()
+    const manager = new TerminalSessionManager({
+      createSession: factory.createSession,
+      sendInput: vi.fn(),
+      resizeTerminal: vi.fn()
+    })
+    const container = document.createElement('div')
+
+    manager.activate('terminal-a', container)
+    manager.replayHistory('terminal-a', 'restored\n')
+    manager.write('terminal-a', 'live output\n')
+
+    const session = factory.sessions.get('terminal-a')
+    expect(session.terminal.writes).toEqual(['restored\n', 'live output\n'])
+  })
+
   it('preserves one xterm instance per terminal while routing inactive output', () => {
     const factory = createFakeTerminalFactory()
     const manager = new TerminalSessionManager({
@@ -89,6 +194,23 @@ describe('TerminalSessionManager', () => {
     await manager.paste('terminal-b')
 
     expect(sendInput).not.toHaveBeenCalled()
+  })
+
+  it('focuses the terminal session for the provided terminal id', () => {
+    const factory = createFakeTerminalFactory()
+    const manager = new TerminalSessionManager({
+      createSession: factory.createSession,
+      sendInput: vi.fn(),
+      resizeTerminal: vi.fn()
+    })
+
+    manager.activate('terminal-a', document.createElement('div'))
+    manager.activate('terminal-b', document.createElement('div'))
+
+    manager.focus('terminal-a')
+
+    expect(factory.sessions.get('terminal-a').terminal.focus).toHaveBeenCalledTimes(1)
+    expect(factory.sessions.get('terminal-b').terminal.focus).not.toHaveBeenCalled()
   })
 
   it('reports clipboard errors through the configured error handler', async () => {
@@ -222,9 +344,15 @@ function createFakeTerminalFactory() {
           this.openedIn = container
           this.openCount += 1
         },
-        write(data) {
+        write(data, callback) {
           this.writes.push(data)
+          if (this.responseForNextWrite) {
+            this.emitData(this.responseForNextWrite)
+            this.responseForNextWrite = ''
+          }
+          callback?.()
         },
+        focus: vi.fn(),
         dispose: vi.fn(),
         hasSelection() {
           return Boolean(this.selection)

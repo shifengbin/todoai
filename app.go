@@ -14,6 +14,7 @@ type App struct {
 	projects  *ProjectManager
 	shells    *ShellSessionManager
 	settings  *SettingsManager
+	history   *TerminalHistoryStore
 	gitStatus func(path string) (GitStatus, error)
 	gitInit   func(path string) error
 }
@@ -27,14 +28,18 @@ func NewAppWithConfig(configPath string) *App {
 }
 
 func NewAppWithConfigAndShellStarter(configPath string, starter ShellStarter, shellOpts ...ShellSessionManagerOption) *App {
+	configDir := filepath.Dir(configPath)
+	historyStore := NewTerminalHistoryStore(configDir)
 	app := &App{
 		projects:  NewProjectManager(configPath),
 		settings:  NewSettingsManager(defaultSettingsConfigPath(configPath)),
+		history:   historyStore,
 		gitStatus: queryGitStatus,
 		gitInit:   initializeGitRepository,
 	}
 	shellOpts = append([]ShellSessionManagerOption{
 		WithShellPathResolver(app.settings.ResolveShellPath),
+		WithTerminalHistoryStore(historyStore),
 	}, shellOpts...)
 	app.shells = NewShellSessionManager(starter, ShellSessionCallbacks{
 		OnOutput: app.emitTerminalOutput,
@@ -56,6 +61,7 @@ func (a *App) ListProjects() (ProjectState, error) {
 	if err != nil {
 		return ProjectState{}, err
 	}
+	a.shells.RestoreTerminals(state)
 	return a.withShellState(state), nil
 }
 

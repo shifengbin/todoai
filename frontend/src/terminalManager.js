@@ -17,6 +17,8 @@ export class TerminalSessionManager {
     this.onTitleChange = onTitleChange
     this.sessions = new Map()
     this.activeTerminalId = null
+    this.replayedTerminals = new Set()
+    this.replayingTerminals = new Set()
   }
 
   ensure(terminalId) {
@@ -24,6 +26,9 @@ export class TerminalSessionManager {
       const session = this.createSession(
         terminalId,
         (data) => {
+          if (this.replayingTerminals.has(terminalId)) {
+            return
+          }
           this.sendInput(terminalId, data)
         },
         (action) => {
@@ -64,6 +69,20 @@ export class TerminalSessionManager {
     }
   }
 
+  replayHistory(terminalId, output) {
+    if (!output || this.replayedTerminals.has(terminalId)) {
+      return
+    }
+    const session = this.sessions.get(terminalId)
+    if (session) {
+      this.replayedTerminals.add(terminalId)
+      this.replayingTerminals.add(terminalId)
+      session.terminal.write(output, () => {
+        this.replayingTerminals.delete(terminalId)
+      })
+    }
+  }
+
   dispose(terminalId) {
     const session = this.sessions.get(terminalId)
     if (!session) {
@@ -72,6 +91,8 @@ export class TerminalSessionManager {
 
     session.terminal.dispose?.()
     this.sessions.delete(terminalId)
+    this.replayedTerminals.delete(terminalId)
+    this.replayingTerminals.delete(terminalId)
     if (this.activeTerminalId === terminalId) {
       this.activeTerminalId = null
     }
@@ -80,6 +101,11 @@ export class TerminalSessionManager {
   hasSelection(terminalId) {
     const session = this.sessions.get(terminalId)
     return Boolean(session?.terminal.hasSelection?.())
+  }
+
+  focus(terminalId) {
+    const session = this.sessions.get(terminalId)
+    session?.terminal.focus?.()
   }
 
   async copySelection(terminalId) {

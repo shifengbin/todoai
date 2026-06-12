@@ -7,6 +7,7 @@ import {
   ChevronRight,
   CircleAlert,
   Copy,
+  EllipsisVertical,
   FolderInput,
   FolderPlus,
   Eye,
@@ -329,6 +330,17 @@ function openTodoContextMenu(todoId, event) {
   closeProjectDeletePopover()
   closeBulkProjectDeletePopover()
   todoContextMenu.value = { todoId, x: event.clientX, y: event.clientY }
+}
+
+function openTodoContextMenuFromButton(todoId, event) {
+  event.stopPropagation()
+  const rect = event.currentTarget.getBoundingClientRect()
+  closeTerminalLaunchMenu()
+  closeTodoProjectRemovePopover()
+  closeTodoActionPopover()
+  closeProjectDeletePopover()
+  closeBulkProjectDeletePopover()
+  todoContextMenu.value = { todoId, x: rect.left, y: rect.bottom }
 }
 
 function closeTodoContextMenu() {
@@ -905,6 +917,16 @@ watch(
               :aria-label="`${todo.title} actions`"
             >
               <button
+                type="button"
+                class="todo-action-button"
+                :data-testid="`todo-menu-button-${todo.id}`"
+                :title="`${todo.title} menu`"
+                aria-label="Open TODO menu"
+                @click.stop="openTodoContextMenuFromButton(todo.id, $event)"
+              >
+                <EllipsisVertical :size="14" />
+              </button>
+              <button
                 v-if="todoWorkflowStatus(todo) === 'not-started'"
                 type="button"
                 class="todo-action-button"
@@ -988,11 +1010,11 @@ watch(
             <button
               type="button"
               class="todo-context-menu-item"
-              :data-testid="`todo-menu-copy-description-${todo.id}`"
+              :data-testid="`todo-menu-copy-title-description-${todo.id}`"
               @click="emit('copy-todo-description', todo.id); closeTodoContextMenu()"
             >
               <Copy :size="14" />
-              <span>Copy description</span>
+              <span>Copy title and description</span>
             </button>
             <div class="todo-context-menu-separator"></div>
             <button

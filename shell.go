@@ -65,6 +65,7 @@ type ProjectTerminal struct {
 	State          string `json:"state"`
 	CreatedAt      string `json:"createdAt"`
 	LastSelectedAt string `json:"lastSelectedAt"`
+	Output         string `json:"output,omitempty"`
 
 	projectPath string
 	shellPath   string
@@ -97,6 +98,7 @@ type ShellSessionManager struct {
 	sessions          map[string]*ShellSession
 	terminals         map[string]*ProjectTerminal
 	activeByContext   map[string]string
+	history           *TerminalHistoryStore
 }
 
 type ShellSession struct {
@@ -143,6 +145,14 @@ func WithShellTerminalIDGenerator(newID func() string) ShellSessionManagerOption
 func WithShellClock(now func() time.Time) ShellSessionManagerOption {
 	return func(manager *ShellSessionManager) {
 		manager.now = now
+	}
+}
+
+// WithTerminalHistoryStore sets the terminal history store for persisting
+// terminal output and metadata across application restarts.
+func WithTerminalHistoryStore(history *TerminalHistoryStore) ShellSessionManagerOption {
+	return func(manager *ShellSessionManager) {
+		manager.history = history
 	}
 }
 
@@ -213,10 +223,19 @@ func (manager *ShellSessionManager) ensureTerminal(todoProject TodoProject, proj
 	terminal := manager.registerTerminalLocked(todoProject, project)
 	manager.mu.Unlock()
 
+	// Persist the terminal metadata BEFORE starting the shell so that
+	// readOutput's appendOutputToHistory has a record to update.
+	manager.saveTerminalToHistory(terminal)
+
 	if _, err := manager.StartTerminal(terminal.ID, size); err != nil {
 		return ProjectTerminal{}, err
 	}
-	return manager.Terminal(terminal.ID)
+	result, err := manager.Terminal(terminal.ID)
+	if err != nil {
+		return ProjectTerminal{}, err
+	}
+	manager.saveTerminalToHistory(result)
+	return result, nil
 }
 
 func (manager *ShellSessionManager) CreateTerminal(project Project, size TerminalSize) (ProjectTerminal, error) {
@@ -239,14 +258,24 @@ func (manager *ShellSessionManager) createTerminal(todoProject TodoProject, proj
 	terminal := manager.registerTerminalLocked(todoProject, project)
 	manager.mu.Unlock()
 
+	// Persist the terminal metadata BEFORE starting the shell so that
+	// readOutput's appendOutputToHistory has a record to update.
+	manager.saveTerminalToHistory(terminal)
+
 	if _, err := manager.StartTerminal(terminal.ID, size); err != nil {
 		manager.mu.Lock()
 		delete(manager.terminals, terminal.ID)
 		delete(manager.activeByContext, terminalContextKey(terminal.TodoProjectID, terminal.ProjectID))
 		manager.mu.Unlock()
+		manager.deleteTerminalFromHistory(terminal.ID)
 		return ProjectTerminal{}, err
 	}
-	return manager.Terminal(terminal.ID)
+	result, err := manager.Terminal(terminal.ID)
+	if err != nil {
+		return ProjectTerminal{}, err
+	}
+	manager.saveTerminalToHistory(result)
+	return result, nil
 }
 
 func (manager *ShellSessionManager) StartTerminal(terminalID string, size TerminalSize) (ShellStatus, error) {
@@ -335,7 +364,9 @@ func (manager *ShellSessionManager) SelectTerminal(terminalID string) (ProjectTe
 		return ProjectTerminal{}, errors.New("terminal not found")
 	}
 	manager.touchTerminalLocked(terminal)
-	return *terminal, nil
+	result := *terminal
+	manager.saveTerminalToHistory(result)
+	return result, nil
 }
 
 func (manager *ShellSessionManager) DeleteTerminal(terminalID string) error {
@@ -359,6 +390,8 @@ func (manager *ShellSessionManager) DeleteTerminal(terminalID string) error {
 		}
 	}
 	manager.mu.Unlock()
+
+	manager.deleteTerminalFromHistory(terminalID)
 
 	if hasSession {
 		if shouldClose {
@@ -394,6 +427,8 @@ func (manager *ShellSessionManager) DeleteProjectTerminals(projectID string) {
 	}
 	manager.mu.Unlock()
 
+	manager.deleteProjectFromHistory(projectID)
+
 	for _, item := range sessions {
 		if item.shouldClose {
 			_ = item.session.process.Close()
@@ -426,6 +461,8 @@ func (manager *ShellSessionManager) DeleteTodoTerminals(todoID string) {
 		delete(manager.activeByContext, terminalContextKey(terminal.TodoProjectID, terminal.ProjectID))
 	}
 	manager.mu.Unlock()
+
+	manager.deleteTodoFromHistory(todoID)
 
 	for _, item := range sessions {
 		if item.shouldClose {
@@ -460,6 +497,8 @@ func (manager *ShellSessionManager) DeleteTodoProjectTerminals(todoProjectID str
 	}
 	manager.mu.Unlock()
 
+	manager.deleteTodoProjectFromHistory(todoProjectID)
+
 	for _, item := range sessions {
 		if item.shouldClose {
 			_ = item.session.process.Close()
@@ -485,7 +524,20 @@ func (manager *ShellSessionManager) Terminals() []ProjectTerminal {
 
 	terminals := make([]ProjectTerminal, 0, len(manager.terminals))
 	for _, terminal := range manager.terminals {
-		terminals = append(terminals, *terminal)
+		t := *terminal
+		// Populate output from history for restored (non-running) terminals.
+		if t.State != ShellStateRunning && t.Output == "" && manager.history != nil {
+			history, err := manager.history.Load()
+			if err == nil {
+				for _, record := range history.Records {
+					if record.TerminalID == t.ID {
+						t.Output = record.Output
+						break
+					}
+				}
+			}
+		}
+		terminals = append(terminals, t)
 	}
 	sort.Slice(terminals, func(left, right int) bool {
 		if terminals[left].CreatedAt == terminals[right].CreatedAt {
@@ -501,6 +553,85 @@ func (manager *ShellSessionManager) ActiveTerminalID(contextID string) string {
 	defer manager.mu.Unlock()
 
 	return manager.activeByContext[contextID]
+}
+
+// RestoreTerminals loads persisted terminal records from the history store
+// and registers them as non-running terminals in the manager. Valid records
+// are those whose project, TODO, and TODO project references still exist
+// in the provided state. Orphaned records are dropped from the history store.
+// No shell processes are started.
+func (manager *ShellSessionManager) RestoreTerminals(state ProjectState) []TerminalHistoryRecord {
+	if manager.history == nil {
+		return nil
+	}
+
+	history, err := manager.history.Load()
+	if err != nil {
+		return nil
+	}
+
+	// Build lookup sets for validation.
+	projectIDs := map[string]bool{}
+	for _, project := range state.Projects {
+		projectIDs[project.ID] = true
+	}
+	todoIDs := map[string]bool{}
+	for _, todo := range state.Todos {
+		todoIDs[todo.ID] = true
+	}
+	todoProjectIDs := map[string]bool{}
+	for _, todoProject := range state.TodoProjects {
+		todoProjectIDs[todoProject.ID] = true
+	}
+
+	valid := make([]TerminalHistoryRecord, 0, len(history.Records))
+	orphaned := false
+
+	for _, record := range history.Records {
+		if !projectIDs[record.ProjectID] {
+			orphaned = true
+			continue
+		}
+		if record.TodoID != "" && !todoIDs[record.TodoID] {
+			orphaned = true
+			continue
+		}
+		if record.TodoProjectID != "" && !todoProjectIDs[record.TodoProjectID] {
+			orphaned = true
+			continue
+		}
+
+		// Register as a non-running terminal.
+		terminal := &ProjectTerminal{
+			ID:             record.TerminalID,
+			ProjectID:      record.ProjectID,
+			TodoID:         record.TodoID,
+			TodoProjectID:  record.TodoProjectID,
+			ShellName:      record.ShellName,
+			State:          ShellStateExited,
+			CreatedAt:      record.CreatedAt,
+			LastSelectedAt: record.LastSelectedAt,
+			projectPath:    "",
+			shellPath:      manager.shellPathResolver(),
+		}
+		manager.mu.Lock()
+		manager.terminals[terminal.ID] = terminal
+		contextKey := terminalContextKey(terminal.TodoProjectID, terminal.ProjectID)
+		if _, exists := manager.activeByContext[contextKey]; !exists {
+			manager.activeByContext[contextKey] = terminal.ID
+		}
+		manager.mu.Unlock()
+
+		valid = append(valid, record)
+	}
+
+	// Save cleaned history if orphaned records were removed.
+	if orphaned {
+		history.Records = valid
+		_ = manager.history.Save(history)
+	}
+
+	return valid
 }
 
 func (manager *ShellSessionManager) registerTerminalLocked(todoProject TodoProject, project Project) ProjectTerminal {
@@ -637,13 +768,15 @@ func (manager *ShellSessionManager) readOutput(session *ShellSession) {
 	for {
 		n, err := session.process.Read(buffer)
 		if n > 0 && manager.callbacks.OnOutput != nil {
+			data := string(buffer[:n])
 			manager.callbacks.OnOutput(TerminalOutputEvent{
 				ProjectID:     session.projectID,
 				TodoID:        session.todoID,
 				TodoProjectID: session.todoProjectID,
 				TerminalID:    session.terminalID,
-				Data:          string(buffer[:n]),
+				Data:          data,
 			})
+			manager.appendOutputToHistory(session.terminalID, data)
 		}
 		if err != nil {
 			return
@@ -689,6 +822,109 @@ func (session *ShellSession) cleanupSession() {
 	if session.cleanup != nil {
 		session.cleanupOnce.Do(session.cleanup)
 	}
+}
+
+// appendOutputToHistory appends terminal output to the persisted history
+// store. This is called from the PTY read loop.
+func (manager *ShellSessionManager) appendOutputToHistory(terminalID string, data string) {
+	if manager.history == nil {
+		return
+	}
+
+	history, err := manager.history.Load()
+	if err != nil {
+		return
+	}
+
+	for i, record := range history.Records {
+		if record.TerminalID == terminalID {
+			history.Records[i].Output = AppendTerminalOutput(record.Output, data)
+			_ = manager.history.Save(history)
+			return
+		}
+	}
+}
+
+// saveTerminalToHistory persists a terminal record to the history store.
+func (manager *ShellSessionManager) saveTerminalToHistory(terminal ProjectTerminal) {
+	if manager.history == nil {
+		return
+	}
+
+	history, err := manager.history.Load()
+	if err != nil {
+		return
+	}
+
+	record := TerminalHistoryRecord{
+		TerminalID:     terminal.ID,
+		ProjectID:      terminal.ProjectID,
+		TodoID:         terminal.TodoID,
+		TodoProjectID:  terminal.TodoProjectID,
+		ShellName:      terminal.ShellName,
+		State:          terminal.State,
+		CreatedAt:      terminal.CreatedAt,
+		LastSelectedAt: terminal.LastSelectedAt,
+	}
+
+	// Preserve existing output when updating metadata.
+	for _, existing := range history.Records {
+		if existing.TerminalID == terminal.ID {
+			record.Output = existing.Output
+			break
+		}
+	}
+
+	_, _ = manager.history.UpsertRecord(history, record)
+}
+
+// deleteTerminalFromHistory removes a terminal's persisted history record.
+func (manager *ShellSessionManager) deleteTerminalFromHistory(terminalID string) {
+	if manager.history == nil {
+		return
+	}
+	history, err := manager.history.Load()
+	if err != nil {
+		return
+	}
+	_, _ = manager.history.DeleteRecord(history, terminalID)
+}
+
+// deleteProjectFromHistory removes all terminal history records for a project.
+func (manager *ShellSessionManager) deleteProjectFromHistory(projectID string) {
+	if manager.history == nil {
+		return
+	}
+	history, err := manager.history.Load()
+	if err != nil {
+		return
+	}
+	_, _ = manager.history.DeleteRecordsByProject(history, projectID)
+}
+
+// deleteTodoFromHistory removes all terminal history records for a TODO.
+func (manager *ShellSessionManager) deleteTodoFromHistory(todoID string) {
+	if manager.history == nil {
+		return
+	}
+	history, err := manager.history.Load()
+	if err != nil {
+		return
+	}
+	_, _ = manager.history.DeleteRecordsByTodo(history, todoID)
+}
+
+// deleteTodoProjectFromHistory removes all terminal history records for a
+// TODO project.
+func (manager *ShellSessionManager) deleteTodoProjectFromHistory(todoProjectID string) {
+	if manager.history == nil {
+		return
+	}
+	history, err := manager.history.Load()
+	if err != nil {
+		return
+	}
+	_, _ = manager.history.DeleteRecordsByTodoProject(history, todoProjectID)
 }
 
 type ShellLaunch struct {

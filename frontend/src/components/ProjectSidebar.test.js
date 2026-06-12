@@ -115,10 +115,10 @@ describe('ProjectSidebar', () => {
     expect(menu.exists()).toBe(true)
     expect(menu.text()).toContain('View details')
     expect(menu.text()).toContain('Add project')
-    expect(menu.text()).toContain('Copy description')
+    expect(menu.text()).toContain('Copy title and description')
     expect(menu.text()).toContain('Delete TODO')
 
-    await wrapper.find('[data-testid="todo-menu-copy-description-todo-a"]').trigger('click')
+    await wrapper.find('[data-testid="todo-menu-copy-title-description-todo-a"]').trigger('click')
 
     expect(wrapper.emitted('copy-todo-description')[0]).toEqual(['todo-a'])
     expect(wrapper.find('[data-testid="todo-context-menu-todo-a"]').exists()).toBe(false)
@@ -185,7 +185,7 @@ describe('ProjectSidebar', () => {
     const actionTestIds = Array.from(actionGroup.element.children).map((node) => {
       return node.getAttribute('data-testid') || node.querySelector('[data-testid]')?.getAttribute('data-testid')
     })
-    expect(actionTestIds).toEqual(['mark-todo-in-progress-todo-a'])
+    expect(actionTestIds).toEqual(['todo-menu-button-todo-a', 'mark-todo-in-progress-todo-a'])
     expect(wrapper.find('[data-testid="edit-todo-todo-a"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="add-project-to-todo-todo-a"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="delete-todo-todo-a"]').exists()).toBe(false)
@@ -926,6 +926,70 @@ describe('ProjectSidebar', () => {
     expect(styles).toContain('.todo-header-row-priority-high')
     expect(styles).toContain('.todo-header-row-priority-medium')
     expect(styles).toContain('.todo-header-row-priority-low')
+  })
+
+  it('opens TODO context menu from the three-dot action button', async () => {
+    const wrapper = mountSidebar()
+
+    await wrapper.find('[data-testid="todo-menu-button-todo-a"]').trigger('click')
+    await nextTick()
+
+    const menu = wrapper.find('[data-testid="todo-context-menu-todo-a"]')
+    expect(menu.exists()).toBe(true)
+    expect(menu.text()).toContain('View details')
+    expect(menu.text()).toContain('Add project')
+    expect(menu.text()).toContain('Copy title and description')
+    expect(menu.text()).toContain('Delete TODO')
+  })
+
+  it('shares menu actions between right-click and three-dot button', async () => {
+    const wrapper = mountSidebar()
+
+    // Open via right-click and verify actions work.
+    await openTodoContextMenu(wrapper, 'todo-a')
+    await wrapper.find('[data-testid="todo-menu-edit-todo-a"]').trigger('click')
+    expect(wrapper.emitted('edit-todo')[0]).toEqual(['todo-a'])
+
+    // Open via three-dot button and verify same menu appears.
+    await wrapper.find('[data-testid="todo-menu-button-todo-a"]').trigger('click')
+    await nextTick()
+    expect(wrapper.find('[data-testid="todo-context-menu-todo-a"]').exists()).toBe(true)
+    await wrapper.find('[data-testid="todo-menu-add-project-todo-a"]').trigger('click')
+    expect(wrapper.emitted('add-project-to-todo')[0]).toEqual(['todo-a'])
+  })
+
+  it('closes the three-dot menu on outside click', async () => {
+    const wrapper = mountSidebar()
+
+    await wrapper.find('[data-testid="todo-menu-button-todo-a"]').trigger('click')
+    await nextTick()
+    expect(wrapper.find('[data-testid="todo-context-menu-todo-a"]').exists()).toBe(true)
+
+    window.dispatchEvent(new MouseEvent('click'))
+    await nextTick()
+    expect(wrapper.find('[data-testid="todo-context-menu-todo-a"]').exists()).toBe(false)
+  })
+
+  it('menu copy item shows title and description text', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        todos: [
+          {
+            id: 'todo-a',
+            title: '修复登录问题',
+            description: '登录后跳回首页',
+            priority: 'high',
+            status: 'active'
+          }
+        ]
+      }
+    })
+
+    await openTodoContextMenu(wrapper, 'todo-a')
+
+    const menu = wrapper.find('[data-testid="todo-context-menu-todo-a"]')
+    expect(menu.text()).toContain('Copy title and description')
+    expect(menu.text()).not.toContain('Copy description')
   })
 })
 

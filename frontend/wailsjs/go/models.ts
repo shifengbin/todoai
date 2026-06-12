@@ -120,6 +120,7 @@ export namespace main {
 	    state: string;
 	    createdAt: string;
 	    lastSelectedAt: string;
+	    output?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ProjectTerminal(source);
@@ -136,6 +137,7 @@ export namespace main {
 	        this.state = source["state"];
 	        this.createdAt = source["createdAt"];
 	        this.lastSelectedAt = source["lastSelectedAt"];
+	        this.output = source["output"];
 	    }
 	}
 	export class TodoProject {

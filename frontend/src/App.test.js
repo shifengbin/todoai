@@ -83,7 +83,8 @@ vi.mock('./xtermFactory', () => {
         open(container) {
           this.openedIn = container
         },
-        write: vi.fn(),
+        write: vi.fn((data, callback) => callback?.()),
+        focus: vi.fn(),
         dispose: vi.fn(),
         hasSelection() {
           return Boolean(this.selection)
@@ -231,6 +232,21 @@ describe('App project terminal tree', () => {
     expect(ClipboardGetText).toHaveBeenCalled()
     expect(SendTerminalInput).toHaveBeenCalledWith('terminal-a', 'echo hi\n')
     expect(wrapper.find('[data-testid="terminal-context-menu"]').exists()).toBe(false)
+    expect(xtermMock.sessions.get('terminal-a').terminal.focus).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes the context menu and restores terminal focus when pasting an empty clipboard', async () => {
+    runtimeMock.ClipboardGetText.mockResolvedValue('')
+    const wrapper = await mountReadyApp()
+
+    await openTerminalMenu(wrapper)
+    await wrapper.find('[data-testid="terminal-menu-paste"]').trigger('click')
+    await flushPromises()
+
+    expect(ClipboardGetText).toHaveBeenCalled()
+    expect(SendTerminalInput).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="terminal-context-menu"]').exists()).toBe(false)
+    expect(xtermMock.sessions.get('terminal-a').terminal.focus).toHaveBeenCalledTimes(1)
   })
 
   it('shows configured terminal launch profiles from loaded settings', async () => {
@@ -330,6 +346,38 @@ describe('App project terminal tree', () => {
     expect(SelectTerminal).toHaveBeenCalledWith('terminal-b')
     expect(xtermMock.sessions.has('terminal-b')).toBe(true)
     expect(wrapper.find('[data-testid="terminal-pane-terminal-b"]').classes()).toContain('active')
+  })
+
+  it('automatically restarts a restored terminal when selected', async () => {
+    const restoredTerminal = terminal({
+      id: 'terminal-restored',
+      shellName: 'zsh',
+      state: 'exited',
+      output: 'previous codex output\r\n'
+    })
+    const initialState = projectState({
+      terminals: [terminal({ id: 'terminal-a' }), restoredTerminal],
+      activeTerminalId: 'terminal-a'
+    })
+    appApiMock.ListProjects.mockResolvedValue(initialState)
+    appApiMock.SelectTerminal.mockResolvedValue(
+      projectState({
+        terminals: [terminal({ id: 'terminal-a' }), restoredTerminal],
+        activeTerminalId: 'terminal-restored'
+      })
+    )
+    const wrapper = await mountReadyApp()
+    StartShell.mockClear()
+
+    await wrapper.find('[data-testid="terminal-terminal-restored"]').trigger('click')
+    await flushPromises()
+
+    expect(SelectTerminal).toHaveBeenCalledWith('terminal-restored')
+    expect(xtermMock.sessions.get('terminal-restored').terminal.write).toHaveBeenCalledWith(
+      'previous codex output\r\n',
+      expect.any(Function)
+    )
+    expect(StartShell).toHaveBeenCalledWith('terminal-restored', 100, 32)
   })
 
   it('confirms and deletes a project from the project tree', async () => {

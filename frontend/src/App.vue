@@ -46,6 +46,7 @@ const activeTerminalId = ref('')
 const importSummary = ref(null)
 const shellStatuses = reactive({})
 const terminalContainers = new Map()
+const autoRestartedTerminals = new Set()
 const errorMessage = ref('')
 let gitStatusRequestId = 0
 let gitStatusInFlightProjectId = ''
@@ -358,6 +359,7 @@ function applyState(state, options = {}) {
     if (!nextTerminalIds.has(terminalId)) {
       terminalManager.dispose(terminalId)
       terminalContainers.delete(terminalId)
+      autoRestartedTerminals.delete(terminalId)
       delete shellStatuses[terminalId]
     }
   }
@@ -601,7 +603,30 @@ async function selectTerminal(terminalId) {
   try {
     applyState(await SelectTerminal(terminalId))
     await activateActiveTerminal()
+    await autoRestartIfExited(terminalId)
   } catch (error) {
+    showError(error)
+  }
+}
+
+async function autoRestartIfExited(terminalId) {
+  const terminal = terminals.value.find((candidate) => candidate.id === terminalId)
+  if (!terminal || terminal.state !== 'exited') {
+    return
+  }
+  if (autoRestartedTerminals.has(terminalId)) {
+    return
+  }
+  if (!activeTodoProjectProject.value?.available) {
+    return
+  }
+  autoRestartedTerminals.add(terminalId)
+  const size = terminalManager.size(terminalId) || { cols: 80, rows: 24 }
+  try {
+    const status = await StartShell(terminalId, size.cols || 80, size.rows || 24)
+    updateTerminalState(status.terminalId, status.state)
+  } catch (error) {
+    autoRestartedTerminals.delete(terminalId)
     showError(error)
   }
 }
@@ -640,7 +665,13 @@ async function deleteTodo(todoId) {
 
 function copyTodoDescription(todoId) {
   const todo = todos.value.find((candidate) => candidate.id === todoId)
-  ClipboardSetText(todo?.description || '')
+  if (!todo) {
+    return
+  }
+  const title = todo.title || ''
+  const description = todo.description || ''
+  const text = description ? `${title}\n${description}` : title
+  ClipboardSetText(text)
 }
 
 async function changeTodoStatus(todoId, status) {
@@ -695,6 +726,10 @@ async function activateActiveTerminal() {
 
   terminalManager.activate(terminal.id, container)
   terminalManager.fitActive()
+  if (terminal.state !== 'running' && terminal.output) {
+    await nextTick()
+    terminalManager.replayHistory(terminal.id, terminal.output)
+  }
 }
 
 async function restartActiveShell() {
@@ -705,6 +740,7 @@ async function restartActiveShell() {
   const size = terminalManager.size(terminal.id) || { cols: 80, rows: 24 }
   try {
     const status = await StartShell(terminal.id, size.cols || 80, size.rows || 24)
+    autoRestartedTerminals.add(terminal.id)
     updateTerminalState(status.terminalId, status.state)
     await activateActiveTerminal()
   } catch (error) {
@@ -748,6 +784,8 @@ async function pasteFromTerminalMenu() {
   const terminalId = terminalMenu.terminalId
   await terminalManager.paste(terminalId)
   closeTerminalMenu()
+  await nextTick()
+  terminalManager.focus(terminalId)
 }
 
 function hasTerminalSelection(terminalId) {
