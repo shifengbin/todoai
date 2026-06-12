@@ -1,10 +1,15 @@
 import { mount } from '@vue/test-utils'
 import { readFileSync } from 'node:fs'
 import { nextTick } from 'vue'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import ProjectSidebar from './ProjectSidebar.vue'
 
 describe('ProjectSidebar', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    document.body.innerHTML = ''
+  })
+
   it('renders the TODO tree and emits TODO-scoped terminal actions', async () => {
     const wrapper = mountInProgressSidebar({
       props: {
@@ -527,7 +532,7 @@ describe('ProjectSidebar', () => {
     expect(wrapper.find('[data-testid="todo-activity-todo-a"]').exists()).toBe(false)
   })
 
-  it('renders TODO description and priority styling', () => {
+  it('renders TODO description summary and priority styling without a default tooltip', () => {
     const wrapper = mountSidebar({
       props: {
         todos: [
@@ -548,6 +553,124 @@ describe('ProjectSidebar', () => {
     expect(wrapper.find('[data-testid="todo-priority-todo-a"]').exists()).toBe(false)
     expect(todoHeader.textContent).not.toContain('高')
     expect(wrapper.find('[data-testid="todo-description-todo-a"]').text()).toBe('登录后跳回首页')
+    expect(wrapper.find('[data-testid="todo-description-tooltip-todo-a"]').exists()).toBe(false)
+  })
+
+  it('shows the full TODO description tooltip after the hover delay', async () => {
+    vi.useFakeTimers()
+    const description = '登录后跳回首页，需要保留原始跳转地址'
+    const wrapper = mountSidebar({
+      props: {
+        todos: [
+          {
+            id: 'todo-a',
+            title: '修复登录问题',
+            description,
+            priority: 'high',
+            status: 'active'
+          }
+        ]
+      }
+    })
+
+    await wrapper.find('[data-testid="todo-todo-a"]').trigger('mouseenter', { clientX: 120, clientY: 80 })
+    vi.advanceTimersByTime(599)
+    await nextTick()
+    expect(wrapper.find('[data-testid="todo-description-tooltip-todo-a"]').exists()).toBe(false)
+
+    vi.advanceTimersByTime(1)
+    await nextTick()
+
+    const tooltip = document.body.querySelector('[data-testid="todo-description-tooltip-todo-a"]')
+    expect(tooltip).not.toBeNull()
+    expect(tooltip.textContent).toBe(description)
+    wrapper.unmount()
+    vi.useRealTimers()
+  })
+
+  it('renders the TODO description tooltip in a non-visual top-level layer', async () => {
+    vi.useFakeTimers()
+    const description = '登录后跳回首页，需要保留原始跳转地址'
+    const wrapper = mountSidebar({
+      attachTo: document.body,
+      props: {
+        todos: [
+          {
+            id: 'todo-a',
+            title: '修复登录问题',
+            description,
+            priority: 'high',
+            status: 'active'
+          }
+        ]
+      }
+    })
+
+    await wrapper.find('[data-testid="todo-todo-a"]').trigger('mouseenter', { clientX: 120, clientY: 80 })
+    vi.advanceTimersByTime(600)
+    await nextTick()
+
+    const tooltip = document.body.querySelector('[data-testid="todo-description-tooltip-todo-a"]')
+    expect(tooltip).not.toBeNull()
+    expect(tooltip.parentElement.classList.contains('todo-description-tooltip-layer')).toBe(true)
+    expect(tooltip.parentElement.classList.contains('app-shell')).toBe(false)
+    expect(tooltip.parentElement.parentElement).toBe(document.body)
+    expect(wrapper.find('[data-testid="todo-todo-a"]').element.contains(tooltip)).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('hides the TODO description tooltip on mouse leave', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountSidebar({
+      props: {
+        todos: [
+          {
+            id: 'todo-a',
+            title: '修复登录问题',
+            description: '登录后跳回首页',
+            priority: 'high',
+            status: 'active'
+          }
+        ]
+      }
+    })
+
+    const todoRow = wrapper.find('[data-testid="todo-todo-a"]')
+    await todoRow.trigger('mouseenter', { clientX: 120, clientY: 80 })
+    vi.advanceTimersByTime(600)
+    await nextTick()
+    expect(document.body.querySelector('[data-testid="todo-description-tooltip-todo-a"]')).not.toBeNull()
+
+    await todoRow.trigger('mouseleave')
+
+    expect(document.body.querySelector('[data-testid="todo-description-tooltip-todo-a"]')).toBeNull()
+    wrapper.unmount()
+    vi.useRealTimers()
+  })
+
+  it('does not show a TODO description tooltip without a description', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountSidebar({
+      props: {
+        todos: [
+          {
+            id: 'todo-a',
+            title: '整理文档',
+            description: '',
+            priority: 'low',
+            status: 'active'
+          }
+        ]
+      }
+    })
+
+    await wrapper.find('[data-testid="todo-todo-a"]').trigger('mouseenter')
+    vi.advanceTimersByTime(1000)
+    await nextTick()
+
+    expect(document.body.querySelector('[data-testid="todo-description-tooltip-todo-a"]')).toBeNull()
+    wrapper.unmount()
+    vi.useRealTimers()
   })
 
   it('orders active TODOs by priority from high to low', () => {
@@ -928,6 +1051,20 @@ describe('ProjectSidebar', () => {
     expect(styles).toContain('.todo-header-row-priority-low')
   })
 
+  it('defines a wide TODO description tooltip style', () => {
+    const styles = readFileSync('src/style.css', 'utf8')
+    const tooltipLayerRule = styles.slice(styles.indexOf('.todo-description-tooltip-layer {'), styles.indexOf('.todo-description-tooltip {'))
+    const tooltipRule = styles.slice(styles.indexOf('.todo-description-tooltip {'), styles.indexOf('.todo-actions {'))
+
+    expect(tooltipLayerRule).toContain('position: fixed;')
+    expect(tooltipLayerRule).toContain('inset: 0;')
+    expect(tooltipLayerRule).toContain('z-index: 30;')
+    expect(tooltipLayerRule).toContain('pointer-events: none;')
+    expect(tooltipRule).toContain('position: fixed;')
+    expect(tooltipRule).toContain('width: min(520px, 72vw);')
+    expect(tooltipRule).not.toContain('max-width: min(320px, calc(100% - 34px));')
+  })
+
   it('opens TODO context menu from the three-dot action button', async () => {
     const wrapper = mountSidebar()
 
@@ -1064,7 +1201,7 @@ async function openTodoContextMenu(wrapper, todoId) {
 }
 
 function mountSidebar(options = {}) {
-  return mount(ProjectSidebar, {
+  const mountOptions = {
     props: {
       projects: [{ id: 'project-a', name: 'alpha', path: '/work/alpha', available: true }],
       todos: [
@@ -1096,7 +1233,11 @@ function mountSidebar(options = {}) {
       launchProfiles: [],
       ...(options.props || {})
     }
-  })
+  }
+  if (options.attachTo) {
+    mountOptions.attachTo = options.attachTo
+  }
+  return mount(ProjectSidebar, mountOptions)
 }
 
 function mountInProgressSidebar(options = {}) {

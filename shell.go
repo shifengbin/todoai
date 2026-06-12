@@ -950,6 +950,8 @@ func IntegratedShellLaunch(shellPath string, baseEnv []string) (ShellLaunch, err
 		return zshIntegratedLaunch(launch)
 	case "bash":
 		return bashIntegratedLaunch(launch)
+	case "pwsh", "powershell":
+		return powerShellIntegratedLaunch(launch)
 	default:
 		return launch, nil
 	}
@@ -995,6 +997,28 @@ func bashIntegratedLaunch(launch ShellLaunch) (ShellLaunch, error) {
 		return ShellLaunch{}, err
 	}
 	launch.Args = []string{"--rcfile", path, "-i"}
+	launch.Cleanup = func() {
+		_ = os.Remove(path)
+	}
+	return launch, nil
+}
+
+func powerShellIntegratedLaunch(launch ShellLaunch) (ShellLaunch, error) {
+	file, err := os.CreateTemp("", "tui-helper-powershell-*.ps1")
+	if err != nil {
+		return ShellLaunch{}, err
+	}
+	path := file.Name()
+	if _, err := file.WriteString(powerShellIntegrationScript()); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return ShellLaunch{}, err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return ShellLaunch{}, err
+	}
+	launch.Args = []string{"-NoLogo", "-NoExit", "-ExecutionPolicy", "Bypass", "-Command", ". " + powerShellSingleQuoted(path)}
 	launch.Cleanup = func() {
 		_ = os.Remove(path)
 	}
@@ -1065,6 +1089,59 @@ __tui_helper_prompt_command() {
 trap '__tui_helper_debug_trap' DEBUG
 PROMPT_COMMAND="__tui_helper_prompt_command"
 `
+}
+
+func powerShellIntegrationScript() string {
+	return `
+$script:__tui_helper_command_started = $false
+$script:__tui_helper_original_prompt = $null
+if (Test-Path Function:\prompt) {
+  $script:__tui_helper_original_prompt = (Get-Command prompt -CommandType Function).ScriptBlock
+}
+
+function __tui_helper_write_osc {
+  param([string]$Payload)
+  [Console]::Out.Write("$([char]27)]$Payload$([char]7)")
+}
+
+function __tui_helper_emit_command_start {
+  param([string]$Command)
+  if ([string]::IsNullOrWhiteSpace($Command)) {
+    return
+  }
+  $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Command))
+  __tui_helper_write_osc "777;tui-helper;command-start;$encoded"
+  $script:__tui_helper_command_started = $true
+}
+
+function __tui_helper_emit_command_end {
+  __tui_helper_write_osc "777;tui-helper;command-end"
+}
+
+if (Get-Command Set-PSReadLineOption -ErrorAction SilentlyContinue) {
+  Set-PSReadLineOption -AddToHistoryHandler {
+    param([string]$commandLine)
+    __tui_helper_emit_command_start $commandLine
+    return $true
+  }
+}
+
+function global:prompt {
+  if ($script:__tui_helper_command_started) {
+    __tui_helper_emit_command_end
+    $script:__tui_helper_command_started = $false
+  }
+  if ($script:__tui_helper_original_prompt) {
+    & $script:__tui_helper_original_prompt
+  } else {
+    "PS $($executionContext.SessionState.Path.CurrentLocation)> "
+  }
+}
+`
+}
+
+func powerShellSingleQuoted(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
 func shellNameFromPath(shellPath string) string {

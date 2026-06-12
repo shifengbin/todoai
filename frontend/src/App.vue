@@ -638,7 +638,12 @@ async function createTerminal(todoProjectId, launchProfile = null) {
     applyState(state)
     await activateActiveTerminal()
     if (launchProfile?.command && state?.activeTerminalId) {
-      await SendTerminalInput(state.activeTerminalId, `${launchProfile.command}\n`)
+      const terminal = terminals.value.find((candidate) => candidate.id === state.activeTerminalId)
+      if (terminal) {
+        terminal.currentCommand = sanitizeCommandLabel(launchProfile.command)
+        resetTerminalActivity(terminal)
+      }
+      await SendTerminalInput(state.activeTerminalId, `${launchProfile.command}\r`)
     }
   } catch (error) {
     showError(error)
@@ -1203,7 +1208,7 @@ function classifyTerminalActivity(terminal, title) {
 }
 
 function hasBusyTitleSignal(title) {
-  return /[|/\\⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏◐◓◑◒⣾⣽⣻⢿⡿⣟⣯⣷]/.test(title) ||
+  return /[|⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏◐◓◑◒⣾⣽⣻⢿⡿⣟⣯⣷]/.test(title) ||
     /\b(working|thinking|running|processing|executing|busy)\b/.test(title)
 }
 

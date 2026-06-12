@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -396,6 +397,105 @@ func TestShellSessionManagerStartsSupportedShellsWithCommandLabelIntegration(t *
 	if envValue(request.Env, "ZDOTDIR") == "" {
 		t.Fatal("ZDOTDIR is empty, want zsh integration env")
 	}
+}
+
+func TestShellSessionManagerStartsPowerShellWithCommandLabelIntegration(t *testing.T) {
+	starter := newFakeShellStarter()
+	manager := NewShellSessionManager(
+		starter.Start,
+		ShellSessionCallbacks{},
+		WithShellPathResolver(func() string { return `C:\Program Files\PowerShell\7\pwsh.exe` }),
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-1")),
+	)
+	project := Project{ID: "project-a", Path: t.TempDir(), Available: true}
+
+	terminal, err := manager.CreateTerminal(project, TerminalSize{Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatalf("CreateTerminal() error = %v", err)
+	}
+
+	request := starter.requests[0]
+	if terminal.ShellName != "pwsh" {
+		t.Fatalf("ShellName = %q, want pwsh", terminal.ShellName)
+	}
+	if len(request.ShellArgs) < 4 {
+		t.Fatalf("ShellArgs = %#v, want PowerShell integration args", request.ShellArgs)
+	}
+	if !containsShellArgPair(request.ShellArgs, "-ExecutionPolicy", "Bypass") {
+		t.Fatalf("ShellArgs = %#v, want execution policy bypass", request.ShellArgs)
+	}
+	if containsShellArg(request.ShellArgs, "-NoProfile") {
+		t.Fatalf("ShellArgs = %#v, should not skip user profile", request.ShellArgs)
+	}
+	if request.ShellArgs[0] != "-NoLogo" || request.ShellArgs[1] != "-NoExit" || request.ShellArgs[len(request.ShellArgs)-2] != "-Command" {
+		t.Fatalf("ShellArgs = %#v, want -NoLogo -NoExit ... -Command", request.ShellArgs)
+	}
+	scriptPath := powerShellIntegrationPathFromCommand(t, request.ShellArgs[len(request.ShellArgs)-1])
+	script, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", scriptPath, err)
+	}
+	scriptText := string(script)
+	for _, want := range []string{
+		"tui-helper;command-start;",
+		"tui-helper;command-end",
+		"Set-PSReadLineOption -AddToHistoryHandler",
+		"function global:prompt",
+	} {
+		if !strings.Contains(scriptText, want) {
+			t.Fatalf("PowerShell integration script missing %q:\n%s", want, scriptText)
+		}
+	}
+
+	if err := manager.DeleteTerminal(terminal.ID); err != nil {
+		t.Fatalf("DeleteTerminal() error = %v", err)
+	}
+	if _, err := os.Stat(scriptPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("PowerShell integration script still exists after cleanup: %v", err)
+	}
+}
+
+func TestPowerShellIntegrationSupportsWindowsPowerShellName(t *testing.T) {
+	launch, err := IntegratedShellLaunch(`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, []string{})
+	if err != nil {
+		t.Fatalf("IntegratedShellLaunch() error = %v", err)
+	}
+	defer launch.Cleanup()
+
+	if launch.ShellName != "powershell" {
+		t.Fatalf("ShellName = %q, want powershell", launch.ShellName)
+	}
+	if !containsShellArgPair(launch.Args, "-ExecutionPolicy", "Bypass") || launch.Args[len(launch.Args)-2] != "-Command" {
+		t.Fatalf("Args = %#v, want PowerShell integration args", launch.Args)
+	}
+}
+
+func containsShellArg(args []string, want string) bool {
+	for _, arg := range args {
+		if arg == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsShellArgPair(args []string, left string, right string) bool {
+	for index := 0; index+1 < len(args); index++ {
+		if args[index] == left && args[index+1] == right {
+			return true
+		}
+	}
+	return false
+}
+
+func powerShellIntegrationPathFromCommand(t *testing.T, command string) string {
+	t.Helper()
+	const prefix = ". '"
+	const suffix = "'"
+	if !strings.HasPrefix(command, prefix) || !strings.HasSuffix(command, suffix) {
+		t.Fatalf("PowerShell command = %q, want dot-sourced script path", command)
+	}
+	return strings.ReplaceAll(strings.TrimSuffix(strings.TrimPrefix(command, prefix), suffix), "''", "'")
 }
 
 func TestBashIntegrationSkipsPromptCommandWhileIdle(t *testing.T) {

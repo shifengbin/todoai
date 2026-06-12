@@ -466,6 +466,7 @@ button {
 }
 
 .todo-row {
+    position: relative;
     display: grid;
     min-width: 0;
     grid-template-columns: 22px minmax(0, 1fr);
@@ -553,6 +554,30 @@ button {
     line-height: 1.3;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.todo-description-tooltip-layer {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    pointer-events: none;
+}
+
+.todo-description-tooltip {
+    position: fixed;
+    z-index: 1;
+    width: min(520px, 72vw);
+    padding: 8px 10px;
+    border: 1px solid #46515d;
+    background: rgba(31, 36, 42, 0.98);
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
+    color: #f8fafc;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+    pointer-events: none;
+    white-space: pre-wrap;
 }
 
 .todo-actions {

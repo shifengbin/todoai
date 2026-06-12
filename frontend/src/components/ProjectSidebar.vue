@@ -97,9 +97,16 @@ const confirmDeleteProjectId = ref('')
 const selectedProjectIds = ref(new Set())
 const confirmBulkDeleteProjects = ref(false)
 const todoContextMenu = ref({ todoId: '', x: 0, y: 0 })
+const hoveredTodoId = ref('')
+const visibleDescriptionTooltipTodoId = ref('')
+const descriptionTooltipPosition = ref({ x: 0, y: 0 })
 const launchMenuPlacement = ref('down')
 const launchMenuMaxHeight = ref('')
 
+const descriptionTooltipLayer = createTodoDescriptionTooltipLayer()
+let descriptionTooltipTimer = null
+const descriptionTooltipDelayMs = 600
+const descriptionTooltipOffset = 12
 const launchMenuBorderHeight = 2
 const launchMenuMinimumHeight = 32
 const launchMenuOptionHeight = 32
@@ -270,11 +277,13 @@ function expandTodo(todoId) {
 }
 
 function selectTodoProject(todoProject) {
+  hideTodoDescriptionTooltip()
   expandTodo(todoProject.todoId)
   emit('select-todo-project', todoProject.id)
 }
 
 function toggleTerminalLaunchMenu(todoProject, event) {
+  hideTodoDescriptionTooltip()
   expandTodo(todoProject.todoId)
   closeTodoProjectRemovePopover()
   closeTodoActionPopover()
@@ -294,6 +303,7 @@ function closeTerminalLaunchMenu() {
 }
 
 function openTodoProjectRemovePopover(todoProjectId) {
+  hideTodoDescriptionTooltip()
   closeTerminalLaunchMenu()
   closeTodoActionPopover()
   closeProjectDeletePopover()
@@ -311,6 +321,7 @@ function confirmTodoProjectRemoval(todoProjectId) {
 }
 
 function openTodoActionPopover(todoId, action) {
+  hideTodoDescriptionTooltip()
   closeTerminalLaunchMenu()
   closeTodoProjectRemovePopover()
   closeProjectDeletePopover()
@@ -324,6 +335,7 @@ function closeTodoActionPopover() {
 
 function openTodoContextMenu(todoId, event) {
   event.preventDefault()
+  hideTodoDescriptionTooltip()
   closeTerminalLaunchMenu()
   closeTodoProjectRemovePopover()
   closeTodoActionPopover()
@@ -335,6 +347,7 @@ function openTodoContextMenu(todoId, event) {
 function openTodoContextMenuFromButton(todoId, event) {
   event.stopPropagation()
   const rect = event.currentTarget.getBoundingClientRect()
+  hideTodoDescriptionTooltip()
   closeTerminalLaunchMenu()
   closeTodoProjectRemovePopover()
   closeTodoActionPopover()
@@ -365,11 +378,13 @@ function confirmTodoAction(todoId, action) {
 }
 
 function changeTodoStatus(todoId, status) {
+  hideTodoDescriptionTooltip()
   todoView.value = status
   emit('change-todo-status', todoId, status)
 }
 
 function openProjectDeletePopover(projectId) {
+  hideTodoDescriptionTooltip()
   closeTerminalLaunchMenu()
   closeTodoProjectRemovePopover()
   closeTodoActionPopover()
@@ -408,6 +423,7 @@ function openBulkProjectDeletePopover() {
   if (selectedProjectCount.value === 0) {
     return
   }
+  hideTodoDescriptionTooltip()
   closeTerminalLaunchMenu()
   closeTodoProjectRemovePopover()
   closeTodoActionPopover()
@@ -436,6 +452,7 @@ function confirmBulkProjectDeletion() {
 }
 
 function closeFloatingMenus() {
+  hideTodoDescriptionTooltip()
   closeTerminalLaunchMenu()
   closeTodoProjectRemovePopover()
   closeTodoActionPopover()
@@ -445,9 +462,81 @@ function closeFloatingMenus() {
 }
 
 function selectTerminalLaunchOption(todoProject, option) {
+  hideTodoDescriptionTooltip()
   expandTodo(todoProject.todoId)
   emit('create-terminal', todoProject.id, option.command ? option : null)
   closeTerminalLaunchMenu()
+}
+
+function todoDescription(todo) {
+  return (todo?.description || '').trim()
+}
+
+function clearTodoDescriptionTooltipTimer() {
+  if (descriptionTooltipTimer !== null) {
+    clearTimeout(descriptionTooltipTimer)
+    descriptionTooltipTimer = null
+  }
+}
+
+function showTodoDescriptionTooltip(todo) {
+  const description = todoDescription(todo)
+  if (!description || hoveredTodoId.value !== todo.id) {
+    return
+  }
+  visibleDescriptionTooltipTodoId.value = todo.id
+}
+
+function descriptionTooltipStyle() {
+  return {
+    left: `${descriptionTooltipPosition.value.x}px`,
+    top: `${descriptionTooltipPosition.value.y}px`
+  }
+}
+
+function todoDescriptionTooltipPosition(trigger) {
+  const rect = trigger?.getBoundingClientRect?.()
+  const viewportWidth = window.innerWidth || 1024
+  const tooltipWidth = Math.min(520, viewportWidth * 0.72)
+  const maxLeft = Math.max(descriptionTooltipOffset, viewportWidth - tooltipWidth - descriptionTooltipOffset)
+  const desiredLeft = (rect?.left || 0) + 34
+  return {
+    x: Math.min(Math.max(desiredLeft, descriptionTooltipOffset), maxLeft),
+    y: (rect?.bottom || 0) + descriptionTooltipOffset
+  }
+}
+
+function startTodoDescriptionTooltip(todo, event) {
+  hideTodoDescriptionTooltip()
+  const description = todoDescription(todo)
+  if (!description) {
+    return
+  }
+
+  hoveredTodoId.value = todo.id
+  descriptionTooltipPosition.value = todoDescriptionTooltipPosition(event?.currentTarget)
+  descriptionTooltipTimer = setTimeout(() => {
+    descriptionTooltipTimer = null
+    showTodoDescriptionTooltip(todo)
+  }, descriptionTooltipDelayMs)
+}
+
+function hideTodoDescriptionTooltip() {
+  clearTodoDescriptionTooltipTimer()
+  hoveredTodoId.value = ''
+  visibleDescriptionTooltipTodoId.value = ''
+  descriptionTooltipPosition.value = { x: 0, y: 0 }
+}
+
+function isTodoDescriptionTooltipVisible(todo) {
+  return visibleDescriptionTooltipTodoId.value === todo.id && Boolean(todoDescription(todo))
+}
+
+function createTodoDescriptionTooltipLayer() {
+  const layer = document.createElement('div')
+  layer.className = 'todo-description-tooltip-layer'
+  document.body.appendChild(layer)
+  return layer
 }
 
 function resetTerminalLaunchMenuPlacement() {
@@ -618,6 +707,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  hideTodoDescriptionTooltip()
+  descriptionTooltipLayer.remove()
   window.removeEventListener('click', closeFloatingMenus)
 })
 
@@ -882,6 +973,8 @@ watch(
               :data-testid="`todo-${todo.id}`"
               :title="collapsedTodoActivityState(todo) ? collapsedTodoActivityLabel(todo) : null"
               @contextmenu.prevent.stop="openTodoContextMenu(todo.id, $event)"
+              @mouseenter="startTodoDescriptionTooltip(todo, $event)"
+              @mouseleave="hideTodoDescriptionTooltip"
             >
               <ListTodo class="project-icon" :size="17" />
               <span class="project-copy">
@@ -909,6 +1002,18 @@ watch(
                 <span class="project-path">{{ todoProjectsForTodo(todo.id).length }} projects</span>
               </span>
             </div>
+
+            <Teleport :to="descriptionTooltipLayer">
+              <span
+                v-if="isTodoDescriptionTooltipVisible(todo)"
+                class="todo-description-tooltip"
+                :style="descriptionTooltipStyle()"
+                :data-testid="`todo-description-tooltip-${todo.id}`"
+                role="tooltip"
+              >
+                {{ todoDescription(todo) }}
+              </span>
+            </Teleport>
 
             <div
               class="todo-actions"

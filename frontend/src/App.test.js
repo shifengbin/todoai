@@ -283,6 +283,7 @@ describe('App project terminal tree', () => {
     await flushPromises()
 
     expect(CreateTodoTerminal).toHaveBeenCalledWith('todo-project-a', 100, 32)
+    expect(SendTerminalInput).not.toHaveBeenCalled()
     expect(xtermMock.sessions.has('terminal-b')).toBe(true)
     expect(wrapper.find('[data-testid="terminal-terminal-b"]').classes()).toContain('active')
   })
@@ -322,8 +323,16 @@ describe('App project terminal tree', () => {
     await flushPromises()
 
     expect(CreateTodoTerminal).toHaveBeenCalledWith('todo-project-a', 100, 32)
-    expect(SendTerminalInput).toHaveBeenCalledWith('terminal-b', 'codex --model gpt-5\n')
-    expect(wrapper.find('[data-testid="terminal-terminal-b"]').classes()).toContain('active')
+    expect(SendTerminalInput).toHaveBeenCalledWith('terminal-b', 'codex --model gpt-5\r')
+    const terminalRow = wrapper.find('[data-testid="terminal-terminal-b"]')
+    expect(terminalRow.classes()).toContain('active')
+    expect(terminalRow.text()).toContain('codex --model gpt-5')
+
+    xtermMock.sessions.get('terminal-b').onCommandState({ type: 'command-end' })
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="terminal-terminal-b"]').text()).toContain('bash')
+    expect(wrapper.find('[data-testid="terminal-terminal-b"]').text()).not.toContain('codex --model gpt-5')
   })
 
   it('selects a terminal from the project tree', async () => {
@@ -989,6 +998,35 @@ describe('App project terminal tree', () => {
     const terminalRow = wrapper.find('[data-testid="terminal-terminal-a"]')
     expect(terminalRow.text()).toContain('codex')
     expect(terminalRow.attributes('data-activity-state')).toBe('idle')
+  })
+
+  it('keeps a terminal idle when a Windows path is used as the title', async () => {
+    const wrapper = await mountReadyApp()
+
+    xtermMock.sessions.get('terminal-a').onTitleChange('C:\\Users\\developer\\repo')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="terminal-terminal-a"]').attributes('data-activity-state')).toBe('idle')
+  })
+
+  it('keeps a terminal idle when a Unix path is used as the title', async () => {
+    const wrapper = await mountReadyApp()
+
+    xtermMock.sessions.get('terminal-a').onTitleChange('/home/developer/repo')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="terminal-terminal-a"]').attributes('data-activity-state')).toBe('idle')
+  })
+
+  it('marks an interactive terminal busy from spinner title changes', async () => {
+    const wrapper = await mountReadyApp()
+
+    xtermMock.sessions.get('terminal-a').onCommandState({ type: 'command-start', command: 'codex' })
+    await nextTick()
+    xtermMock.sessions.get('terminal-a').onTitleChange('codex ⠋')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="terminal-terminal-a"]').attributes('data-activity-state')).toBe('busy')
   })
 
   it('marks an interactive terminal as needing input from attention title changes', async () => {
