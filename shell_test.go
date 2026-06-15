@@ -345,14 +345,14 @@ func TestShellSessionManagerFiltersCommandStatePayloadFromOutputAndHistory(t *te
 	if _, err := manager.CreateTerminal(project, TerminalSize{Cols: 80, Rows: 24}); err != nil {
 		t.Fatalf("CreateTerminal() error = %v", err)
 	}
-	starter.processes[0].emit("before\x1b]777;tui-helper;command-start;Y29kZXg=\aafter")
+	starter.processes[0].emit("before\x1b]777;todoai;command-start;Y29kZXg=\aafter")
 
 	select {
 	case event := <-outputs:
 		if event.Data != "beforeafter" {
 			t.Fatalf("Data = %q, want beforeafter", event.Data)
 		}
-		if strings.Contains(event.Data, "tui-helper") || strings.Contains(event.Data, "Y29kZXg") {
+		if strings.Contains(event.Data, "todoai") || strings.Contains(event.Data, "Y29kZXg") {
 			t.Fatalf("Data contains private payload: %q", event.Data)
 		}
 	case <-time.After(time.Second):
@@ -517,8 +517,8 @@ func TestShellSessionManagerStartsPowerShellWithCommandLabelIntegration(t *testi
 	}
 	scriptText := string(script)
 	for _, want := range []string{
-		"tui-helper;command-start;",
-		"tui-helper;command-end",
+		"todoai;command-start;",
+		"todoai;command-end",
 		"Set-PSReadLineOption -AddToHistoryHandler",
 		"function global:prompt",
 	} {

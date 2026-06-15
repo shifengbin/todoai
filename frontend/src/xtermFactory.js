@@ -67,7 +67,7 @@ export function createXtermSession(terminalId, onData, onShortcut, onCommandStat
 
 function parseCommandStateOsc(data) {
   const parts = data.split(';')
-  if (parts[0] !== 'tui-helper') {
+  if (!['todoai', 'tui-helper'].includes(parts[0])) {
     return null
   }
   if (parts[1] === 'command-end') {

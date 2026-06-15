@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_NAME="tui-helper"
+APP_NAME="todoai"
 ARCH="${ARCH:-amd64}"
 MAINTAINER="${MAINTAINER:-FengbinShi <shifengbin@jiandan100.cn>}"
 DESCRIPTION="Desktop project shell helper"
@@ -78,7 +78,7 @@ chmod 644 "${PACKAGE_DIR}/DEBIAN/control"
 cat > "${PACKAGE_DIR}/usr/share/applications/${APP_NAME}.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=TUI Helper
+Name=TodoAI
 Comment=${DESCRIPTION}
 Exec=/usr/bin/${APP_NAME}
 Icon=${APP_NAME}

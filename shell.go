@@ -1002,7 +1002,7 @@ func terminalIdentityEnv(env []string, terminal ProjectTerminal) []string {
 }
 
 func zshIntegratedLaunch(launch ShellLaunch) (ShellLaunch, error) {
-	dir, err := os.MkdirTemp("", "tui-helper-zsh-*")
+	dir, err := os.MkdirTemp("", "todoai-zsh-*")
 	if err != nil {
 		return ShellLaunch{}, err
 	}
@@ -1026,7 +1026,7 @@ func zshIntegratedLaunch(launch ShellLaunch) (ShellLaunch, error) {
 }
 
 func bashIntegratedLaunch(launch ShellLaunch) (ShellLaunch, error) {
-	file, err := os.CreateTemp("", "tui-helper-bash-*.bashrc")
+	file, err := os.CreateTemp("", "todoai-bash-*.bashrc")
 	if err != nil {
 		return ShellLaunch{}, err
 	}
@@ -1048,7 +1048,7 @@ func bashIntegratedLaunch(launch ShellLaunch) (ShellLaunch, error) {
 }
 
 func powerShellIntegratedLaunch(launch ShellLaunch) (ShellLaunch, error) {
-	file, err := os.CreateTemp("", "tui-helper-powershell-*.ps1")
+	file, err := os.CreateTemp("", "todoai-powershell-*.ps1")
 	if err != nil {
 		return ShellLaunch{}, err
 	}
@@ -1077,10 +1077,10 @@ fi
 
 autoload -Uz add-zsh-hook
 __tui_helper_emit_command_start() {
-  printf '\033]777;tui-helper;command-start;%s\a' "$(printf '%s' "$1" | base64 | tr -d '\n')"
+  printf '\033]777;todoai;command-start;%s\a' "$(printf '%s' "$1" | base64 | tr -d '\n')"
 }
 __tui_helper_emit_command_end() {
-  printf '\033]777;tui-helper;command-end\a'
+  printf '\033]777;todoai;command-end\a'
 }
 __tui_helper_preexec() {
   __tui_helper_emit_command_start "$1"
@@ -1103,10 +1103,10 @@ __tui_helper_command_started=0
 __tui_helper_in_prompt=0
 __tui_helper_original_prompt_command="$PROMPT_COMMAND"
 __tui_helper_emit_command_start() {
-  printf '\033]777;tui-helper;command-start;%s\a' "$(printf '%s' "$1" | base64 | tr -d '\n')"
+  printf '\033]777;todoai;command-start;%s\a' "$(printf '%s' "$1" | base64 | tr -d '\n')"
 }
 __tui_helper_emit_command_end() {
-  printf '\033]777;tui-helper;command-end\a'
+  printf '\033]777;todoai;command-end\a'
 }
 __tui_helper_debug_trap() {
   if [ "$__tui_helper_in_prompt" = "1" ]; then
@@ -1154,12 +1154,12 @@ function __tui_helper_emit_command_start {
     return
   }
   $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Command))
-  __tui_helper_write_osc "777;tui-helper;command-start;$encoded"
+  __tui_helper_write_osc "777;todoai;command-start;$encoded"
   $script:__tui_helper_command_started = $true
 }
 
 function __tui_helper_emit_command_end {
-  __tui_helper_write_osc "777;tui-helper;command-end"
+  __tui_helper_write_osc "777;todoai;command-end"
 }
 
 if (Get-Command Set-PSReadLineOption -ErrorAction SilentlyContinue) {

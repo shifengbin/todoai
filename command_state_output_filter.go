@@ -6,10 +6,11 @@ import (
 )
 
 const (
-	commandStateRawPrefix         = "\x1b]777;tui-helper;"
-	commandStateTextPrefix        = "777;tui-helper;"
-	commandStateTextPendingPrefix = "777;tui"
-	commandStateMaxPending        = 8192
+	commandStateRawPrefix        = "\x1b]777;todoai;"
+	legacyCommandStateRawPrefix  = "\x1b]777;tui-helper;"
+	commandStateTextPrefix       = "777;todoai;"
+	legacyCommandStateTextPrefix = "777;tui-helper;"
+	commandStateMaxPending       = 8192
 )
 
 type commandStatePrefixCandidate struct {
@@ -19,7 +20,9 @@ type commandStatePrefixCandidate struct {
 
 var commandStatePrefixCandidates = []commandStatePrefixCandidate{
 	{value: commandStateRawPrefix, pendingPrefix: "\x1b"},
-	{value: commandStateTextPrefix, pendingPrefix: commandStateTextPendingPrefix},
+	{value: legacyCommandStateRawPrefix, pendingPrefix: "\x1b"},
+	{value: commandStateTextPrefix, pendingPrefix: "777;todo"},
+	{value: legacyCommandStateTextPrefix, pendingPrefix: "777;tui"},
 }
 
 type TerminalCommandStateEvent struct {
@@ -52,7 +55,7 @@ func (filter *commandStateOutputFilter) Filter(data string) commandStateFilterRe
 	var output strings.Builder
 
 	for len(input) > 0 {
-		rawIndex := strings.Index(input, commandStateRawPrefix)
+		rawIndex, rawPrefix := nextRawCommandStateIndex(input)
 		textIndex, textPrefix := nextTextCommandStateIndex(input)
 		index, raw := nextCommandStateIndex(rawIndex, textIndex)
 		if index == -1 {
@@ -65,7 +68,7 @@ func (filter *commandStateOutputFilter) Filter(data string) commandStateFilterRe
 		output.WriteString(input[:index])
 		var parsed commandStateParseResult
 		if raw {
-			parsed = parseRawCommandState(input[index:])
+			parsed = parseRawCommandState(input[index:], rawPrefix)
 		} else {
 			parsed = parseTextCommandState(input[index:], textPrefix)
 		}
@@ -93,20 +96,44 @@ func (filter *commandStateOutputFilter) Filter(data string) commandStateFilterRe
 	return result
 }
 
-func nextTextCommandStateIndex(input string) (int, string) {
-	searchOffset := 0
-	for searchOffset < len(input) {
-		textIndex := strings.Index(input[searchOffset:], commandStateTextPrefix)
-		if textIndex == -1 {
-			return -1, commandStateTextPrefix
+func nextRawCommandStateIndex(input string) (int, string) {
+	bestIndex := -1
+	bestPrefix := commandStateRawPrefix
+	for _, prefix := range []string{commandStateRawPrefix, legacyCommandStateRawPrefix} {
+		index := strings.Index(input, prefix)
+		if index == -1 {
+			continue
 		}
-		index := searchOffset + textIndex
-		if index == 0 || input[index-1] != ']' {
-			return index, commandStateTextPrefix
+		if bestIndex == -1 || index < bestIndex {
+			bestIndex = index
+			bestPrefix = prefix
 		}
-		searchOffset = index + len(commandStateTextPrefix)
 	}
-	return -1, commandStateTextPrefix
+	return bestIndex, bestPrefix
+}
+
+func nextTextCommandStateIndex(input string) (int, string) {
+	bestIndex := -1
+	bestPrefix := commandStateTextPrefix
+	for _, prefix := range []string{commandStateTextPrefix, legacyCommandStateTextPrefix} {
+		searchOffset := 0
+		for searchOffset < len(input) {
+			textIndex := strings.Index(input[searchOffset:], prefix)
+			if textIndex == -1 {
+				break
+			}
+			index := searchOffset + textIndex
+			if index == 0 || input[index-1] != ']' {
+				if bestIndex == -1 || index < bestIndex {
+					bestIndex = index
+					bestPrefix = prefix
+				}
+				break
+			}
+			searchOffset = index + len(prefix)
+		}
+	}
+	return bestIndex, bestPrefix
 }
 
 type commandStateParseResult struct {
@@ -126,13 +153,13 @@ func nextCommandStateIndex(rawIndex int, textIndex int) (int, bool) {
 	return textIndex, false
 }
 
-func parseRawCommandState(input string) commandStateParseResult {
+func parseRawCommandState(input string, prefix string) commandStateParseResult {
 	terminatorIndex, terminatorSize := rawCommandStateTerminator(input)
 	if terminatorIndex == -1 {
 		return commandStateParseResult{needsMore: true}
 	}
 
-	payload := input[len(commandStateRawPrefix):terminatorIndex]
+	payload := input[len(prefix):terminatorIndex]
 	event, consume := parseCommandStatePayload(payload)
 	if !consume {
 		return commandStateParseResult{}
@@ -302,7 +329,7 @@ func splitCommandStatePendingPrefix(input string) (string, string) {
 		start := len(input) - length
 		suffix := input[len(input)-length:]
 		for _, candidate := range commandStatePrefixCandidates {
-			if candidate.value == commandStateTextPrefix && start > 0 && input[start-1] == ']' {
+			if isTextCommandStatePrefix(candidate.value) && start > 0 && input[start-1] == ']' {
 				continue
 			}
 			if len(suffix) >= len(candidate.pendingPrefix) && strings.HasPrefix(candidate.value, suffix) {
@@ -311,4 +338,8 @@ func splitCommandStatePendingPrefix(input string) (string, string) {
 		}
 	}
 	return input, ""
+}
+
+func isTextCommandStatePrefix(prefix string) bool {
+	return strings.HasPrefix(prefix, "777;")
 }

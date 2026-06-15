@@ -11,6 +11,12 @@ import (
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
+const (
+	applicationDisplayName = "TodoAI"
+	applicationID          = "todoai"
+	legacyApplicationID    = "tui-helper"
+)
+
 type App struct {
 	ctx                        context.Context
 	projects                   *ProjectManager
@@ -464,11 +470,75 @@ func defaultProjectConfigPath() string {
 	if err != nil {
 		configDir = "."
 	}
-	return filepath.Join(configDir, "tui-helper", "projects.json")
+	appConfigDir := resolveAppConfigDir(filepath.Join(configDir, legacyApplicationID), filepath.Join(configDir, applicationID), copyDir)
+	return filepath.Join(appConfigDir, "projects.json")
 }
 
 func defaultSettingsConfigPath(projectConfigPath string) string {
 	return filepath.Join(filepath.Dir(projectConfigPath), "settings.json")
+}
+
+func resolveAppConfigDir(legacyDir string, appConfigDir string, migrate func(string, string) error) string {
+	if legacyDir == appConfigDir {
+		return appConfigDir
+	}
+	if _, err := os.Stat(appConfigDir); err == nil {
+		return appConfigDir
+	}
+	if _, err := os.Stat(legacyDir); err != nil {
+		return appConfigDir
+	}
+	if err := migrate(legacyDir, appConfigDir); err != nil {
+		_ = os.RemoveAll(appConfigDir)
+		return legacyDir
+	}
+	return appConfigDir
+}
+
+func copyDir(src string, dst string) error {
+	srcInfo, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if !srcInfo.IsDir() {
+		return nil
+	}
+	if err := os.MkdirAll(dst, srcInfo.Mode().Perm()); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(dst, entry.Name())
+		if entry.IsDir() {
+			if err := copyDir(srcPath, dstPath); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := copyFile(srcPath, dstPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func copyFile(src string, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(dst, data, info.Mode().Perm())
 }
 
 func normalizeTerminalSize(cols int, rows int) TerminalSize {

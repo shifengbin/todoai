@@ -1,4 +1,4 @@
-module tui-helper
+module todoai
 
 go 1.23
 

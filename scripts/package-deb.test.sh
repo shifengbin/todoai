@@ -39,8 +39,8 @@ setup_fixture() {
 #!/usr/bin/env bash
 set -euo pipefail
 mkdir -p build/bin build
-printf '#!/usr/bin/env bash\n' > build/bin/tui-helper
-chmod +x build/bin/tui-helper
+printf '#!/usr/bin/env bash\n' > build/bin/todoai
+chmod +x build/bin/todoai
 printf 'fake icon\n' > build/appicon.png
 EOF
   chmod +x "${TEST_ROOT}/fake-bin/wails"
@@ -80,9 +80,15 @@ test_default_packaging_increments_patch_version() {
   run_package_deb env
 
   assert_eq "0.1.9" "$(cat "${TEST_ROOT}/VERSION")" "persisted version"
-  assert_contains "$(cat "${TEST_ROOT}/stdout")" "build/bin/tui-helper_0.1.9_amd64.deb" "output path"
-  assert_eq "Version: 0.1.9" "$(grep '^Version:' "${TEST_ROOT}/build/deb/tui-helper_0.1.9_amd64/DEBIAN/control")" "control version"
-  [[ -f "${TEST_ROOT}/build/bin/tui-helper_0.1.9_amd64.deb" ]] || fail "expected deb artifact"
+  assert_contains "$(cat "${TEST_ROOT}/stdout")" "build/bin/todoai_0.1.9_amd64.deb" "output path"
+  assert_eq "Package: todoai" "$(grep '^Package:' "${TEST_ROOT}/build/deb/todoai_0.1.9_amd64/DEBIAN/control")" "control package"
+  assert_eq "Version: 0.1.9" "$(grep '^Version:' "${TEST_ROOT}/build/deb/todoai_0.1.9_amd64/DEBIAN/control")" "control version"
+  assert_eq "Name=TodoAI" "$(grep '^Name=' "${TEST_ROOT}/build/deb/todoai_0.1.9_amd64/usr/share/applications/todoai.desktop")" "desktop name"
+  assert_eq "Exec=/usr/bin/todoai" "$(grep '^Exec=' "${TEST_ROOT}/build/deb/todoai_0.1.9_amd64/usr/share/applications/todoai.desktop")" "desktop exec"
+  assert_eq "Icon=todoai" "$(grep '^Icon=' "${TEST_ROOT}/build/deb/todoai_0.1.9_amd64/usr/share/applications/todoai.desktop")" "desktop icon"
+  [[ -x "${TEST_ROOT}/build/deb/todoai_0.1.9_amd64/usr/bin/todoai" ]] || fail "expected installed todoai executable"
+  [[ -f "${TEST_ROOT}/build/deb/todoai_0.1.9_amd64/usr/share/icons/hicolor/256x256/apps/todoai.png" ]] || fail "expected installed todoai icon"
+  [[ -f "${TEST_ROOT}/build/bin/todoai_0.1.9_amd64.deb" ]] || fail "expected deb artifact"
 }
 
 test_explicit_version_override_is_persisted() {
@@ -93,8 +99,8 @@ test_explicit_version_override_is_persisted() {
   run_package_deb env VERSION=0.2.0
 
   assert_eq "0.2.0" "$(cat "${TEST_ROOT}/VERSION")" "persisted explicit version"
-  assert_contains "$(cat "${TEST_ROOT}/stdout")" "build/bin/tui-helper_0.2.0_amd64.deb" "explicit output path"
-  assert_eq "Version: 0.2.0" "$(grep '^Version:' "${TEST_ROOT}/build/deb/tui-helper_0.2.0_amd64/DEBIAN/control")" "explicit control version"
+  assert_contains "$(cat "${TEST_ROOT}/stdout")" "build/bin/todoai_0.2.0_amd64.deb" "explicit output path"
+  assert_eq "Version: 0.2.0" "$(grep '^Version:' "${TEST_ROOT}/build/deb/todoai_0.2.0_amd64/DEBIAN/control")" "explicit control version"
 }
 
 test_invalid_persisted_version_is_rejected() {

@@ -92,20 +92,32 @@ describe('createXtermSession', () => {
     expect(onShortcut).not.toHaveBeenCalled()
   })
 
-  it('emits command state from app-specific OSC messages', () => {
-    const onCommandState = vi.fn()
+  it('emits command state from TodoAI OSC messages', () => {
+	const onCommandState = vi.fn()
 
-    createXtermSession('terminal-a', vi.fn(), vi.fn(), onCommandState)
-    terminalMock.lastTerminal.oscHandlers.get(777)('tui-helper;command-start;bnBtIHRlc3Q=')
-    terminalMock.lastTerminal.oscHandlers.get(777)('tui-helper;command-end')
+	createXtermSession('terminal-a', vi.fn(), vi.fn(), onCommandState)
+	terminalMock.lastTerminal.oscHandlers.get(777)('todoai;command-start;bnBtIHRlc3Q=')
+	terminalMock.lastTerminal.oscHandlers.get(777)('todoai;command-end')
 
     expect(onCommandState).toHaveBeenNthCalledWith(1, {
       type: 'command-start',
       command: 'npm test'
     })
-    expect(onCommandState).toHaveBeenNthCalledWith(2, {
-      type: 'command-end'
-    })
+	expect(onCommandState).toHaveBeenNthCalledWith(2, {
+	  type: 'command-end'
+	})
+  })
+
+  it('emits command state from legacy TUI Helper OSC messages', () => {
+	const onCommandState = vi.fn()
+
+	createXtermSession('terminal-a', vi.fn(), vi.fn(), onCommandState)
+	terminalMock.lastTerminal.oscHandlers.get(777)('tui-helper;command-start;Y29kZXg=')
+
+	expect(onCommandState).toHaveBeenCalledWith({
+	  type: 'command-start',
+	  command: 'codex'
+	})
   })
 
   it('emits terminal title changes from xterm title events', () => {
