@@ -421,6 +421,39 @@ describe('App project terminal tree', () => {
     expect(SelectTerminal).toHaveBeenCalledWith('terminal-b')
     expect(xtermMock.sessions.has('terminal-b')).toBe(true)
     expect(wrapper.find('[data-testid="terminal-pane-terminal-b"]').classes()).toContain('active')
+    expect(xtermMock.sessions.get('terminal-b').terminal.focus).toHaveBeenCalled()
+  })
+
+  it('does not focus a terminal when selecting it fails', async () => {
+    const twoTerminalState = projectState({
+      terminals: [terminal({ id: 'terminal-a' }), terminal({ id: 'terminal-b', shellName: 'bash' })]
+    })
+    appApiMock.ListProjects.mockResolvedValue(twoTerminalState)
+    appApiMock.SelectProject.mockResolvedValue(twoTerminalState)
+    appApiMock.SelectTerminal.mockResolvedValueOnce(
+      projectState({
+        terminals: [terminal({ id: 'terminal-a' }), terminal({ id: 'terminal-b', shellName: 'bash' })],
+        activeTerminalId: 'terminal-b'
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="terminal-terminal-b"]').trigger('click')
+    await flushPromises()
+
+    expect(xtermMock.sessions.has('terminal-a')).toBe(true)
+    expect(xtermMock.sessions.has('terminal-b')).toBe(true)
+    xtermMock.sessions.get('terminal-a').terminal.focus.mockClear()
+    xtermMock.sessions.get('terminal-b').terminal.focus.mockClear()
+
+    appApiMock.SelectTerminal.mockRejectedValueOnce(new Error('select failed'))
+    await wrapper.find('[data-testid="terminal-terminal-a"]').trigger('click')
+    await flushPromises()
+
+    expect(SelectTerminal).toHaveBeenLastCalledWith('terminal-a')
+    expect(xtermMock.sessions.get('terminal-a').terminal.focus).not.toHaveBeenCalled()
+    expect(xtermMock.sessions.get('terminal-b').terminal.focus).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="terminal-pane-terminal-b"]').classes()).toContain('active')
   })
 
   it('automatically restarts a restored terminal when selected', async () => {

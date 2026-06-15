@@ -622,6 +622,7 @@ async function selectTerminal(terminalId) {
   try {
     applyState(await SelectTerminal(terminalId))
     await activateActiveTerminal()
+    terminalManager.focus(terminalId)
     await autoRestartIfExited(terminalId)
   } catch (error) {
     showError(error)
