@@ -111,6 +111,9 @@ const launchMenuBorderHeight = 2
 const launchMenuMinimumHeight = 32
 const launchMenuOptionHeight = 32
 const launchMenuViewportPadding = 8
+const todoContextMenuViewportPadding = 8
+const todoContextMenuWidth = 180
+const todoContextMenuHeight = 160
 
 const terminalLaunchOptions = computed(() => [
   { name: 'Terminal', command: '' },
@@ -125,7 +128,7 @@ const todoPriorityOrder = {
 
 const notStartedTodos = computed(() => sortedOpenTodos('not-started'))
 const inProgressTodos = computed(() => sortedOpenTodos('in-progress'))
-const completedTodos = computed(() => props.todos.filter((todo) => todoWorkflowStatus(todo) === 'completed'))
+const completedTodos = computed(() => sortedCompletedTodos())
 const currentOpenTodos = computed(() => (todoView.value === 'in-progress' ? inProgressTodos.value : notStartedTodos.value))
 const currentOpenTodoListTestId = computed(() => `${todoView.value}-todos`)
 const isOpenTodoView = computed(() => ['not-started', 'in-progress'].includes(todoView.value))
@@ -140,6 +143,14 @@ function sortedOpenTodos(status) {
     .map((todo, index) => ({ todo, index }))
     .filter(({ todo }) => todoWorkflowStatus(todo) === status)
     .sort(compareActiveTodoEntries)
+    .map(({ todo }) => todo)
+}
+
+function sortedCompletedTodos() {
+  return props.todos
+    .map((todo, index) => ({ todo, index }))
+    .filter(({ todo }) => todoWorkflowStatus(todo) === 'completed')
+    .sort(compareCompletedTodoEntries)
     .map(({ todo }) => todo)
 }
 
@@ -341,7 +352,7 @@ function openTodoContextMenu(todoId, event) {
   closeTodoActionPopover()
   closeProjectDeletePopover()
   closeBulkProjectDeletePopover()
-  todoContextMenu.value = { todoId, x: event.clientX, y: event.clientY }
+  todoContextMenu.value = { todoId, ...todoContextMenuPlacement(event.clientX, event.clientY) }
 }
 
 function openTodoContextMenuFromButton(todoId, event) {
@@ -353,7 +364,7 @@ function openTodoContextMenuFromButton(todoId, event) {
   closeTodoActionPopover()
   closeProjectDeletePopover()
   closeBulkProjectDeletePopover()
-  todoContextMenu.value = { todoId, x: rect.left, y: rect.bottom }
+  todoContextMenu.value = { todoId, ...todoContextMenuPlacement(rect.left, rect.bottom) }
 }
 
 function closeTodoContextMenu() {
@@ -362,6 +373,26 @@ function closeTodoContextMenu() {
 
 function isTodoContextMenuOpen(todoId) {
   return todoContextMenu.value.todoId === todoId
+}
+
+function todoContextMenuStyle() {
+  return {
+    left: `${todoContextMenu.value.x}px`,
+    top: `${todoContextMenu.value.y}px`
+  }
+}
+
+function todoContextMenuPlacement(x, y) {
+  return {
+    x: clampToViewport(x, todoContextMenuWidth, 'innerWidth'),
+    y: clampToViewport(y, todoContextMenuHeight, 'innerHeight')
+  }
+}
+
+function clampToViewport(value, size, dimension) {
+  const viewportSize = typeof window !== 'undefined' ? Number(window[dimension]) || 0 : 0
+  const max = Math.max(todoContextMenuViewportPadding, viewportSize - size - todoContextMenuViewportPadding)
+  return Math.min(Math.max(Number(value) || 0, todoContextMenuViewportPadding), max)
 }
 
 function isTodoActionPopoverOpen(todoId, action) {
@@ -607,6 +638,19 @@ function compareActiveTodosByTime(left, right) {
   return left.index - right.index
 }
 
+function compareCompletedTodoEntries(left, right) {
+  const leftTimestamp = completedTodoTimestamp(left.todo)
+  const rightTimestamp = completedTodoTimestamp(right.todo)
+  if (leftTimestamp > rightTimestamp) {
+    return -1
+  }
+  if (leftTimestamp < rightTimestamp) {
+    return 1
+  }
+
+  return left.index - right.index
+}
+
 function setActiveTodoSortMode(mode) {
   if (!['priority', 'time'].includes(mode)) {
     return
@@ -624,6 +668,16 @@ function todoCreatedAtTimestamp(todo) {
   return Number.isNaN(timestamp) ? Number.POSITIVE_INFINITY : timestamp
 }
 
+function completedTodoTimestamp(todo) {
+  for (const value of [todo?.completedAt, todo?.archivedAt]) {
+    const timestamp = Date.parse(value || '')
+    if (!Number.isNaN(timestamp)) {
+      return timestamp
+    }
+  }
+  return Number.NEGATIVE_INFINITY
+}
+
 function compareTodoCreatedAt(left, right) {
   const leftTimestamp = todoCreatedAtTimestamp(left)
   const rightTimestamp = todoCreatedAtTimestamp(right)
@@ -637,7 +691,8 @@ function compareTodoCreatedAt(left, right) {
 }
 
 function terminalActivityState(terminal) {
-  return terminal.activityState || 'idle'
+  const state = terminal.activityState || terminal.agentStatus?.phase || 'idle'
+  return ['busy', 'needs-input'].includes(state) ? state : 'idle'
 }
 
 function activityStateLabel(state) {
@@ -881,55 +936,58 @@ watch(
       </div>
 
       <div
-        v-if="isOpenTodoView"
         class="todo-tree-toolbar"
-        role="toolbar"
-        aria-label="TODO tree controls"
+        data-testid="todo-tree-toolbar"
+        :role="isOpenTodoView ? 'toolbar' : undefined"
+        :aria-label="isOpenTodoView ? 'TODO tree controls' : undefined"
+        :aria-hidden="isOpenTodoView ? undefined : 'true'"
       >
-        <div class="todo-sort-toggle" role="group" aria-label="TODO sort">
+        <template v-if="isOpenTodoView">
+          <div class="todo-sort-toggle" role="group" aria-label="TODO sort">
+            <button
+              type="button"
+              class="todo-sort-option"
+              :class="{ active: activeTodoSortMode === 'priority' }"
+              data-testid="sort-active-todos-priority"
+              :aria-pressed="activeTodoSortMode === 'priority'"
+              @click="setActiveTodoSortMode('priority')"
+            >
+              Priority
+            </button>
+            <button
+              type="button"
+              class="todo-sort-option"
+              :class="{ active: activeTodoSortMode === 'time' }"
+              data-testid="sort-active-todos-time"
+              :aria-pressed="activeTodoSortMode === 'time'"
+              @click="setActiveTodoSortMode('time')"
+            >
+              Time
+            </button>
+          </div>
           <button
             type="button"
-            class="todo-sort-option"
-            :class="{ active: activeTodoSortMode === 'priority' }"
-            data-testid="sort-active-todos-priority"
-            :aria-pressed="activeTodoSortMode === 'priority'"
-            @click="setActiveTodoSortMode('priority')"
+            class="todo-tree-action"
+            data-testid="collapse-all-todos"
+            :disabled="!hasActiveTodos"
+            aria-label="Collapse all TODOs"
+            title="Collapse all TODOs"
+            @click="collapseAllTodos"
           >
-            Priority
+            <ListChevronsDownUp :size="15" />
           </button>
           <button
             type="button"
-            class="todo-sort-option"
-            :class="{ active: activeTodoSortMode === 'time' }"
-            data-testid="sort-active-todos-time"
-            :aria-pressed="activeTodoSortMode === 'time'"
-            @click="setActiveTodoSortMode('time')"
+            class="todo-tree-action"
+            data-testid="expand-all-todos"
+            :disabled="!hasActiveTodos"
+            aria-label="Expand all TODOs"
+            title="Expand all TODOs"
+            @click="expandAllTodos"
           >
-            Time
+            <ListChevronsUpDown :size="15" />
           </button>
-        </div>
-        <button
-          type="button"
-          class="todo-tree-action"
-          data-testid="collapse-all-todos"
-          :disabled="!hasActiveTodos"
-          aria-label="Collapse all TODOs"
-          title="Collapse all TODOs"
-          @click="collapseAllTodos"
-        >
-          <ListChevronsDownUp :size="15" />
-        </button>
-        <button
-          type="button"
-          class="todo-tree-action"
-          data-testid="expand-all-todos"
-          :disabled="!hasActiveTodos"
-          aria-label="Expand all TODOs"
-          title="Expand all TODOs"
-          @click="expandAllTodos"
-        >
-          <ListChevronsUpDown :size="15" />
-        </button>
+        </template>
       </div>
 
       <div v-if="isOpenTodoView" class="todo-list" :data-testid="currentOpenTodoListTestId">
@@ -1121,7 +1179,7 @@ watch(
           <div
             v-if="isTodoContextMenuOpen(todo.id)"
             class="todo-context-menu"
-            :style="{ left: todoContextMenu.x + 'px', top: todoContextMenu.y + 'px' }"
+            :style="todoContextMenuStyle()"
             :data-testid="`todo-context-menu-${todo.id}`"
             @click.stop
           >

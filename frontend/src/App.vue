@@ -2,6 +2,13 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ChevronDown, ChevronUp, GitBranch, Plus, RotateCcw, Settings, Trash2, X } from '@lucide/vue'
 import ProjectSidebar from './components/ProjectSidebar.vue'
+import {
+  AGENT_CONFIDENCE,
+  AGENT_PHASE,
+  AGENT_SOURCE,
+  applyAgentStatusEvent,
+  createAgentStatus
+} from './agentStatus'
 import { TerminalSessionManager } from './terminalManager'
 import { createXtermSession } from './xtermFactory'
 import {
@@ -46,6 +53,7 @@ const activeTerminalId = ref('')
 const importSummary = ref(null)
 const shellStatuses = reactive({})
 const terminalContainers = new Map()
+const titleActivityTimers = new Map()
 const autoRestartedTerminals = new Set()
 const errorMessage = ref('')
 let gitStatusRequestId = 0
@@ -312,6 +320,9 @@ onMounted(async () => {
   EventsOn('terminal-status', (status) => {
     updateTerminalState(status.terminalId, status.state)
   })
+  EventsOn('terminal-agent-status', (event) => {
+    handleTerminalAgentStatus(event)
+  })
   window.addEventListener('resize', fitActiveTerminal)
   window.addEventListener('focus', refreshProjectGitStatusOnFocus)
   window.addEventListener('click', closeTerminalMenu)
@@ -334,11 +345,13 @@ onBeforeUnmount(() => {
   EventsOff('terminal-output')
   EventsOff('terminal-command-state')
   EventsOff('terminal-status')
+  EventsOff('terminal-agent-status')
   window.removeEventListener('resize', fitActiveTerminal)
   window.removeEventListener('focus', refreshProjectGitStatusOnFocus)
   window.removeEventListener('click', closeTerminalMenu)
   window.removeEventListener('mousemove', resizeSidebar)
   window.removeEventListener('mouseup', stopSidebarResize)
+  clearAllTitleActivityTimers()
 })
 
 function applyState(state, options = {}) {
@@ -348,21 +361,23 @@ function applyState(state, options = {}) {
   todos.value = state?.todos || []
   todoProjects.value = state?.todoProjects || []
   importSummary.value = state?.importSummary || null
-  const nextTerminals = (state?.terminals || []).map((terminal) => ({
-    ...terminal,
-    currentCommand:
-      terminal.state === 'running'
-        ? terminal.currentCommand || previousTerminals.get(terminal.id)?.currentCommand || ''
-        : '',
-    runtimeTitle: terminal.state === 'running' ? previousTerminals.get(terminal.id)?.runtimeTitle || '' : '',
-    idleTitle: terminal.state === 'running' ? previousTerminals.get(terminal.id)?.idleTitle || '' : '',
-    activityState: terminal.state === 'running' ? previousTerminals.get(terminal.id)?.activityState || 'idle' : 'idle'
-  }))
+  const nextTerminals = (state?.terminals || []).map((terminal) => {
+    const previous = previousTerminals.get(terminal.id)
+    const running = terminal.state === 'running'
+    return {
+      ...terminal,
+      currentCommand: running ? terminal.currentCommand || previous?.currentCommand || '' : '',
+      runtimeTitle: running ? previous?.runtimeTitle || '' : '',
+      agentStatus: running ? previous?.agentStatus || createAgentStatus() : exitedAgentStatus(),
+      activityState: running ? previous?.activityState || 'idle' : 'idle'
+    }
+  })
   const nextTerminalIds = new Set(nextTerminals.map((terminal) => terminal.id))
   for (const terminalId of previousTerminals.keys()) {
     if (!nextTerminalIds.has(terminalId)) {
       terminalManager.dispose(terminalId)
       terminalContainers.delete(terminalId)
+      clearTitleActivityTimer(terminalId)
       autoRestartedTerminals.delete(terminalId)
       delete shellStatuses[terminalId]
     }
@@ -644,8 +659,11 @@ async function createTerminal(todoProjectId, launchProfile = null) {
     if (launchProfile?.command && state?.activeTerminalId) {
       const terminal = terminals.value.find((candidate) => candidate.id === state.activeTerminalId)
       if (terminal) {
-        terminal.currentCommand = sanitizeCommandLabel(launchProfile.command)
-        resetTerminalActivity(terminal)
+        applyTerminalAgentEvent(terminal, {
+          type: 'launch-profile-label',
+          command: launchProfile.command,
+          at: Date.now()
+        })
       }
       await SendTerminalInput(state.activeTerminalId, `${launchProfile.command}\r`)
     }
@@ -1150,10 +1168,13 @@ function updateTerminalState(terminalId, state) {
   shellStatuses[terminalId] = state
   const terminal = terminals.value.find((candidate) => candidate.id === terminalId)
   if (terminal) {
-    terminal.state = state
+    applyTerminalAgentEvent(terminal, {
+      type: 'shell-status',
+      state,
+      at: Date.now()
+    })
     if (state !== 'running') {
-      terminal.currentCommand = ''
-      resetTerminalActivity(terminal)
+      clearTitleActivityTimer(terminalId)
     }
   }
 }
@@ -1164,12 +1185,21 @@ function handleTerminalCommandState(terminalId, event) {
     return
   }
   if (event.type === 'command-start') {
-    terminal.currentCommand = sanitizeCommandLabel(event.command)
-    resetTerminalActivity(terminal)
+    clearTitleActivityTimer(terminalId)
+    applyTerminalAgentEvent(terminal, {
+      type: 'command-state',
+      commandType: 'command-start',
+      command: event.command,
+      at: Date.now()
+    })
   }
   if (event.type === 'command-end') {
-    terminal.currentCommand = ''
-    resetTerminalActivity(terminal)
+    clearTitleActivityTimer(terminalId)
+    applyTerminalAgentEvent(terminal, {
+      type: 'command-state',
+      commandType: 'command-end',
+      at: Date.now()
+    })
     if (terminal.id === activeTerminalId.value) {
       refreshProjectGitStatus()
     }
@@ -1181,65 +1211,97 @@ function handleTerminalTitleChange(terminalId, title) {
   if (!terminal) {
     return
   }
-  terminal.runtimeTitle = sanitizeCommandLabel(title)
-  terminal.activityState = classifyTerminalActivity(terminal, terminal.runtimeTitle)
-  if (terminal.activityState === 'idle' && terminal.runtimeTitle && !terminal.idleTitle) {
-    terminal.idleTitle = terminal.runtimeTitle
+  const at = Date.now()
+  applyTerminalAgentEvent(terminal, {
+    type: 'title',
+    title,
+    at
+  })
+  markTerminalTitleActivity(terminal, at)
+}
+
+function handleTerminalAgentStatus(event) {
+  const terminal = terminals.value.find((candidate) => candidate.id === event?.terminalId)
+  if (!terminal) {
+    return
+  }
+  applyTerminalAgentEvent(terminal, {
+    type: 'agent-status',
+    phase: event.phase,
+    source: event.source,
+    confidence: event.confidence,
+    reason: event.reason,
+    label: event.label,
+    at: event.updatedAt || Date.now()
+  })
+}
+
+function applyTerminalAgentEvent(terminal, event) {
+  Object.assign(terminal, applyAgentStatusEvent(terminal, event))
+}
+
+function markTerminalTitleActivity(terminal, at = Date.now()) {
+  if (!terminal?.id || terminal.state !== 'running') {
+    return
+  }
+  applyTerminalAgentEvent(terminal, {
+    type: 'agent-status',
+    phase: AGENT_PHASE.BUSY,
+    source: AGENT_SOURCE.TITLE_FALLBACK,
+    confidence: AGENT_CONFIDENCE.HEURISTIC,
+    reason: 'title-changed',
+    label: terminal.runtimeTitle,
+    at
+  })
+  restartTitleActivityTimer(terminal.id)
+}
+
+function restartTitleActivityTimer(terminalId) {
+  clearTitleActivityTimer(terminalId)
+  titleActivityTimers.set(terminalId, setTimeout(() => {
+    const terminal = terminals.value.find((candidate) => candidate.id === terminalId)
+    if (!terminal || terminal.state !== 'running') {
+      titleActivityTimers.delete(terminalId)
+      return
+    }
+    applyTerminalAgentEvent(terminal, {
+      type: 'agent-status',
+      phase: AGENT_PHASE.IDLE,
+      source: AGENT_SOURCE.TITLE_FALLBACK,
+      confidence: AGENT_CONFIDENCE.HEURISTIC,
+      reason: 'title-unchanged',
+      label: terminal.runtimeTitle,
+      at: Date.now()
+    })
+    titleActivityTimers.delete(terminalId)
+  }, 1000))
+}
+
+function clearTitleActivityTimer(terminalId) {
+  const timer = titleActivityTimers.get(terminalId)
+  if (timer) {
+    clearTimeout(timer)
+    titleActivityTimers.delete(terminalId)
   }
 }
 
-function classifyTerminalActivity(terminal, title) {
-  const normalizedTitle = normalizeActivityText(title)
-  if (!normalizedTitle) {
-    return 'idle'
+function clearAllTitleActivityTimers() {
+  for (const terminalId of titleActivityTimers.keys()) {
+    clearTitleActivityTimer(terminalId)
   }
-  if (normalizedTitle.includes('!')) {
-    return 'needs-input'
-  }
-  const stableLabel = normalizeActivityText(terminal.currentCommand || terminal.shellName || 'shell')
-  const idleTitle = normalizeActivityText(terminal.idleTitle)
-  if (!stableLabel || normalizedTitle === stableLabel || normalizedTitle === idleTitle) {
-    return 'idle'
-  }
-  if (hasBusyTitleSignal(normalizedTitle)) {
-    return 'busy'
-  }
-  if (titleLooksLikeStableProgramTitle(normalizedTitle, stableLabel)) {
-    return 'idle'
-  }
-  if (!idleTitle) {
-    return 'idle'
-  }
-  return 'busy'
-}
-
-function hasBusyTitleSignal(title) {
-  return /[|⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏◐◓◑◒⣾⣽⣻⢿⡿⣟⣯⣷]/.test(title) ||
-    /\b(working|thinking|running|processing|executing|busy)\b/.test(title)
-}
-
-function titleLooksLikeStableProgramTitle(title, stableLabel) {
-  if (!stableLabel) {
-    return false
-  }
-  return title.startsWith(`${stableLabel} `) ||
-    title.startsWith(`${stableLabel} -`) ||
-    title.startsWith(`${stableLabel}:`) ||
-    title.startsWith(`${stableLabel}/`)
-}
-
-function normalizeActivityText(value) {
-  return (value || '').replace(/\s+/g, ' ').trim().toLowerCase()
-}
-
-function resetTerminalActivity(terminal) {
-  terminal.runtimeTitle = ''
-  terminal.idleTitle = ''
-  terminal.activityState = 'idle'
 }
 
 function sanitizeCommandLabel(command) {
   return (command || '').replace(/\s+/g, ' ').trim().slice(0, 120)
+}
+
+function exitedAgentStatus() {
+  return createAgentStatus({
+    phase: AGENT_PHASE.EXITED,
+    source: AGENT_SOURCE.SHELL,
+    confidence: AGENT_CONFIDENCE.STRUCTURED,
+    reason: 'shell-exited'
+  })
 }
 
 function showError(error) {

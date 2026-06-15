@@ -172,6 +172,55 @@ describe('ProjectSidebar', () => {
     expect(wrapper.find('[data-testid="todo-context-menu-todo-a"]').exists()).toBe(false)
   })
 
+  it('positions the TODO context menu near the right-click point without leaving the viewport', async () => {
+    const wrapper = mountSidebar()
+
+    await wrapper.find('[data-testid="todo-todo-a"]').trigger('contextmenu', {
+      clientX: window.innerWidth + 400,
+      clientY: window.innerHeight + 300
+    })
+    await nextTick()
+
+    const menu = wrapper.find('[data-testid="todo-context-menu-todo-a"]')
+    const left = Number.parseFloat(menu.element.style.left)
+    const top = Number.parseFloat(menu.element.style.top)
+
+    expect(menu.exists()).toBe(true)
+    expect(left).toBeGreaterThanOrEqual(0)
+    expect(top).toBeGreaterThanOrEqual(0)
+    expect(left).toBeLessThan(window.innerWidth)
+    expect(top).toBeLessThan(window.innerHeight)
+  })
+
+  it('positions the TODO context menu near the three-dot button without leaving the viewport', async () => {
+    const wrapper = mountSidebar()
+    const button = wrapper.find('[data-testid="todo-menu-button-todo-a"]')
+    vi.spyOn(button.element, 'getBoundingClientRect').mockReturnValue({
+      left: window.innerWidth + 250,
+      right: window.innerWidth + 280,
+      top: window.innerHeight + 120,
+      bottom: window.innerHeight + 150,
+      width: 30,
+      height: 30,
+      x: window.innerWidth + 250,
+      y: window.innerHeight + 120,
+      toJSON: () => {}
+    })
+
+    await button.trigger('click')
+    await nextTick()
+
+    const menu = wrapper.find('[data-testid="todo-context-menu-todo-a"]')
+    const left = Number.parseFloat(menu.element.style.left)
+    const top = Number.parseFloat(menu.element.style.top)
+
+    expect(menu.exists()).toBe(true)
+    expect(left).toBeGreaterThanOrEqual(0)
+    expect(top).toBeGreaterThanOrEqual(0)
+    expect(left).toBeLessThan(window.innerWidth)
+    expect(top).toBeLessThan(window.innerHeight)
+  })
+
   it('emits TODO management actions from the context menu', async () => {
     const wrapper = mountSidebar()
 
@@ -220,6 +269,8 @@ describe('ProjectSidebar', () => {
     const workflowTabs = wrapper.find('[data-testid="todo-workflow-tabs"]')
     const actionGroup = wrapper.find('[data-testid="todo-actions-todo-a"]')
     const styles = readFileSync('src/style.css', 'utf8')
+    const sidebarHeaderRule = styles.slice(styles.indexOf('.sidebar-header {'), styles.indexOf('.sidebar-title'))
+    const workspaceTabsRule = styles.slice(styles.indexOf('.sidebar-tabs {'), styles.indexOf('.sidebar-tabs.tab-strip'))
     const tabsRule = styles.slice(styles.indexOf('.todo-view-tabs {'), styles.indexOf('.todo-tree-toolbar'))
     const actionsRule = styles.slice(styles.indexOf('.todo-actions {'), styles.indexOf('.todo-action-button'))
 
@@ -237,9 +288,32 @@ describe('ProjectSidebar', () => {
     expect(wrapper.find('[data-testid="edit-todo-todo-a"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="add-project-to-todo-todo-a"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="delete-todo-todo-a"]').exists()).toBe(false)
+    expect(sidebarHeaderRule).toContain('flex-shrink: 0;')
+    expect(workspaceTabsRule).toContain('flex-shrink: 0;')
     expect(tabsRule).toContain('grid-template-columns: repeat(3, minmax(0, 1fr));')
     expect(actionsRule).toContain('display: inline-flex;')
     expect(actionsRule).toContain('flex-wrap: nowrap;')
+  })
+
+  it('keeps a toolbar height placeholder in completed view without open TODO controls', async () => {
+    const wrapper = mountSidebar()
+
+    expect(wrapper.find('[data-testid="todo-tree-toolbar"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="todo-tree-toolbar"]').attributes('role')).toBe('toolbar')
+    expect(wrapper.find('[data-testid="sort-active-todos-priority"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="collapse-all-todos"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="expand-all-todos"]').exists()).toBe(true)
+
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="todo-tree-toolbar"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="todo-tree-toolbar"]').attributes('aria-hidden')).toBe('true')
+    expect(wrapper.find('[data-testid="todo-tree-toolbar"]').attributes('role')).toBeUndefined()
+    expect(wrapper.find('[data-testid="sort-active-todos-priority"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="sort-active-todos-time"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="collapse-all-todos"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="expand-all-todos"]').exists()).toBe(false)
   })
 
   it('collapses only TODO branches in the current open status view', async () => {
@@ -479,6 +553,29 @@ describe('ProjectSidebar', () => {
     expect(activity.classes()).toContain('needs-input')
   })
 
+  it('derives terminal activity from unified agent status when activityState is absent', () => {
+    const wrapper = mountSidebar({
+      props: {
+        terminals: [
+          {
+            id: 'terminal-a',
+            projectId: 'project-a',
+            todoId: 'todo-a',
+            todoProjectId: 'todo-project-a',
+            shellName: 'zsh',
+            currentCommand: 'codex',
+            agentStatus: { phase: 'needs-input' },
+            state: 'running'
+          }
+        ]
+      }
+    })
+
+    const terminalRow = wrapper.find('[data-testid="terminal-terminal-a"]')
+    expect(terminalRow.attributes('data-activity-state')).toBe('needs-input')
+    expect(terminalRow.attributes('aria-label')).toContain('Needs input')
+  })
+
   it('shows hidden terminal activity on a collapsed TODO', async () => {
     const wrapper = mountSidebar({
       props: {
@@ -536,6 +633,46 @@ describe('ProjectSidebar', () => {
 
     expect(wrapper.find('[data-testid="todo-todo-a"]').attributes('data-activity-state')).toBe('needs-input')
     expect(wrapper.find('[data-testid="todo-activity-todo-a"]').classes()).toContain('needs-input')
+  })
+
+  it('does not keep done failed or exited agent statuses busy in collapsed TODO summaries', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        terminals: [
+          {
+            id: 'terminal-done',
+            projectId: 'project-a',
+            todoId: 'todo-a',
+            todoProjectId: 'todo-project-a',
+            shellName: 'zsh',
+            agentStatus: { phase: 'done' },
+            state: 'running'
+          },
+          {
+            id: 'terminal-failed',
+            projectId: 'project-a',
+            todoId: 'todo-a',
+            todoProjectId: 'todo-project-a',
+            shellName: 'zsh',
+            agentStatus: { phase: 'failed' },
+            state: 'running'
+          },
+          {
+            id: 'terminal-exited',
+            projectId: 'project-a',
+            todoId: 'todo-a',
+            todoProjectId: 'todo-project-a',
+            shellName: 'zsh',
+            agentStatus: { phase: 'exited' },
+            state: 'exited'
+          }
+        ]
+      }
+    })
+
+    await wrapper.find('[data-testid="toggle-todo-todo-a"]').trigger('click')
+
+    expect(wrapper.find('[data-testid="todo-todo-a"]').attributes('data-activity-state')).toBe('idle')
   })
 
   it('shows activity on terminal rows instead of the parent TODO while expanded', () => {
@@ -834,7 +971,7 @@ describe('ProjectSidebar', () => {
     expect(activeTodoTitles(wrapper)).toEqual(['整理文档', '修复登录问题'])
   })
 
-  it('keeps completed TODOs in their existing order', async () => {
+  it('keeps completed TODOs unaffected by active TODO priority sorting', async () => {
     const wrapper = mountSidebar({
       props: {
         todos: [
@@ -878,6 +1015,108 @@ describe('ProjectSidebar', () => {
     await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
 
     expect(completedTodoTitles(wrapper)).toEqual(['旧的低优先级归档', '旧的高优先级归档'])
+  })
+
+  it('orders completed TODOs by newest completedAt first', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        todos: [
+          {
+            id: 'todo-older-completed',
+            title: '整理文档',
+            status: 'completed',
+            completedAt: '2026-06-14T09:00:00Z'
+          },
+          {
+            id: 'todo-newer-completed',
+            title: '修复登录问题',
+            status: 'completed',
+            completedAt: '2026-06-15T09:00:00Z'
+          }
+        ],
+        todoProjects: [],
+        terminals: [],
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      }
+    })
+
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
+
+    expect(completedTodoTitles(wrapper)).toEqual(['修复登录问题', '整理文档'])
+  })
+
+  it('orders completed TODOs by archivedAt when completedAt is missing or invalid', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        todos: [
+          {
+            id: 'todo-completed-at',
+            title: '较早任务',
+            status: 'completed',
+            completedAt: '2026-06-15T09:00:00Z'
+          },
+          {
+            id: 'todo-archived-at',
+            title: '旧任务',
+            status: 'completed',
+            archivedAt: '2026-06-15T10:00:00Z'
+          },
+          {
+            id: 'todo-invalid-completed-at',
+            title: '异常旧任务',
+            status: 'completed',
+            completedAt: 'not-a-date',
+            archivedAt: '2026-06-15T11:00:00Z'
+          }
+        ],
+        todoProjects: [],
+        terminals: [],
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      }
+    })
+
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
+
+    expect(completedTodoTitles(wrapper)).toEqual(['异常旧任务', '旧任务', '较早任务'])
+  })
+
+  it('orders completed TODOs without valid completion time last', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        todos: [
+          {
+            id: 'todo-missing-completion-time',
+            title: '缺失时间任务',
+            status: 'completed'
+          },
+          {
+            id: 'todo-invalid-completion-time',
+            title: '无效时间任务',
+            status: 'completed',
+            completedAt: 'not-a-date'
+          },
+          {
+            id: 'todo-valid-completion-time',
+            title: '有时间任务',
+            status: 'completed',
+            completedAt: '2026-06-15T09:00:00Z'
+          }
+        ],
+        todoProjects: [],
+        terminals: [],
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      }
+    })
+
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
+
+    expect(completedTodoTitles(wrapper)).toEqual(['有时间任务', '缺失时间任务', '无效时间任务'])
   })
 
   it('opens TODO action confirmation popovers before emitting', async () => {
@@ -1093,8 +1332,10 @@ describe('ProjectSidebar', () => {
 
   it('defines compact bulk TODO branch control styles', () => {
     const styles = readFileSync('src/style.css', 'utf8')
+    const toolbarRule = styles.slice(styles.indexOf('.todo-tree-toolbar {'), styles.indexOf('.todo-sort-toggle'))
 
     expect(styles).toContain('.todo-tree-toolbar')
+    expect(toolbarRule).toContain('min-height: 34px;')
     expect(styles).toContain('.todo-tree-action')
     expect(styles).toContain('.todo-tree-action:disabled')
   })

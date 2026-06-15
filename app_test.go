@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestAppAddsAndSelectsProjectsThroughPublicAPI(t *testing.T) {
@@ -125,6 +126,53 @@ func TestAppCreatesAndSelectsTodoProjectTerminals(t *testing.T) {
 	}
 	if state.ActiveTerminalID != "terminal-1" {
 		t.Fatalf("ActiveTerminalID after SelectTerminal = %q, want terminal-1", state.ActiveTerminalID)
+	}
+}
+
+func TestAppPollsClaudeStatusFilesAndEmitsAgentStatus(t *testing.T) {
+	projectDir := t.TempDir()
+	statusDir := t.TempDir()
+	starter := newFakeShellStarter()
+	events := make(chan TerminalAgentStatusEvent, 1)
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		starter.Start,
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-1")),
+		WithClaudeStatusDir(statusDir),
+		WithTerminalAgentStatusEmitter(func(event TerminalAgentStatusEvent) {
+			events <- event
+		}),
+	)
+	app.startClaudeStatusWatcher()
+	defer app.stopClaudeStatusWatcher()
+
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	state, err = app.CreateTerminal(state.Projects[0].ID, 80, 24)
+	if err != nil {
+		t.Fatalf("CreateTerminal() error = %v", err)
+	}
+	if state.ActiveTerminalID != "terminal-1" {
+		t.Fatalf("ActiveTerminalID = %q, want terminal-1", state.ActiveTerminalID)
+	}
+
+	if err := os.WriteFile(filepath.Join(statusDir, "session-a.status"), []byte(`{"session":"session-a","terminalId":"terminal-1","status":"waiting","event":"Notification","cwd":"`+projectDir+`","ts":1718450010}`), 0644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	app.pollClaudeStatus()
+
+	select {
+	case event := <-events:
+		if event.TerminalID != "terminal-1" || event.ProjectID != state.Projects[0].ID {
+			t.Fatalf("event identity = %#v, want active terminal", event)
+		}
+		if event.Phase != "needs-input" || event.Source != "claude-hook" {
+			t.Fatalf("event status = %#v, want needs-input claude-hook", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for claude agent status event")
 	}
 }
 

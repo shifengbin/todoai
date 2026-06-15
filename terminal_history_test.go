@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -58,6 +60,51 @@ func TestTerminalHistoryStore_SaveAndLoad(t *testing.T) {
 	// Verify the file was written.
 	if _, err := os.Stat(filepath.Join(dir, "terminal-history.json")); err != nil {
 		t.Errorf("history file not found: %v", err)
+	}
+}
+
+func TestTerminalHistoryStore_SaveOmitsTransientAgentStatusFields(t *testing.T) {
+	dir := t.TempDir()
+	store := NewTerminalHistoryStore(dir)
+
+	history := TerminalHistoryFile{
+		Version: 1,
+		Records: []TerminalHistoryRecord{
+			{
+				TerminalID:     "term-1",
+				ProjectID:      "proj-1",
+				ShellName:      "bash",
+				State:          ShellStateExited,
+				CreatedAt:      "2026-06-12T00:00:00Z",
+				LastSelectedAt: "2026-06-12T00:00:00Z",
+				Output:         "hello",
+			},
+		},
+	}
+
+	if err := store.Save(history); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "terminal-history.json"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	raw := string(data)
+	for _, field := range []string{"agentStatus", "activityState", "source", "confidence", "reason", "updatedAt", "runtimeTitle"} {
+		if strings.Contains(raw, field) {
+			t.Fatalf("history contains transient field %q: %s", field, raw)
+		}
+	}
+
+	var decoded struct {
+		Records []map[string]any `json:"records"`
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if _, ok := decoded.Records[0]["currentCommand"]; ok {
+		t.Fatalf("history contains runtime command label: %#v", decoded.Records[0])
 	}
 }
 

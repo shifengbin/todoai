@@ -349,12 +349,56 @@ describe('App project terminal tree', () => {
     const terminalRow = wrapper.find('[data-testid="terminal-terminal-b"]')
     expect(terminalRow.classes()).toContain('active')
     expect(terminalRow.text()).toContain('codex --model gpt-5')
+    expect(terminalRow.attributes('data-activity-state')).toBe('idle')
 
     xtermMock.sessions.get('terminal-b').onCommandState({ type: 'command-end' })
     await nextTick()
 
     expect(wrapper.find('[data-testid="terminal-terminal-b"]').text()).toContain('bash')
     expect(wrapper.find('[data-testid="terminal-terminal-b"]').text()).not.toContain('codex --model gpt-5')
+  })
+
+  it('keeps structured agent status when title changes arrive', async () => {
+    const wrapper = await mountReadyApp()
+
+    runtimeMock.handlers['terminal-agent-status']({
+      projectId: 'project-a',
+      terminalId: 'terminal-a',
+      phase: 'needs-input',
+      source: 'claude-hook',
+      confidence: 'structured',
+      reason: 'permission-prompt',
+      updatedAt: 10
+    })
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="terminal-terminal-a"]').attributes('data-activity-state')).toBe('needs-input')
+
+    xtermMock.sessions.get('terminal-a').onTitleChange('claude thinking')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="terminal-terminal-a"]').attributes('data-activity-state')).toBe('needs-input')
+  })
+
+  it('clears structured agent status when the shell exits', async () => {
+    const wrapper = await mountReadyApp()
+
+    runtimeMock.handlers['terminal-agent-status']({
+      projectId: 'project-a',
+      terminalId: 'terminal-a',
+      phase: 'busy',
+      source: 'codex-jsonl',
+      confidence: 'authoritative',
+      reason: 'turn-started',
+      updatedAt: 10
+    })
+    await nextTick()
+    runtimeMock.handlers['terminal-status']({ projectId: 'project-a', terminalId: 'terminal-a', state: 'exited' })
+    await nextTick()
+    xtermMock.sessions.get('terminal-a').onTitleChange('codex thinking')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="terminal-terminal-a"]').attributes('data-activity-state')).toBe('idle')
   })
 
   it('selects a terminal from the project tree', async () => {
@@ -992,6 +1036,34 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="terminal-terminal-a"]').text()).not.toContain('codex')
   })
 
+  it('ignores invalid backend command-state events without changing agent status', async () => {
+    const wrapper = await mountReadyApp()
+
+    runtimeMock.handlers['terminal-agent-status']({
+      projectId: 'project-a',
+      terminalId: 'terminal-a',
+      phase: 'busy',
+      source: 'codex-jsonl',
+      confidence: 'authoritative',
+      reason: 'turn-started',
+      label: 'codex',
+      updatedAt: 10
+    })
+    await nextTick()
+
+    runtimeMock.handlers['terminal-command-state']({
+      projectId: 'project-a',
+      terminalId: 'terminal-a',
+      type: 'command-start',
+      command: ''
+    })
+    await nextTick()
+
+    const terminalRow = wrapper.find('[data-testid="terminal-terminal-a"]')
+    expect(terminalRow.text()).toContain('zsh')
+    expect(terminalRow.attributes('data-activity-state')).toBe('busy')
+  })
+
   it('restores the shell name when a running command exits with the shell', async () => {
     const wrapper = await mountReadyApp()
 
@@ -1026,7 +1098,7 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="terminal-terminal-a"]').text()).toContain('npm run dev')
   })
 
-  it('marks an interactive terminal busy from title changes without replacing the command label', async () => {
+  it('marks an interactive agent busy from title changes without replacing the command label', async () => {
     const wrapper = await mountReadyApp()
 
     xtermMock.sessions.get('terminal-a').onCommandState({ type: 'command-start', command: 'codex' })
@@ -1042,72 +1114,38 @@ describe('App project terminal tree', () => {
     expect(terminalRow.attributes('data-activity-state')).toBe('busy')
   })
 
-  it('keeps an interactive terminal idle when it receives the initial launch title', async () => {
-    const wrapper = await mountReadyApp()
+  it('uses title change activity and returns idle after one second without changes', async () => {
+    vi.useFakeTimers()
+    try {
+      const wrapper = await mountReadyApp()
 
-    xtermMock.sessions.get('terminal-a').onCommandState({ type: 'command-start', command: 'codex' })
-    await nextTick()
-    xtermMock.sessions.get('terminal-a').onTitleChange('codex - alpha')
-    await nextTick()
+      xtermMock.sessions.get('terminal-a').onTitleChange('codex')
+      await nextTick()
 
-    const terminalRow = wrapper.find('[data-testid="terminal-terminal-a"]')
-    expect(terminalRow.text()).toContain('codex')
-    expect(terminalRow.attributes('data-activity-state')).toBe('idle')
-  })
+      expect(wrapper.find('[data-testid="terminal-terminal-a"]').attributes('data-activity-state')).toBe('busy')
 
-  it('keeps a terminal idle when a Windows path is used as the title', async () => {
-    const wrapper = await mountReadyApp()
+      vi.advanceTimersByTime(999)
+      await nextTick()
 
-    xtermMock.sessions.get('terminal-a').onTitleChange('C:\\Users\\developer\\repo')
-    await nextTick()
+      expect(wrapper.find('[data-testid="terminal-terminal-a"]').attributes('data-activity-state')).toBe('busy')
 
-    expect(wrapper.find('[data-testid="terminal-terminal-a"]').attributes('data-activity-state')).toBe('idle')
-  })
+      vi.advanceTimersByTime(1)
+      await nextTick()
 
-  it('keeps a terminal idle when a Unix path is used as the title', async () => {
-    const wrapper = await mountReadyApp()
+      expect(wrapper.find('[data-testid="terminal-terminal-a"]').attributes('data-activity-state')).toBe('idle')
 
-    xtermMock.sessions.get('terminal-a').onTitleChange('/home/developer/repo')
-    await nextTick()
+      xtermMock.sessions.get('terminal-a').onTitleChange('codex working')
+      await nextTick()
 
-    expect(wrapper.find('[data-testid="terminal-terminal-a"]').attributes('data-activity-state')).toBe('idle')
-  })
+      expect(wrapper.find('[data-testid="terminal-terminal-a"]').attributes('data-activity-state')).toBe('busy')
 
-  it('marks an interactive terminal busy from spinner title changes', async () => {
-    const wrapper = await mountReadyApp()
+      vi.advanceTimersByTime(1000)
+      await nextTick()
 
-    xtermMock.sessions.get('terminal-a').onCommandState({ type: 'command-start', command: 'codex' })
-    await nextTick()
-    xtermMock.sessions.get('terminal-a').onTitleChange('codex ⠋')
-    await nextTick()
-
-    expect(wrapper.find('[data-testid="terminal-terminal-a"]').attributes('data-activity-state')).toBe('busy')
-  })
-
-  it('marks an interactive terminal as needing input from attention title changes', async () => {
-    const wrapper = await mountReadyApp()
-
-    xtermMock.sessions.get('terminal-a').onCommandState({ type: 'command-start', command: 'codex' })
-    await nextTick()
-    xtermMock.sessions.get('terminal-a').onTitleChange('! codex')
-    await nextTick()
-
-    expect(wrapper.find('[data-testid="terminal-terminal-a"]').attributes('data-activity-state')).toBe('needs-input')
-  })
-
-  it('restores idle activity when an interactive title returns to the command label', async () => {
-    const wrapper = await mountReadyApp()
-
-    xtermMock.sessions.get('terminal-a').onCommandState({ type: 'command-start', command: 'codex' })
-    await nextTick()
-    xtermMock.sessions.get('terminal-a').onTitleChange('codex - alpha')
-    await nextTick()
-    xtermMock.sessions.get('terminal-a').onTitleChange('codex working')
-    await nextTick()
-    xtermMock.sessions.get('terminal-a').onTitleChange('codex - alpha')
-    await nextTick()
-
-    expect(wrapper.find('[data-testid="terminal-terminal-a"]').attributes('data-activity-state')).toBe('idle')
+      expect(wrapper.find('[data-testid="terminal-terminal-a"]').attributes('data-activity-state')).toBe('idle')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('clears interactive title activity when a shell command ends', async () => {

@@ -50,6 +50,20 @@ func TestCommandStateOutputFilterConsumesWindowsTextFallback(t *testing.T) {
 	}
 }
 
+func TestCommandStateOutputFilterPreservesBracketedWindowsTextFallback(t *testing.T) {
+	filter := newCommandStateOutputFilter()
+	input := "prefix ]777;tui-helper;command-start;Y2FsYw==\asuffix"
+
+	result := filter.Filter(input)
+
+	if result.Data != input {
+		t.Fatalf("Data = %q, want %q", result.Data, input)
+	}
+	if len(result.Events) != 0 {
+		t.Fatalf("Events = %#v, want none", result.Events)
+	}
+}
+
 func TestCommandStateOutputFilterConsumesSplitPayload(t *testing.T) {
 	filter := newCommandStateOutputFilter()
 
@@ -70,6 +84,49 @@ func TestCommandStateOutputFilterConsumesSplitPayload(t *testing.T) {
 	}
 	if second.Events[0].Type != "command-start" || second.Events[0].Command != "claude" {
 		t.Fatalf("Event = %#v, want command-start claude", second.Events[0])
+	}
+}
+
+func TestCommandStateOutputFilterConsumesSplitWindowsTextFallbackPrefix(t *testing.T) {
+	filter := newCommandStateOutputFilter()
+
+	first := filter.Filter("before 777;tui-")
+	second := filter.Filter("helper;command-start;Y29kZXg=\r\nafter")
+
+	if first.Data != "before " {
+		t.Fatalf("first Data = %q, want before ", first.Data)
+	}
+	if len(first.Events) != 0 {
+		t.Fatalf("first Events = %#v, want none", first.Events)
+	}
+	if second.Data != "after" {
+		t.Fatalf("second Data = %q, want after", second.Data)
+	}
+	if len(second.Events) != 1 {
+		t.Fatalf("second Events length = %d, want 1", len(second.Events))
+	}
+	if second.Events[0].Type != "command-start" || second.Events[0].Command != "codex" {
+		t.Fatalf("Event = %#v, want command-start codex", second.Events[0])
+	}
+}
+
+func TestCommandStateOutputFilterPreservesSplitBracketedWindowsTextFallbackPrefix(t *testing.T) {
+	filter := newCommandStateOutputFilter()
+
+	first := filter.Filter("before ]777;tui-")
+	second := filter.Filter("helper;command-start;Y2FsYw==\aafter")
+
+	if first.Data != "before ]777;tui-" {
+		t.Fatalf("first Data = %q, want before ]777;tui-", first.Data)
+	}
+	if len(first.Events) != 0 {
+		t.Fatalf("first Events = %#v, want none", first.Events)
+	}
+	if second.Data != "helper;command-start;Y2FsYw==\aafter" {
+		t.Fatalf("second Data = %q, want helper;command-start;Y2FsYw==\\aafter", second.Data)
+	}
+	if len(second.Events) != 0 {
+		t.Fatalf("second Events = %#v, want none", second.Events)
 	}
 }
 
@@ -120,6 +177,20 @@ func TestCommandStateOutputFilterPreservesNonApplicationOutput(t *testing.T) {
 
 	if result.Data != input {
 		t.Fatalf("Data = %q, want original input", result.Data)
+	}
+	if len(result.Events) != 0 {
+		t.Fatalf("Events = %#v, want none", result.Events)
+	}
+}
+
+func TestCommandStateOutputFilterPreservesOrdinaryBase64LikeOutput(t *testing.T) {
+	filter := newCommandStateOutputFilter()
+	input := "token Y2FsYw== still visible\r\n"
+
+	result := filter.Filter(input)
+
+	if result.Data != input {
+		t.Fatalf("Data = %q, want %q", result.Data, input)
 	}
 	if len(result.Events) != 0 {
 		t.Fatalf("Events = %#v, want none", result.Events)

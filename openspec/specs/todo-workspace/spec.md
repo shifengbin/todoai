@@ -384,7 +384,7 @@ TBD - created by archiving change add-todo-centric-workspace. Update Purpose aft
 
 ### Requirement: View Archived Todos
 
-系统 SHALL 在 TODO tab 中提供已完成查看功能。已完成列表 SHALL 只显示状态为 `completed` 的 TODO，并 SHALL 展示完成时保存的项目快照。已删除 TODO SHALL NOT 显示在已完成列表中。
+系统 SHALL 在 TODO tab 中提供已完成查看功能。已完成列表 SHALL 只显示状态为 `completed` 的 TODO，并 SHALL 按完成时间倒序展示，最近完成的 TODO 排在前面。完成时间 SHALL 优先使用 `completedAt`，当 `completedAt` 缺失时 SHALL 使用 `archivedAt` 作为兼容旧数据的兜底。缺失有效完成时间的已完成 TODO SHALL 排在有完成时间的 TODO 之后。已完成列表 SHALL 展示完成时保存的项目快照。已删除 TODO SHALL NOT 显示在已完成列表中。
 
 #### Scenario: User views completed todos
 
@@ -393,6 +393,31 @@ TBD - created by archiving change add-todo-centric-workspace. Update Purpose aft
 - **THEN** `已完成` 视图显示 TODO `修复登录问题`
 - **AND** `已完成` 视图显示该 TODO 的完成时间
 - **AND** `已完成` 视图显示该 TODO 完成时关联项目的名称和路径快照
+
+#### Scenario: Completed todos are ordered by newest completion time
+
+- **WHEN** `已完成` 视图包含 TODO `整理文档`
+- **AND** TODO `整理文档` 的 `completedAt` 为 `2026-06-14T09:00:00Z`
+- **AND** `已完成` 视图包含 TODO `修复登录问题`
+- **AND** TODO `修复登录问题` 的 `completedAt` 为 `2026-06-15T09:00:00Z`
+- **THEN** `已完成` 视图中 TODO `修复登录问题` 排在 TODO `整理文档` 前面
+
+#### Scenario: Completed todo order falls back to archivedAt
+
+- **WHEN** `已完成` 视图包含 TODO `旧任务`
+- **AND** TODO `旧任务` 不包含 `completedAt`
+- **AND** TODO `旧任务` 的 `archivedAt` 为 `2026-06-15T10:00:00Z`
+- **AND** `已完成` 视图包含 TODO `较早任务`
+- **AND** TODO `较早任务` 的 `completedAt` 为 `2026-06-15T09:00:00Z`
+- **THEN** `已完成` 视图中 TODO `旧任务` 排在 TODO `较早任务` 前面
+
+#### Scenario: Completed todo without completion time is ordered last
+
+- **WHEN** `已完成` 视图包含 TODO `缺失时间任务`
+- **AND** TODO `缺失时间任务` 不包含有效的 `completedAt` 或 `archivedAt`
+- **AND** `已完成` 视图包含 TODO `有时间任务`
+- **AND** TODO `有时间任务` 的 `completedAt` 为 `2026-06-15T09:00:00Z`
+- **THEN** `已完成` 视图中 TODO `有时间任务` 排在 TODO `缺失时间任务` 前面
 
 #### Scenario: Deleted todo is not shown as completed
 
@@ -406,6 +431,30 @@ TBD - created by archiving change add-todo-centric-workspace. Update Purpose aft
 - **AND** 用户查看 TODO `修复登录问题`
 - **THEN** 系统不重新创建该 TODO 的终端
 - **AND** 系统不启动任何 shell 进程
+
+### Requirement: Stabilize Todo Workspace Header Layout
+
+系统 SHALL 在 TODO tab 的 `未执行`、`执行中`、`已完成` 三个状态视图之间保持顶部控制区高度一致。顶部状态切换栏 SHALL 在三个状态视图之间保持相同宽度分配。开放 TODO 专用的排序、批量收起和批量展开控件 SHALL 只在 `未执行` 与 `执行中` 视图中可见且可交互，`已完成` 视图 SHALL 保留等高布局占位但不暴露这些开放 TODO 操作。
+
+#### Scenario: Completed view keeps header height stable
+
+- **WHEN** 用户在 TODO tab 中查看 `未执行` 视图
+- **AND** 用户点击 `已完成` 状态按钮
+- **THEN** TODO 工作区顶部控制区高度保持不变
+- **AND** TODO 列表内容不会因顶部控制区高度变小而上移
+
+#### Scenario: Completed view keeps workflow tab widths stable
+
+- **WHEN** 用户在 TODO tab 中查看 `未执行` 视图
+- **AND** 用户点击 `已完成` 状态按钮
+- **THEN** `未执行`、`执行中`、`已完成` 三个状态按钮的宽度分配保持不变
+
+#### Scenario: Completed view does not expose open todo controls
+
+- **WHEN** 用户在 TODO tab 中打开 `已完成` 视图
+- **THEN** 系统不显示可操作的开放 TODO 排序控件
+- **AND** 系统不显示可操作的批量收起 TODO 控件
+- **AND** 系统不显示可操作的批量展开 TODO 控件
 
 ### Requirement: Preserve Archived Project Snapshots
 
@@ -554,7 +603,7 @@ TBD - created by archiving change add-todo-centric-workspace. Update Purpose aft
 
 ### Requirement: Manage Todo Action Confirmation Popovers
 
-系统 SHALL 在 TODO item 的完成按钮和右键菜单删除操作上使用确认气泡。系统 SHALL 在同一时间最多显示一个侧边栏浮层；打开 TODO 操作确认气泡 SHALL 关闭 TODO 右键菜单、终端启动菜单和 TODO 项目移除确认气泡，打开其它侧边栏浮层 SHALL 关闭 TODO 操作确认气泡。确认气泡 SHALL 支持取消、点击外部关闭和确认成功后关闭。删除确认气泡 SHALL 锚定在对应 TODO item 的操作上下文附近，且 SHALL NOT 脱离当前 TODO item 显示到侧边栏右上角。
+系统 SHALL 在 TODO item 的完成按钮和右键菜单删除操作上使用确认气泡。系统 SHALL 在同一时间最多显示一个侧边栏浮层；打开 TODO 操作确认气泡 SHALL 关闭 TODO 右键菜单、终端启动菜单和 TODO 项目移除确认气泡，打开其它侧边栏浮层 SHALL 关闭 TODO 操作确认气泡。确认气泡 SHALL 支持取消、点击外部关闭和确认成功后关闭。删除确认气泡 SHALL 锚定在对应 TODO item 的操作上下文附近，且 SHALL NOT 脱离当前 TODO item 显示到侧边栏右上角或应用全局右上角。
 
 #### Scenario: Complete confirmation popover opens beside complete action
 
@@ -577,6 +626,15 @@ TBD - created by archiving change add-todo-centric-workspace. Update Purpose aft
 - **AND** 用户在该 TODO item 的右键菜单中选择删除 TODO
 - **THEN** 删除确认气泡显示在 TODO `修复登录问题` 所属操作区域附近
 - **AND** 删除确认气泡不显示在侧边栏右上角
+- **AND** 删除确认气泡不显示在应用窗口全局右上角
+
+#### Scenario: Windows delete confirmation popover remains near trigger context
+
+- **WHEN** 应用运行在 Windows
+- **AND** 活动 TODO 列表显示 TODO `修复登录问题`
+- **AND** 用户通过右键菜单或三点菜单选择删除 TODO
+- **THEN** 系统在 TODO `修复登录问题` 的操作上下文附近显示删除确认气泡
+- **AND** 删除确认气泡不锚定到侧边栏或应用窗口的全局角落
 
 #### Scenario: Opening another sidebar popover closes todo action popover
 
@@ -800,13 +858,13 @@ TBD - created by archiving change add-todo-centric-workspace. Update Purpose aft
 
 ### Requirement: Use Todo Context Menu
 
-系统 SHALL 在 `not-started` 和 `in-progress` TODO 行上提供右键菜单，并 SHALL 在 TODO item 上提供一个三点图标按钮用于打开同一组菜单动作。TODO 菜单 SHALL 包含查看详情、添加项目、复制标题和描述、删除 TODO 动作。菜单动作完成、用户点击菜单外部或打开其他侧边栏浮层后，系统 SHALL 关闭 TODO 菜单。
+系统 SHALL 在 `not-started` 和 `in-progress` TODO 行上提供右键菜单，并 SHALL 在 TODO item 上提供一个三点图标按钮用于打开同一组菜单动作。TODO 菜单 SHALL 包含查看详情、添加项目、复制标题和描述、删除 TODO 动作。菜单 SHALL 显示在触发它的指针或三点按钮附近，且 SHALL NOT 显示在应用窗口全局右上角。菜单动作完成、用户点击菜单外部或打开其他侧边栏浮层后，系统 SHALL 关闭 TODO 菜单。
 
 #### Scenario: User opens todo context menu
 
 - **WHEN** 活动 TODO 列表显示 TODO `修复登录问题`
 - **AND** 用户在 TODO `修复登录问题` 行上打开右键菜单
-- **THEN** 系统显示 TODO 菜单
+- **THEN** 系统在指针附近显示 TODO 菜单
 - **AND** 菜单包含查看详情入口
 - **AND** 菜单包含添加项目入口
 - **AND** 菜单包含复制标题和描述入口
@@ -816,11 +874,19 @@ TBD - created by archiving change add-todo-centric-workspace. Update Purpose aft
 
 - **WHEN** 活动 TODO 列表显示 TODO `修复登录问题`
 - **AND** 用户点击 TODO `修复登录问题` item 上的三点图标按钮
-- **THEN** 系统显示 TODO 菜单
+- **THEN** 系统在三点图标按钮附近显示 TODO 菜单
 - **AND** 菜单包含查看详情入口
 - **AND** 菜单包含添加项目入口
 - **AND** 菜单包含复制标题和描述入口
 - **AND** 菜单包含删除 TODO 入口
+
+#### Scenario: Windows todo menu does not appear in global corner
+
+- **WHEN** 应用运行在 Windows
+- **AND** 活动 TODO 列表显示 TODO `修复登录问题`
+- **AND** 用户通过右键或三点图标按钮打开 TODO 菜单
+- **THEN** TODO 菜单显示在触发位置附近
+- **AND** TODO 菜单不显示在应用窗口全局右上角
 
 #### Scenario: User opens todo detail from context menu
 

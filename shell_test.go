@@ -208,6 +208,28 @@ func TestShellSessionManagerStartsShellWithEmbeddedTerminalEnvironment(t *testin
 	}
 }
 
+func TestShellSessionManagerStartsShellWithTerminalIdentityEnvironment(t *testing.T) {
+	starter := newFakeShellStarter()
+	manager := NewShellSessionManager(
+		starter.Start,
+		ShellSessionCallbacks{},
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-1")),
+	)
+	project := Project{ID: "project-a", Path: t.TempDir(), Available: true}
+
+	if _, err := manager.CreateTerminal(project, TerminalSize{Cols: 80, Rows: 24}); err != nil {
+		t.Fatalf("CreateTerminal() error = %v", err)
+	}
+
+	env := starter.requests[0].Env
+	if got := envValue(env, "TUI_HELPER_TERMINAL_ID"); got != "terminal-1" {
+		t.Fatalf("TUI_HELPER_TERMINAL_ID = %q, want terminal-1", got)
+	}
+	if got := envValue(env, "TUI_HELPER_PROJECT_ID"); got != "project-a" {
+		t.Fatalf("TUI_HELPER_PROJECT_ID = %q, want project-a", got)
+	}
+}
+
 func TestShellSessionManagerSerializesConcurrentStartsForSameTerminal(t *testing.T) {
 	starter := newBlockingShellStarter()
 	manager := NewShellSessionManager(

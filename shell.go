@@ -55,6 +55,19 @@ type TerminalOutputEvent struct {
 	Data          string `json:"data"`
 }
 
+type TerminalAgentStatusEvent struct {
+	ProjectID     string `json:"projectId"`
+	TodoID        string `json:"todoId,omitempty"`
+	TodoProjectID string `json:"todoProjectId,omitempty"`
+	TerminalID    string `json:"terminalId"`
+	Phase         string `json:"phase"`
+	Source        string `json:"source"`
+	Confidence    string `json:"confidence"`
+	Reason        string `json:"reason"`
+	Label         string `json:"label,omitempty"`
+	UpdatedAt     int64  `json:"updatedAt"`
+}
+
 type ProjectTerminal struct {
 	ID             string `json:"id"`
 	ProjectID      string `json:"projectId"`
@@ -317,7 +330,7 @@ func (manager *ShellSessionManager) StartTerminal(terminalID string, size Termin
 		ShellArgs:     launch.Args,
 		ShellName:     launch.ShellName,
 		Size:          size,
-		Env:           launch.Env,
+		Env:           terminalIdentityEnv(launch.Env, *terminal),
 	}
 	process, err := manager.starter(request)
 	if err != nil {
@@ -976,6 +989,16 @@ func IntegratedShellLaunch(shellPath string, baseEnv []string) (ShellLaunch, err
 	default:
 		return launch, nil
 	}
+}
+
+func terminalIdentityEnv(env []string, terminal ProjectTerminal) []string {
+	return envWithOverrides(env, map[string]string{
+		"TUI_HELPER_TERMINAL_ID":      terminal.ID,
+		"TUI_HELPER_PROJECT_ID":       terminal.ProjectID,
+		"TUI_HELPER_TODO_ID":          terminal.TodoID,
+		"TUI_HELPER_TODO_PROJECT_ID":  terminal.TodoProjectID,
+		"TUI_HELPER_TERMINAL_WORKDIR": terminal.projectPath,
+	})
 }
 
 func zshIntegratedLaunch(launch ShellLaunch) (ShellLaunch, error) {

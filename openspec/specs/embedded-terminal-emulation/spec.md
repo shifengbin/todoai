@@ -76,53 +76,68 @@ The system SHALL maintain at most one live PTY process per project even when pro
 - **THEN** 系统保持 terminal A 的现有终端渲染和命令标签行为
 - **AND** 不为 terminal A 生成交互式活动状态
 
-### Requirement: Classify Terminal Activity From Titles
+### Requirement: Preserve Unrecognized Launch Profile Text
 
-The system SHALL classify terminal activity from captured terminal title changes without treating ordinary Windows path separators as busy indicators. The system SHALL continue to surface explicit busy and needs-input title signals.
+The system SHALL preserve terminal output that only resembles base64 text, a Windows launch profile text leak, or an unsupported control-text shape. The system MUST only consume payloads that match the supported application-private command-state protocol.
 
-#### Scenario: Windows path title remains idle
+#### Scenario: Unrecognized Windows launch profile text is preserved
 
 - **WHEN** the application runs on Windows
-- **AND** terminal A receives a title update `C:\Users\developer\repo`
-- **THEN** the system records terminal A's latest runtime title
-- **AND** terminal A's activity state remains `idle`
-- **AND** the TODO terminal tree does not display terminal A as busy solely because the title contains `\`
+- **AND** launching a non-empty launch profile command surfaces text that looks like base64 or an unsupported control-text fragment
+- **AND** that text does not match the supported application-private command-state protocol
+- **THEN** the system renders that text normally
+- **AND** the system persists that text in terminal history normally
 
-#### Scenario: Unix path title remains idle
+#### Scenario: Ordinary base64-like output is preserved
 
-- **WHEN** terminal A receives a title update `/home/developer/repo`
-- **THEN** the system records terminal A's latest runtime title
-- **AND** terminal A's activity state remains `idle`
-- **AND** the TODO terminal tree does not display terminal A as busy solely because the title contains `/`
+- **WHEN** terminal output contains base64-like text that does not match the supported application-private command-state protocol
+- **THEN** the system renders that text normally
+- **AND** the system persists that text in terminal history normally
 
-#### Scenario: Explicit busy title signal marks terminal busy
+### Requirement: Track Terminal Activity From Title Changes
+
+The system SHALL track terminal activity from captured terminal title changes using a time-based fallback. Any title update SHALL record the latest runtime title and mark the terminal `busy` with source `title-fallback` when no newer higher-priority unified agent status applies. If no further title update is received for 1 second, the title fallback status SHALL return to `idle`. Title-derived status SHALL be treated as low-confidence fallback and MUST NOT override newer higher-priority unified agent status from shell lifecycle, command-state, Claude/Codex structured events, or machine-readable agent streams.
+
+#### Scenario: Title change marks terminal busy
 
 - **WHEN** terminal A receives a title update `codex thinking`
+- **AND** terminal A has no newer higher-priority agent status
 - **THEN** the system records terminal A's latest runtime title
-- **AND** terminal A's activity state becomes `busy`
+- **AND** terminal A's unified agent activity phase becomes `busy`
+- **AND** the status source is `title-fallback`
 
-#### Scenario: Spinner title signal marks terminal busy
+#### Scenario: Repeated title changes keep terminal busy
 
-- **WHEN** terminal A receives a title update containing an explicit spinner character such as `⠋`
+- **WHEN** terminal A is `busy` from title fallback activity
+- **AND** terminal A receives another title update before 1 second elapses
+- **THEN** terminal A remains `busy`
+- **AND** the 1-second idle timeout restarts from the latest title update
+
+#### Scenario: No title change for one second returns terminal idle
+
+- **WHEN** terminal A is `busy` from title fallback activity
+- **AND** terminal A receives no title updates for 1 second
+- **THEN** terminal A's unified agent activity phase becomes `idle`
+- **AND** the status source remains `title-fallback`
+
+#### Scenario: Title text is not semantically classified
+
+- **WHEN** terminal A receives title updates containing a Windows path, Unix path, spinner character, Claude dot frame, or attention marker
 - **THEN** the system records terminal A's latest runtime title
-- **AND** terminal A's activity state becomes `busy`
+- **AND** those title strings follow the same title-change busy and 1-second idle timeout rule
+- **AND** the system does not infer `needs-input` or long-lived `busy` from the title text itself
 
-#### Scenario: Needs input title signal marks terminal needs input
+#### Scenario: Structured status is not overridden by title fallback
 
-- **WHEN** terminal A receives a title update `codex !`
+- **WHEN** terminal A has unified agent activity phase `needs-input` from a Claude hook notification
+- **AND** terminal A receives a terminal title update `claude thinking`
 - **THEN** the system records terminal A's latest runtime title
-- **AND** terminal A's activity state becomes `needs-input`
-
-#### Scenario: Stable title establishes idle baseline
-
-- **WHEN** terminal A is running without a prior idle title
-- **AND** terminal A receives a stable title update matching its shell or current command label
-- **THEN** the system records that title as terminal A's idle title
-- **AND** terminal A's activity state remains `idle`
+- **AND** terminal A's unified agent activity phase remains `needs-input`
+- **AND** terminal A's unified agent status source remains the Claude hook source
 
 ### Requirement: Suppress Internal Command-State Payloads
 
-The system SHALL consume application-private command-state payloads before embedded terminal output is rendered or persisted. The system MUST NOT display or replay base64 command-state payloads as terminal text.
+The system SHALL consume application-private command-state payloads before embedded terminal output is rendered or persisted. The system MUST NOT display or replay base64 command-state payloads as terminal text. When a command-state payload is invalid but recognizable as application-private, the system SHALL drop the payload and preserve the previous terminal command state.
 
 #### Scenario: Raw command-state OSC is not rendered or persisted
 
@@ -136,6 +151,14 @@ The system SHALL consume application-private command-state payloads before embed
 - **AND** ConPTY output surfaces `777;tui-helper;command-start;Y29kZXg=` as ordinary terminal text
 - **THEN** the visible terminal output excludes that application-private payload
 - **AND** the persisted terminal history excludes that application-private payload
+
+#### Scenario: Invalid Windows textual command-state payload is dropped
+
+- **WHEN** the application runs on Windows
+- **AND** ConPTY output surfaces `777;tui-helper;command-start;not-base64` as ordinary terminal text
+- **THEN** the visible terminal output excludes that application-private payload
+- **AND** the persisted terminal history excludes that application-private payload
+- **AND** the terminal command label is not updated from the invalid payload
 
 #### Scenario: Split command-state payload is consumed across output chunks
 

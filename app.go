@@ -5,37 +5,60 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
+	"time"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 type App struct {
-	ctx       context.Context
-	projects  *ProjectManager
-	shells    *ShellSessionManager
-	settings  *SettingsManager
-	history   *TerminalHistoryStore
-	gitStatus func(path string) (GitStatus, error)
-	gitInit   func(path string) error
+	ctx                        context.Context
+	projects                   *ProjectManager
+	shells                     *ShellSessionManager
+	settings                   *SettingsManager
+	history                    *TerminalHistoryStore
+	gitStatus                  func(path string) (GitStatus, error)
+	gitInit                    func(path string) error
+	claudeStatusDir            string
+	claudeStatusWatcher        *ClaudeStatusWatcher
+	claudeStatusStop           chan struct{}
+	claudeStatusStopOnce       sync.Once
+	terminalAgentStatusEmitter func(TerminalAgentStatusEvent)
 }
+
+type AppOption func(*App)
 
 func NewApp() *App {
 	return NewAppWithConfig(defaultProjectConfigPath())
 }
 
-func NewAppWithConfig(configPath string) *App {
-	return NewAppWithConfigAndShellStarter(configPath, NewPtyProcess)
+func NewAppWithConfig(configPath string, opts ...AppOption) *App {
+	typedOpts := make([]any, 0, len(opts))
+	for _, opt := range opts {
+		typedOpts = append(typedOpts, opt)
+	}
+	return NewAppWithConfigAndShellStarter(configPath, NewPtyProcess, typedOpts...)
 }
 
-func NewAppWithConfigAndShellStarter(configPath string, starter ShellStarter, shellOpts ...ShellSessionManagerOption) *App {
+func NewAppWithConfigAndShellStarter(configPath string, starter ShellStarter, opts ...any) *App {
 	configDir := filepath.Dir(configPath)
 	historyStore := NewTerminalHistoryStore(configDir)
 	app := &App{
-		projects:  NewProjectManager(configPath),
-		settings:  NewSettingsManager(defaultSettingsConfigPath(configPath)),
-		history:   historyStore,
-		gitStatus: queryGitStatus,
-		gitInit:   initializeGitRepository,
+		projects:        NewProjectManager(configPath),
+		settings:        NewSettingsManager(defaultSettingsConfigPath(configPath)),
+		history:         historyStore,
+		gitStatus:       queryGitStatus,
+		gitInit:         initializeGitRepository,
+		claudeStatusDir: defaultClaudeStatusDir,
+	}
+	var shellOpts []ShellSessionManagerOption
+	for _, opt := range opts {
+		switch typed := opt.(type) {
+		case ShellSessionManagerOption:
+			shellOpts = append(shellOpts, typed)
+		case AppOption:
+			typed(app)
+		}
 	}
 	shellOpts = append([]ShellSessionManagerOption{
 		WithShellPathResolver(app.settings.ResolveShellPath),
@@ -49,12 +72,62 @@ func NewAppWithConfigAndShellStarter(configPath string, starter ShellStarter, sh
 	return app
 }
 
+func WithClaudeStatusDir(dir string) AppOption {
+	return func(app *App) {
+		app.claudeStatusDir = dir
+	}
+}
+
+func WithTerminalAgentStatusEmitter(emit func(TerminalAgentStatusEvent)) AppOption {
+	return func(app *App) {
+		app.terminalAgentStatusEmitter = emit
+	}
+}
+
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.startClaudeStatusWatcher()
 }
 
 func (a *App) shutdown(ctx context.Context) {
+	a.stopClaudeStatusWatcher()
 	a.shells.Shutdown()
+}
+
+func (a *App) startClaudeStatusWatcher() {
+	if a.claudeStatusDir == "" {
+		return
+	}
+	a.claudeStatusStop = make(chan struct{})
+	a.claudeStatusStopOnce = sync.Once{}
+	a.claudeStatusWatcher = NewClaudeStatusWatcher(a.claudeStatusDir, a.shells.Terminals, a.emitTerminalAgentStatus)
+	ticker := time.NewTicker(500 * time.Millisecond)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				a.pollClaudeStatus()
+			case <-a.claudeStatusStop:
+				return
+			}
+		}
+	}()
+}
+
+func (a *App) stopClaudeStatusWatcher() {
+	if a.claudeStatusStop == nil {
+		return
+	}
+	a.claudeStatusStopOnce.Do(func() {
+		close(a.claudeStatusStop)
+	})
+}
+
+func (a *App) pollClaudeStatus() {
+	if a.claudeStatusWatcher != nil {
+		a.claudeStatusWatcher.Poll()
+	}
 }
 
 func (a *App) ListProjects() (ProjectState, error) {
@@ -367,6 +440,16 @@ func (a *App) emitTerminalOutput(event TerminalOutputEvent) {
 func (a *App) emitTerminalCommandState(event TerminalCommandStateEvent) {
 	if a.ctx != nil {
 		wailsruntime.EventsEmit(a.ctx, "terminal-command-state", event)
+	}
+}
+
+func (a *App) emitTerminalAgentStatus(event TerminalAgentStatusEvent) {
+	if a.terminalAgentStatusEmitter != nil {
+		a.terminalAgentStatusEmitter(event)
+		return
+	}
+	if a.ctx != nil {
+		wailsruntime.EventsEmit(a.ctx, "terminal-agent-status", event)
 	}
 }
 
