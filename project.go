@@ -91,6 +91,8 @@ type ProjectImportSummary struct {
 
 type ProjectState struct {
 	Version             int                   `json:"version"`
+	CurrentWorkspace    *Workspace            `json:"currentWorkspace,omitempty"`
+	RecentWorkspaces    []Workspace           `json:"recentWorkspaces,omitempty"`
 	Projects            []Project             `json:"projects"`
 	Todos               []Todo                `json:"todos"`
 	TodoProjects        []TodoProject         `json:"todoProjects"`

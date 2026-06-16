@@ -6,6 +6,8 @@ import {
   AddProjectToTodo,
   AddProjectsToTodo,
   ChangeTodoStatus,
+  ClearRecentWorkspaces,
+  CloseWorkspace,
   CompleteTodo,
   CreateTodo,
   CreateTodoTerminal,
@@ -19,6 +21,9 @@ import {
   ImportProjectsFromParentDirectoryDialog,
   InitializeProjectGitRepository,
   LoadTerminalSettings,
+  OpenRecentWorkspace,
+  OpenWorkspaceFromDialog,
+  OpenWorkspaceFromPath,
   RemoveTodoProject,
   SaveTerminalLaunchProfiles,
   SaveTerminalShell,
@@ -26,7 +31,8 @@ import {
   SelectTerminal,
   SendTerminalInput,
   StartShell,
-  UpdateTodo
+  UpdateTodo,
+  WorkspaceState
 } from '../wailsjs/go/main/App'
 import { ClipboardGetText, ClipboardSetText } from '../wailsjs/runtime/runtime'
 
@@ -34,6 +40,8 @@ const appApiMock = vi.hoisted(() => ({
   AddProjectToTodo: vi.fn(),
   AddProjectsToTodo: vi.fn(),
   ChangeTodoStatus: vi.fn(),
+  ClearRecentWorkspaces: vi.fn(),
+  CloseWorkspace: vi.fn(),
   CompleteTodo: vi.fn(),
   CreateTodo: vi.fn(),
   CreateTodoTerminal: vi.fn(),
@@ -49,6 +57,9 @@ const appApiMock = vi.hoisted(() => ({
   InitializeProjectGitRepository: vi.fn(),
   ListProjects: vi.fn(),
   LoadTerminalSettings: vi.fn(),
+  OpenRecentWorkspace: vi.fn(),
+  OpenWorkspaceFromDialog: vi.fn(),
+  OpenWorkspaceFromPath: vi.fn(),
   RemoveTodoProject: vi.fn(),
   ResizeTerminal: vi.fn(),
   SelectProject: vi.fn(),
@@ -59,7 +70,8 @@ const appApiMock = vi.hoisted(() => ({
   SaveTerminalTheme: vi.fn(),
   SendTerminalInput: vi.fn(),
   StartShell: vi.fn(),
-  UpdateTodo: vi.fn()
+  UpdateTodo: vi.fn(),
+  WorkspaceState: vi.fn()
 }))
 
 const runtimeMock = vi.hoisted(() => ({
@@ -87,7 +99,9 @@ vi.mock('./xtermFactory', () => {
         },
         write: vi.fn((data, callback) => callback?.()),
         focus: vi.fn(),
-        dispose: vi.fn(),
+        dispose: vi.fn(() => {
+          xtermMock.sessions.delete(terminalId)
+        }),
         hasSelection() {
           return Boolean(this.selection)
         },
@@ -186,6 +200,12 @@ describe('App project terminal tree', () => {
     appApiMock.DeleteTerminal.mockResolvedValue(projectState({ terminals: [], activeTerminalId: '' }))
     appApiMock.RemoveTodoProject.mockResolvedValue(projectState({ todoProjects: [], terminals: [], activeTodoProjectId: '', activeTerminalId: '' }))
     appApiMock.UpdateTodo.mockResolvedValue(projectState())
+    appApiMock.WorkspaceState.mockResolvedValue(workspaceState())
+    appApiMock.OpenWorkspaceFromDialog.mockResolvedValue(projectState())
+    appApiMock.OpenWorkspaceFromPath.mockResolvedValue(projectState())
+    appApiMock.OpenRecentWorkspace.mockResolvedValue(projectState())
+    appApiMock.CloseWorkspace.mockResolvedValue(noWorkspaceState())
+    appApiMock.ClearRecentWorkspaces.mockResolvedValue(workspaceState({ recentWorkspaces: [] }))
     appApiMock.GetProjectGitStatus.mockResolvedValue(gitStatus())
     appApiMock.InitializeProjectGitRepository.mockResolvedValue()
     appApiMock.StartShell.mockResolvedValue({ projectId: 'project-a', terminalId: 'terminal-a', state: 'running' })
@@ -200,6 +220,94 @@ describe('App project terminal tree', () => {
     for (const wrapper of mountedWrappers.splice(0)) {
       wrapper.unmount()
     }
+  })
+
+  it('shows no workspace empty state while keeping global settings available', async () => {
+    appApiMock.ListProjects.mockResolvedValue(noWorkspaceState())
+    const wrapper = await mountReadyApp()
+
+    expect(LoadTerminalSettings).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('[data-testid="todo-workspace-empty"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="new-todo"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-testid="settings-toggle"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('[data-testid="terminal-surface"]').text()).toContain('Open a project')
+    expect(wrapper.find('[data-testid="status-chip-neutral"]').text()).toContain('No project')
+
+    await openSettings(wrapper)
+    expect(wrapper.find('[data-testid="terminal-settings-dialog"]').exists()).toBe(true)
+
+    await wrapper.find('[data-testid="sidebar-tab-projects"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="project-library-empty"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="import-parent-directory"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('opens a selected recent workspace from the menu event picker', async () => {
+    appApiMock.ListProjects.mockResolvedValue(noWorkspaceState())
+    appApiMock.OpenRecentWorkspace.mockResolvedValue(
+      projectState({ currentWorkspace: workspace({ name: 'Customer A', path: '/work/customer-a' }) })
+    )
+    const wrapper = await mountReadyApp()
+
+    runtimeMock.handlers['workspace-recent'](
+      workspaceState({
+        recentWorkspaces: [
+          workspace({ name: 'Customer A', path: '/work/customer-a', available: true }),
+          workspace({ name: 'Missing', path: '/missing/customer-b', available: false })
+        ]
+      })
+    )
+    await nextTick()
+
+    const dialog = wrapper.find('[data-testid="recent-workspace-dialog"]')
+    expect(dialog.exists()).toBe(true)
+    expect(dialog.text()).toContain('Customer A')
+    expect(dialog.text()).toContain('/missing/customer-b')
+    expect(dialog.text()).toContain('Unavailable')
+
+    await wrapper.find('[data-testid="recent-workspace-0"]').trigger('click')
+    await flushPromises()
+
+    expect(OpenRecentWorkspace).toHaveBeenCalledWith('/work/customer-a')
+    expect(LoadTerminalSettings).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('[data-testid="recent-workspace-dialog"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="todo-workspace-empty"]').exists()).toBe(false)
+  })
+
+  it('applies workspace-state events by clearing previous terminal and git context', async () => {
+    const wrapper = await mountReadyApp()
+    const session = xtermMock.sessions.get('terminal-a')
+    runtimeMock.handlers['terminal-agent-status']({
+      projectId: 'project-a',
+      terminalId: 'terminal-a',
+      phase: 'busy',
+      source: 'codex-jsonl',
+      confidence: 'authoritative',
+      reason: 'turn-started',
+      updatedAt: 10
+    })
+    await nextTick()
+    expect(wrapper.find('[data-testid="terminal-terminal-a"]').attributes('data-activity-state')).toBe('busy')
+    ClipboardGetText.mockRejectedValueOnce(new Error('old workspace error'))
+    await openTerminalMenu(wrapper)
+    await wrapper.find('[data-testid="terminal-menu-paste"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.status-error').text()).toContain('old workspace error')
+
+    LoadTerminalSettings.mockClear()
+    GetProjectGitStatus.mockClear()
+    runtimeMock.handlers['workspace-state'](noWorkspaceState())
+    await flushPromises()
+
+    expect(session.terminal.dispose).toHaveBeenCalledTimes(1)
+    expect(xtermMock.sessions.has('terminal-a')).toBe(false)
+    expect(wrapper.find('[data-testid="terminal-terminal-a"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="terminal-surface"]').text()).toContain('Open a project')
+    expect(wrapper.find('[data-testid="status-chip-neutral"]').text()).toContain('No project')
+    expect(wrapper.find('.status-error').exists()).toBe(false)
+    expect(LoadTerminalSettings).not.toHaveBeenCalled()
+    expect(GetProjectGitStatus).not.toHaveBeenCalled()
   })
 
   it('shows terminal copy and paste actions on right click', async () => {
@@ -2060,6 +2168,8 @@ async function flushPromises() {
 
 function projectState(overrides = {}) {
   return {
+    currentWorkspace: workspace(),
+    recentWorkspaces: [workspace()],
     projects: [{ id: 'project-a', name: 'alpha', path: '/work/alpha', available: true }],
     todos: [todo()],
     todoProjects: [todoProject()],
@@ -2068,6 +2178,42 @@ function projectState(overrides = {}) {
     activeTodoProjectId: 'todo-project-a',
     terminals: [terminal({ id: 'terminal-a' })],
     activeTerminalId: 'terminal-a',
+    ...overrides
+  }
+}
+
+function noWorkspaceState(overrides = {}) {
+  return projectState({
+    currentWorkspace: null,
+    projects: [],
+    todos: [],
+    todoProjects: [],
+    activeProjectId: '',
+    activeTodoId: '',
+    activeTodoProjectId: '',
+    terminals: [],
+    activeTerminalId: '',
+    importSummary: null,
+    ...overrides
+  })
+}
+
+function workspace(overrides = {}) {
+  return {
+    name: 'Customer A',
+    path: '/work/customer-a',
+    dataPath: '/work/customer-a/.data',
+    available: true,
+    lastOpenedAt: '2026-06-10T09:00:00Z',
+    ...overrides
+  }
+}
+
+function workspaceState(overrides = {}) {
+  return {
+    version: 1,
+    currentWorkspace: workspace(),
+    recentWorkspaces: [workspace()],
     ...overrides
   }
 }

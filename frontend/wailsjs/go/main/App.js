@@ -18,6 +18,14 @@ export function ChangeTodoStatus(arg1, arg2) {
   return window['go']['main']['App']['ChangeTodoStatus'](arg1, arg2);
 }
 
+export function ClearRecentWorkspaces() {
+  return window['go']['main']['App']['ClearRecentWorkspaces']();
+}
+
+export function CloseWorkspace() {
+  return window['go']['main']['App']['CloseWorkspace']();
+}
+
 export function CompleteTodo(arg1) {
   return window['go']['main']['App']['CompleteTodo'](arg1);
 }
@@ -90,6 +98,18 @@ export function LoadTerminalSettings() {
   return window['go']['main']['App']['LoadTerminalSettings']();
 }
 
+export function OpenRecentWorkspace(arg1) {
+  return window['go']['main']['App']['OpenRecentWorkspace'](arg1);
+}
+
+export function OpenWorkspaceFromDialog() {
+  return window['go']['main']['App']['OpenWorkspaceFromDialog']();
+}
+
+export function OpenWorkspaceFromPath(arg1) {
+  return window['go']['main']['App']['OpenWorkspaceFromPath'](arg1);
+}
+
 export function RemoveTodoProject(arg1) {
   return window['go']['main']['App']['RemoveTodoProject'](arg1);
 }
@@ -132,4 +152,8 @@ export function StartShell(arg1, arg2, arg3) {
 
 export function UpdateTodo(arg1) {
   return window['go']['main']['App']['UpdateTodo'](arg1);
+}
+
+export function WorkspaceState() {
+  return window['go']['main']['App']['WorkspaceState']();
 }

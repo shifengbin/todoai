@@ -349,6 +349,20 @@ button {
     color: var(--accent);
 }
 
+.icon-button:disabled,
+.toolbar-button:disabled,
+.library-action-button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.icon-button:disabled:hover,
+.toolbar-button:disabled:hover,
+.library-action-button:disabled:hover {
+    border-color: var(--control-border);
+    color: var(--text-secondary);
+}
+
 .visually-hidden {
     position: absolute;
     width: 1px;
@@ -900,6 +914,13 @@ button {
     padding: 10px 8px;
     color: var(--muted-text);
     font-size: 12px;
+}
+
+.sidebar-empty.workspace-empty {
+    display: grid;
+    min-height: 96px;
+    place-items: center;
+    text-align: center;
 }
 
 .sidebar-empty.nested {
@@ -1761,6 +1782,57 @@ button {
 
 .todo-dialog {
     width: min(560px, 100%);
+}
+
+.recent-workspace-dialog {
+    width: min(640px, 100%);
+}
+
+.recent-workspace-list {
+    gap: 8px;
+}
+
+.recent-workspace-item {
+    display: grid;
+    width: 100%;
+    min-width: 0;
+    gap: 4px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-soft);
+    background: var(--surface-muted);
+    color: var(--text-secondary);
+    cursor: pointer;
+    text-align: left;
+}
+
+.recent-workspace-item:hover:not(:disabled),
+.recent-workspace-item:focus-visible:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--text-strong);
+    outline: none;
+}
+
+.recent-workspace-item:disabled {
+    opacity: 0.6;
+    cursor: wait;
+}
+
+.recent-workspace-name,
+.recent-workspace-path {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.recent-workspace-name {
+    color: var(--text-strong);
+    font-size: 13px;
+    font-weight: 800;
+}
+
+.recent-workspace-path {
+    color: var(--muted-text);
+    font-size: 12px;
 }
 
 .settings-header,

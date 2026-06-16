@@ -768,6 +768,23 @@ func (manager *ShellSessionManager) Shutdown() {
 	}
 }
 
+func (manager *ShellSessionManager) Reset() {
+	manager.mu.Lock()
+	sessions := make([]*ShellSession, 0, len(manager.sessions))
+	for _, session := range manager.sessions {
+		sessions = append(sessions, session)
+	}
+	manager.sessions = map[string]*ShellSession{}
+	manager.terminals = map[string]*ProjectTerminal{}
+	manager.activeByContext = map[string]string{}
+	manager.mu.Unlock()
+
+	for _, session := range sessions {
+		_ = session.process.Close()
+		session.cleanupSession()
+	}
+}
+
 func (manager *ShellSessionManager) runningSession(terminalID string) (*ShellSession, error) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()

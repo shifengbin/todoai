@@ -61,6 +61,10 @@ const props = defineProps({
   importSummary: {
     type: Object,
     default: null
+  },
+  hasWorkspace: {
+    type: Boolean,
+    default: true
   }
 })
 
@@ -980,6 +984,7 @@ watch(
           class="icon-button"
           data-testid="new-todo"
           title="New TODO"
+          :disabled="!hasWorkspace"
           @click="emit('create-todo')"
         >
           <Plus :size="18" />
@@ -990,6 +995,7 @@ watch(
           class="icon-button"
           data-testid="new-project"
           title="New project"
+          :disabled="!hasWorkspace"
           @click="emit('create-project')"
         >
           <FolderPlus :size="18" />
@@ -1025,6 +1031,10 @@ watch(
     </div>
 
     <div v-if="activeTab === 'todos'" class="project-list" data-testid="todo-workspace">
+      <div v-if="!hasWorkspace" class="sidebar-empty workspace-empty" data-testid="todo-workspace-empty">
+        Open a project
+      </div>
+      <template v-else>
       <div class="todo-view-tabs" data-testid="todo-workflow-tabs" role="tablist" aria-label="TODO views">
         <button
           type="button"
@@ -1667,6 +1677,7 @@ watch(
           </div>
         </div>
       </div>
+      </template>
     </div>
 
     <div v-else class="project-list" data-testid="project-library">
@@ -1675,6 +1686,7 @@ watch(
           type="button"
           class="library-action-button"
           data-testid="import-parent-directory"
+          :disabled="!hasWorkspace"
           @click="emit('import-projects')"
         >
           <FolderInput :size="15" />
@@ -1685,7 +1697,7 @@ watch(
             type="button"
             class="library-action-button library-action-button-delete"
             data-testid="bulk-delete-projects"
-            :disabled="selectedProjectCount === 0"
+            :disabled="!hasWorkspace || selectedProjectCount === 0"
             :aria-expanded="confirmBulkDeleteProjects"
             aria-controls="bulk-delete-projects-popover"
             @click.stop="openBulkProjectDeletePopover"
@@ -1728,7 +1740,10 @@ watch(
         <span>{{ importSummary.skippedCount || 0 }} skipped</span>
       </div>
 
-      <div v-if="projects.length === 0" class="sidebar-empty">No projects imported</div>
+      <div v-if="!hasWorkspace" class="sidebar-empty workspace-empty" data-testid="project-library-empty">
+        Open a project
+      </div>
+      <div v-else-if="projects.length === 0" class="sidebar-empty">No projects imported</div>
 
       <div
         v-for="project in projects"

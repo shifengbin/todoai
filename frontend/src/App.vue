@@ -29,6 +29,7 @@ import {
   InitializeProjectGitRepository,
   ListProjects,
   LoadTerminalSettings,
+  OpenRecentWorkspace,
   RemoveTodoProject,
   ResizeTerminal,
   SelectProject,
@@ -47,6 +48,8 @@ const projects = ref([])
 const todos = ref([])
 const todoProjects = ref([])
 const terminals = ref([])
+const currentWorkspace = ref(null)
+const recentWorkspaces = ref([])
 const activeProjectId = ref('')
 const activeTodoId = ref('')
 const activeTodoProjectId = ref('')
@@ -133,6 +136,11 @@ const projectPicker = reactive({
   projectIds: [],
   saving: false
 })
+const recentWorkspacePicker = reactive({
+  visible: false,
+  openingPath: '',
+  error: ''
+})
 const terminalManager = new TerminalSessionManager({
   createSession: createXtermSession,
   sendInput: (terminalId, data) => SendTerminalInput(terminalId, data),
@@ -153,6 +161,8 @@ const terminalManager = new TerminalSessionManager({
 const activeProject = computed(() => {
   return projects.value.find((project) => project.id === activeProjectId.value) || null
 })
+
+const hasWorkspace = computed(() => Boolean(currentWorkspace.value?.path))
 
 const activeTodo = computed(() => {
   return todos.value.find((todo) => todo.id === activeTodoId.value) || null
@@ -332,18 +342,19 @@ onMounted(async () => {
   EventsOn('terminal-agent-status', (event) => {
     handleTerminalAgentStatus(event)
   })
+  EventsOn('workspace-state', (state) => {
+    void applyWorkspaceProjectState(state)
+  })
+  EventsOn('workspace-recent', (state) => {
+    showRecentWorkspacePicker(state)
+  })
   window.addEventListener('resize', fitActiveTerminal)
   window.addEventListener('focus', refreshProjectGitStatusOnFocus)
   window.addEventListener('click', closeTerminalMenu)
 
   try {
-    applyTerminalSettings(await LoadTerminalSettings())
-  } catch (error) {
-    showError(error)
-  }
-
-  try {
     applyState(await ListProjects())
+    await loadTerminalSettingsForCurrentWorkspace()
     await activateActiveTerminal()
   } catch (error) {
     showError(error)
@@ -355,6 +366,8 @@ onBeforeUnmount(() => {
   EventsOff('terminal-command-state')
   EventsOff('terminal-status')
   EventsOff('terminal-agent-status')
+  EventsOff('workspace-state')
+  EventsOff('workspace-recent')
   window.removeEventListener('resize', fitActiveTerminal)
   window.removeEventListener('focus', refreshProjectGitStatusOnFocus)
   window.removeEventListener('click', closeTerminalMenu)
@@ -366,6 +379,8 @@ onBeforeUnmount(() => {
 function applyState(state, options = {}) {
   const previousActiveProjectId = activeProjectId.value
   const previousTerminals = new Map(terminals.value.map((terminal) => [terminal.id, terminal]))
+  currentWorkspace.value = state?.currentWorkspace || null
+  recentWorkspaces.value = state?.recentWorkspaces || []
   projects.value = state?.projects || []
   todos.value = state?.todos || []
   todoProjects.value = state?.todoProjects || []
@@ -401,12 +416,64 @@ function applyState(state, options = {}) {
       shellStatuses[terminal.id] = terminal.state
     }
   }
+  if (!hasWorkspace.value) {
+    closeWorkspaceScopedPanels()
+  }
   closeTerminalMenu()
   syncGitStatusForActiveProject(previousActiveProjectId, {
     refresh: options.refreshGitStatus !== false,
     dedupePending: options.dedupeGitStatus === true,
     force: options.forceGitStatusRefresh === true
   })
+}
+
+async function applyWorkspaceProjectState(state) {
+  applyState(state, { forceGitStatusRefresh: true })
+  errorMessage.value = ''
+  await activateActiveTerminal()
+}
+
+function showRecentWorkspacePicker(state) {
+  recentWorkspaces.value = state?.recentWorkspaces || []
+  recentWorkspacePicker.visible = true
+  recentWorkspacePicker.openingPath = ''
+  recentWorkspacePicker.error = ''
+}
+
+function closeRecentWorkspacePicker() {
+  recentWorkspacePicker.visible = false
+  recentWorkspacePicker.openingPath = ''
+  recentWorkspacePicker.error = ''
+}
+
+async function openRecentWorkspace(workspace) {
+  if (!workspace?.path || recentWorkspacePicker.openingPath) {
+    return
+  }
+  recentWorkspacePicker.openingPath = workspace.path
+  recentWorkspacePicker.error = ''
+  try {
+    await applyWorkspaceProjectState(await OpenRecentWorkspace(workspace.path))
+    closeRecentWorkspacePicker()
+  } catch (error) {
+    recentWorkspacePicker.error = errorMessageFrom(error)
+  } finally {
+    recentWorkspacePicker.openingPath = ''
+  }
+}
+
+async function loadTerminalSettingsForCurrentWorkspace() {
+  try {
+    applyTerminalSettings(await LoadTerminalSettings())
+  } catch (error) {
+    showError(error)
+  }
+}
+
+function closeWorkspaceScopedPanels() {
+  closeTodoForm()
+  closeTodoDetail()
+  closeProjectPicker()
 }
 
 async function createProject() {
@@ -1066,6 +1133,9 @@ async function refreshProjectGitStatus(options = {}) {
 }
 
 function refreshProjectGitStatusOnFocus() {
+  if (!hasWorkspace.value) {
+    return
+  }
   const project = activeProject.value
   const now = Date.now()
   if (
@@ -1354,6 +1424,7 @@ function showError(error) {
       :active-terminal-id="activeTerminalId"
       :launch-profiles="terminalLaunchProfiles"
       :import-summary="importSummary"
+      :has-workspace="hasWorkspace"
       @create-project="createProject"
       @import-projects="importProjectsFromParentDirectory"
       @select-project="selectProject"
@@ -1386,7 +1457,8 @@ function showError(error) {
 
     <section class="workspace">
       <header class="workspace-header">
-        <div v-if="activeTodoProject && activeTodoProjectProject" class="project-heading">
+        <div v-if="!hasWorkspace" class="project-heading muted">Open a project</div>
+        <div v-else-if="activeTodoProject && activeTodoProjectProject" class="project-heading">
           <span class="heading-name">{{ activeTodo?.title || 'TODO' }} / {{ activeTodoProjectProject.name }}</span>
           <span class="heading-path">{{ activeTodoProjectProject.path }}</span>
         </div>
@@ -1450,7 +1522,8 @@ function showError(error) {
           </button>
         </div>
 
-        <div v-if="!activeTodoProject || !activeTodoProjectProject" class="state-layer">Select a TODO project</div>
+        <div v-if="!hasWorkspace" class="state-layer" data-testid="workspace-empty-state">Open a project</div>
+        <div v-else-if="!activeTodoProject || !activeTodoProjectProject" class="state-layer">Select a TODO project</div>
         <div v-else-if="!activeTodoProjectProject.available" class="state-layer warning">Project path unavailable</div>
         <div v-else-if="!activeTerminal" class="state-layer">Select a terminal</div>
         <div v-else-if="activeTerminalState === 'unsupported'" class="state-layer warning">
@@ -1830,6 +1903,50 @@ function showError(error) {
           >
             Add
           </button>
+        </footer>
+      </section>
+    </div>
+
+    <div v-if="recentWorkspacePicker.visible" class="settings-overlay" @click="closeRecentWorkspacePicker">
+      <section class="settings-dialog recent-workspace-dialog" data-testid="recent-workspace-dialog" @click.stop>
+        <header class="settings-header">
+          <div>
+            <h2>Recent Projects</h2>
+            <p>Workspaces</p>
+          </div>
+          <button type="button" class="icon-button" title="Close recent projects" @click="closeRecentWorkspacePicker">
+            <X :size="16" />
+          </button>
+        </header>
+
+        <div class="settings-body recent-workspace-list">
+          <div
+            v-if="recentWorkspacePicker.error"
+            class="settings-error"
+            data-testid="recent-workspace-error"
+          >
+            {{ recentWorkspacePicker.error }}
+          </div>
+          <div v-if="recentWorkspaces.length === 0" class="sidebar-empty" data-testid="recent-workspace-empty">
+            No recent projects
+          </div>
+          <button
+            v-for="(workspace, index) in recentWorkspaces"
+            :key="workspace.path"
+            type="button"
+            class="recent-workspace-item"
+            :data-testid="`recent-workspace-${index}`"
+            :disabled="recentWorkspacePicker.openingPath === workspace.path"
+            @click="openRecentWorkspace(workspace)"
+          >
+            <span class="recent-workspace-name">{{ workspace.name || workspace.path }}</span>
+            <span class="recent-workspace-path">{{ workspace.path }}</span>
+            <span v-if="workspace.available === false" class="project-status">Unavailable</span>
+          </button>
+        </div>
+
+        <footer class="settings-actions">
+          <button type="button" class="toolbar-button" @click="closeRecentWorkspacePicker">Cancel</button>
         </footer>
       </section>
     </div>

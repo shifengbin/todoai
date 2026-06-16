@@ -1,45 +1,4 @@
-# application-identity Specification
-
-## Purpose
-TBD - created by archiving change rebrand-app-to-todoai. Update Purpose after archive.
-## Requirements
-### Requirement: Display TodoAI Application Name
-
-The system SHALL display `TodoAI` as the application name in user-visible desktop surfaces controlled by the app.
-
-#### Scenario: Main window uses TodoAI title
-
-- **WHEN** the desktop application starts
-- **THEN** the native application window title is `TodoAI`
-
-#### Scenario: Frontend document uses TodoAI title
-
-- **WHEN** the frontend document is loaded
-- **THEN** the document title is `TodoAI`
-
-### Requirement: Publish TodoAI Application Identity
-
-The system SHALL use `todoai` as the application package, binary, and build output identity where a lowercase machine-readable application name is required.
-
-#### Scenario: Wails build uses todoai identity
-
-- **WHEN** the Wails application is built
-- **THEN** the configured project name is `todoai`
-- **AND** the configured output filename is `todoai`
-
-### Requirement: Provide TodoAI Launcher Icon Assets
-
-The system SHALL provide static launcher icon assets for the TodoAI application.
-
-#### Scenario: Common launcher icon exists
-
-- **WHEN** application build assets are inspected
-- **THEN** `build/appicon.png` contains the TodoAI launcher icon
-
-#### Scenario: Windows launcher icon exists
-
-- **WHEN** Windows application build assets are inspected
-- **THEN** `build/windows/icon.ico` contains the TodoAI launcher icon
+## MODIFIED Requirements
 
 ### Requirement: Migrate Local Application Data Directory
 The system SHALL use `todoai` as the default local application configuration directory and SHALL preserve existing data from the legacy `tui-helper` directory during upgrade. When migrating to workspace-scoped storage, the system SHALL make legacy global project data and terminal history available through an app-managed legacy workspace instead of continuing to treat global `projects.json` as the active workspace data source. The system SHALL keep terminal settings as application-global data in the app config directory.
@@ -79,4 +38,3 @@ The system SHALL use `todoai` as the default local application configuration dir
 - **AND** the application starts again
 - **THEN** the system does not overwrite the existing legacy workspace `.data` files
 - **AND** the recent workspace list still contains the app-managed legacy workspace
-
