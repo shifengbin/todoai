@@ -576,7 +576,7 @@ describe('ProjectSidebar', () => {
     expect(terminalRow.attributes('aria-label')).toContain('Needs input')
   })
 
-  it('shows hidden terminal activity on a collapsed TODO', async () => {
+  it('shows hidden terminal activity as row state on a collapsed TODO', async () => {
     const wrapper = mountSidebar({
       props: {
         terminals: [
@@ -597,10 +597,40 @@ describe('ProjectSidebar', () => {
     await wrapper.find('[data-testid="toggle-todo-todo-a"]').trigger('click')
 
     const todoRow = wrapper.find('[data-testid="todo-todo-a"]')
-    const activity = wrapper.find('[data-testid="todo-activity-todo-a"]')
+    const todoHeader = todoHeaderFor(wrapper, 'todo-a')
     expect(todoRow.attributes('data-activity-state')).toBe('needs-input')
-    expect(activity.classes()).toContain('needs-input')
-    expect(activity.attributes('aria-label')).toBe('Needs input')
+    expect(todoRow.attributes('title')).toBe('Needs input')
+    expect(todoHeader.attributes('data-activity-state')).toBe('needs-input')
+    expect(todoHeader.classes()).toContain('todo-activity-needs-input')
+    expect(wrapper.find('[data-testid="todo-activity-todo-a"]').exists()).toBe(false)
+  })
+
+  it('shows hidden busy terminal activity as a lighter collapsed TODO row state', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        terminals: [
+          {
+            id: 'terminal-a',
+            projectId: 'project-a',
+            todoId: 'todo-a',
+            todoProjectId: 'todo-project-a',
+            shellName: 'zsh',
+            currentCommand: 'codex',
+            activityState: 'busy',
+            state: 'running'
+          }
+        ]
+      }
+    })
+
+    await wrapper.find('[data-testid="toggle-todo-todo-a"]').trigger('click')
+
+    const todoHeader = todoHeaderFor(wrapper, 'todo-a')
+    expect(wrapper.find('[data-testid="todo-todo-a"]').attributes('data-activity-state')).toBe('busy')
+    expect(todoHeader.attributes('data-activity-state')).toBe('busy')
+    expect(todoHeader.classes()).toContain('todo-activity-busy')
+    expect(todoHeader.classes()).not.toContain('todo-activity-needs-input')
+    expect(wrapper.find('[data-testid="todo-activity-todo-a"]').exists()).toBe(false)
   })
 
   it('prioritizes needs input over busy for a collapsed TODO', async () => {
@@ -632,7 +662,9 @@ describe('ProjectSidebar', () => {
     await wrapper.find('[data-testid="toggle-todo-todo-a"]').trigger('click')
 
     expect(wrapper.find('[data-testid="todo-todo-a"]').attributes('data-activity-state')).toBe('needs-input')
-    expect(wrapper.find('[data-testid="todo-activity-todo-a"]').classes()).toContain('needs-input')
+    expect(todoHeaderFor(wrapper, 'todo-a').attributes('data-activity-state')).toBe('needs-input')
+    expect(todoHeaderFor(wrapper, 'todo-a').classes()).toContain('todo-activity-needs-input')
+    expect(wrapper.find('[data-testid="todo-activity-todo-a"]').exists()).toBe(false)
   })
 
   it('does not keep done failed or exited agent statuses busy in collapsed TODO summaries', async () => {
@@ -673,6 +705,7 @@ describe('ProjectSidebar', () => {
     await wrapper.find('[data-testid="toggle-todo-todo-a"]').trigger('click')
 
     expect(wrapper.find('[data-testid="todo-todo-a"]').attributes('data-activity-state')).toBe('idle')
+    expect(todoHeaderFor(wrapper, 'todo-a').attributes('data-activity-state')).toBeUndefined()
   })
 
   it('shows activity on terminal rows instead of the parent TODO while expanded', () => {
@@ -1351,6 +1384,33 @@ describe('ProjectSidebar', () => {
     expect(styles).toContain('.todo-header-row-priority-low')
   })
 
+  it('defines row-level breathing styles for collapsed TODO activity states', () => {
+    const styles = readFileSync('src/style.css', 'utf8')
+    const busyRule = styles.slice(styles.indexOf('.todo-header-row.todo-activity-busy {'), styles.indexOf('.todo-header-row.todo-activity-needs-input {'))
+    const needsInputRule = styles.slice(styles.indexOf('.todo-header-row.todo-activity-needs-input {'), styles.indexOf('@keyframes todo-activity-busy-breathe'))
+    const reducedMotionRule = styles.slice(styles.indexOf('@media (prefers-reduced-motion: reduce)'), styles.indexOf('.todo-title-line {'))
+
+    expect(styles).toContain('.todo-header-row.todo-activity-busy')
+    expect(styles).toContain('.todo-header-row.todo-activity-needs-input')
+    expect(busyRule).toContain('animation: todo-activity-busy-breathe')
+    expect(busyRule).toContain('1.7s')
+    expect(busyRule).toContain('rgba(15, 118, 110, 0.62)')
+    expect(needsInputRule).toContain('animation: todo-activity-needs-input-breathe')
+    expect(needsInputRule).toContain('1.3s')
+    expect(needsInputRule).toContain('rgba(154, 91, 23, 0.82)')
+    expect(busyRule).not.toContain('background:')
+    expect(busyRule).not.toMatch(/(^|\n)\s*color:/)
+    expect(needsInputRule).not.toContain('background:')
+    expect(needsInputRule).not.toMatch(/(^|\n)\s*color:/)
+    expect(styles).toContain('@keyframes todo-activity-busy-breathe')
+    expect(styles).toContain('@keyframes todo-activity-needs-input-breathe')
+    expect(styles).toContain('rgba(15, 118, 110, 0.18), 0 0 0 4px rgba(15, 118, 110, 0.34)')
+    expect(styles).toContain('rgba(154, 91, 23, 0.24), 0 0 0 4px rgba(154, 91, 23, 0.44)')
+    expect(reducedMotionRule).toContain('animation: none;')
+    expect(reducedMotionRule).toContain('.todo-header-row.todo-activity-busy')
+    expect(reducedMotionRule).toContain('.todo-header-row.todo-activity-needs-input')
+  })
+
   it('defines a wide TODO description tooltip style', () => {
     const styles = readFileSync('src/style.css', 'utf8')
     const tooltipLayerRule = styles.slice(styles.indexOf('.todo-description-tooltip-layer {'), styles.indexOf('.todo-description-tooltip {'))
@@ -1476,6 +1536,18 @@ function activeTodoTitles(wrapper) {
     .find('[data-testid="not-started-todos"]')
     .findAll('.todo-row .project-name')
     .map((node) => node.text())
+}
+
+function todoHeaderFor(wrapper, todoId) {
+  const element = wrapper.find(`[data-testid="todo-${todoId}"]`).element.closest('.todo-header-row')
+  return {
+    attributes(name) {
+      return element?.getAttribute(name) ?? undefined
+    },
+    classes() {
+      return Array.from(element?.classList || [])
+    }
+  }
 }
 
 function visibleTodoTitles(wrapper, listTestId) {

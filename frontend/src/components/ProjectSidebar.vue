@@ -741,6 +741,16 @@ function collapsedTodoActivityState(todo) {
   return isTodoCollapsed(todo.id) ? todoActivityState(todo) : ''
 }
 
+function collapsedTodoFeedbackState(todo) {
+  const state = collapsedTodoActivityState(todo)
+  return ['busy', 'needs-input'].includes(state) ? state : ''
+}
+
+function collapsedTodoActivityClass(todo) {
+  const state = collapsedTodoFeedbackState(todo)
+  return state ? `todo-activity-${state}` : ''
+}
+
 function collapsedTodoActivityLabel(todo) {
   return activityStateLabel(collapsedTodoActivityState(todo))
 }
@@ -1008,7 +1018,8 @@ watch(
         >
           <div
             class="todo-header-row"
-            :class="[{ active: todo.id === activeTodoId }, todoPriorityClass(todo)]"
+            :class="[{ active: todo.id === activeTodoId }, todoPriorityClass(todo), collapsedTodoActivityClass(todo)]"
+            :data-activity-state="collapsedTodoFeedbackState(todo) || null"
           >
             <button
               type="button"
@@ -1038,17 +1049,6 @@ watch(
               <span class="project-copy">
                 <span class="todo-title-line">
                   <span class="project-name">{{ todo.title }}</span>
-                  <span
-                    v-if="collapsedTodoActivityState(todo) && collapsedTodoActivityState(todo) !== 'idle'"
-                    class="terminal-activity todo-activity"
-                    :class="collapsedTodoActivityState(todo)"
-                    :data-testid="`todo-activity-${todo.id}`"
-                    :aria-label="collapsedTodoActivityLabel(todo)"
-                    role="img"
-                  >
-                    <LoaderCircle v-if="collapsedTodoActivityState(todo) === 'busy'" :size="13" aria-hidden="true" />
-                    <CircleAlert v-else-if="collapsedTodoActivityState(todo) === 'needs-input'" :size="13" aria-hidden="true" />
-                  </span>
                 </span>
                 <span
                   v-if="todo.description"
