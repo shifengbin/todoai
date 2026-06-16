@@ -79,6 +79,7 @@ const emit = defineEmits([
   'complete-todo',
   'copy-todo-description',
   'delete-todo',
+  'delete-completed-todos',
   'create-terminal',
   'select-terminal',
   'delete-terminal',
@@ -96,7 +97,10 @@ const todoActionConfirm = ref({ todoId: '', action: '' })
 const confirmDeleteProjectId = ref('')
 const selectedProjectIds = ref(new Set())
 const confirmBulkDeleteProjects = ref(false)
+const selectedCompletedTodoIds = ref(new Set())
+const confirmBulkDeleteCompletedTodos = ref(false)
 const todoContextMenu = ref({ todoId: '', x: 0, y: 0 })
+const completedTodoMenuId = ref('')
 const hoveredTodoId = ref('')
 const visibleDescriptionTooltipTodoId = ref('')
 const descriptionTooltipPosition = ref({ x: 0, y: 0 })
@@ -137,6 +141,11 @@ const activeTodoIds = computed(() => currentOpenTodos.value.map((todo) => todo.i
 const hasActiveTodos = computed(() => activeTodoIds.value.length > 0)
 const selectedProjectCount = computed(() => selectedProjectIds.value.size)
 const selectedProjectIdsList = computed(() => props.projects.filter((project) => selectedProjectIds.value.has(project.id)).map((project) => project.id))
+const selectedCompletedTodoCount = computed(() => selectedCompletedTodoIds.value.size)
+const selectedCompletedTodoIdsList = computed(() => {
+  const completedTodoIds = new Set(completedTodos.value.map((todo) => todo.id))
+  return [...selectedCompletedTodoIds.value].filter((todoId) => completedTodoIds.has(todoId))
+})
 
 function sortedOpenTodos(status) {
   return props.todos
@@ -337,6 +346,8 @@ function openTodoActionPopover(todoId, action) {
   closeTodoProjectRemovePopover()
   closeProjectDeletePopover()
   closeTodoContextMenu()
+  closeBulkCompletedTodoDeletePopover()
+  closeCompletedTodoMenu()
   todoActionConfirm.value = { todoId, action }
 }
 
@@ -352,6 +363,8 @@ function openTodoContextMenu(todoId, event) {
   closeTodoActionPopover()
   closeProjectDeletePopover()
   closeBulkProjectDeletePopover()
+  closeBulkCompletedTodoDeletePopover()
+  closeCompletedTodoMenu()
   todoContextMenu.value = { todoId, ...todoContextMenuPlacement(event.clientX, event.clientY) }
 }
 
@@ -364,11 +377,34 @@ function openTodoContextMenuFromButton(todoId, event) {
   closeTodoActionPopover()
   closeProjectDeletePopover()
   closeBulkProjectDeletePopover()
+  closeBulkCompletedTodoDeletePopover()
+  closeCompletedTodoMenu()
   todoContextMenu.value = { todoId, ...todoContextMenuPlacement(rect.left, rect.bottom) }
 }
 
 function closeTodoContextMenu() {
   todoContextMenu.value = { todoId: '', x: 0, y: 0 }
+}
+
+function openCompletedTodoMenu(todoId, event) {
+  event.stopPropagation()
+  hideTodoDescriptionTooltip()
+  closeTerminalLaunchMenu()
+  closeTodoProjectRemovePopover()
+  closeTodoActionPopover()
+  closeProjectDeletePopover()
+  closeBulkProjectDeletePopover()
+  closeBulkCompletedTodoDeletePopover()
+  closeTodoContextMenu()
+  completedTodoMenuId.value = todoId
+}
+
+function closeCompletedTodoMenu() {
+  completedTodoMenuId.value = ''
+}
+
+function isCompletedTodoMenuOpen(todoId) {
+  return completedTodoMenuId.value === todoId
 }
 
 function isTodoContextMenuOpen(todoId) {
@@ -421,6 +457,8 @@ function openProjectDeletePopover(projectId) {
   closeTodoActionPopover()
   closeBulkProjectDeletePopover()
   closeTodoContextMenu()
+  closeBulkCompletedTodoDeletePopover()
+  closeCompletedTodoMenu()
   confirmDeleteProjectId.value = projectId
 }
 
@@ -460,6 +498,8 @@ function openBulkProjectDeletePopover() {
   closeTodoActionPopover()
   closeProjectDeletePopover()
   closeTodoContextMenu()
+  closeBulkCompletedTodoDeletePopover()
+  closeCompletedTodoMenu()
   confirmBulkDeleteProjects.value = true
 }
 
@@ -482,6 +522,57 @@ function confirmBulkProjectDeletion() {
   clearProjectSelection()
 }
 
+function isCompletedTodoSelected(todoId) {
+  return selectedCompletedTodoIds.value.has(todoId)
+}
+
+function toggleCompletedTodoSelection(todoId) {
+  const nextSelectedTodoIds = new Set(selectedCompletedTodoIds.value)
+  if (nextSelectedTodoIds.has(todoId)) {
+    nextSelectedTodoIds.delete(todoId)
+  } else {
+    nextSelectedTodoIds.add(todoId)
+  }
+  selectedCompletedTodoIds.value = nextSelectedTodoIds
+  if (nextSelectedTodoIds.size === 0) {
+    closeBulkCompletedTodoDeletePopover()
+  }
+}
+
+function openBulkCompletedTodoDeletePopover() {
+  if (selectedCompletedTodoCount.value === 0) {
+    return
+  }
+  hideTodoDescriptionTooltip()
+  closeTerminalLaunchMenu()
+  closeTodoProjectRemovePopover()
+  closeTodoActionPopover()
+  closeProjectDeletePopover()
+  closeBulkProjectDeletePopover()
+  closeTodoContextMenu()
+  closeCompletedTodoMenu()
+  confirmBulkDeleteCompletedTodos.value = true
+}
+
+function closeBulkCompletedTodoDeletePopover() {
+  confirmBulkDeleteCompletedTodos.value = false
+}
+
+function clearCompletedTodoSelection() {
+  selectedCompletedTodoIds.value = new Set()
+  closeBulkCompletedTodoDeletePopover()
+}
+
+function confirmBulkCompletedTodoDeletion() {
+  const todoIds = selectedCompletedTodoIdsList.value
+  if (todoIds.length === 0) {
+    closeBulkCompletedTodoDeletePopover()
+    return
+  }
+  emit('delete-completed-todos', todoIds)
+  clearCompletedTodoSelection()
+}
+
 function closeFloatingMenus() {
   hideTodoDescriptionTooltip()
   closeTerminalLaunchMenu()
@@ -490,6 +581,8 @@ function closeFloatingMenus() {
   closeProjectDeletePopover()
   closeBulkProjectDeletePopover()
   closeTodoContextMenu()
+  closeBulkCompletedTodoDeletePopover()
+  closeCompletedTodoMenu()
 }
 
 function selectTerminalLaunchOption(todoProject, option) {
@@ -857,6 +950,23 @@ watch(
     }
   }
 )
+
+watch(
+  completedTodos,
+  (todos) => {
+    const todoIds = new Set(todos.map((todo) => todo.id))
+    const nextSelectedTodoIds = new Set(
+      [...selectedCompletedTodoIds.value].filter((todoId) => todoIds.has(todoId))
+    )
+    if (nextSelectedTodoIds.size !== selectedCompletedTodoIds.value.size) {
+      selectedCompletedTodoIds.value = nextSelectedTodoIds
+    }
+    if (nextSelectedTodoIds.size === 0) {
+      closeBulkCompletedTodoDeletePopover()
+    }
+  },
+  { deep: true }
+)
 </script>
 
 <template>
@@ -948,9 +1058,8 @@ watch(
       <div
         class="todo-tree-toolbar"
         data-testid="todo-tree-toolbar"
-        :role="isOpenTodoView ? 'toolbar' : undefined"
-        :aria-label="isOpenTodoView ? 'TODO tree controls' : undefined"
-        :aria-hidden="isOpenTodoView ? undefined : 'true'"
+        role="toolbar"
+        :aria-label="isOpenTodoView ? 'TODO tree controls' : 'Completed TODO controls'"
       >
         <template v-if="isOpenTodoView">
           <div class="todo-sort-toggle" role="group" aria-label="TODO sort">
@@ -997,6 +1106,51 @@ watch(
           >
             <ListChevronsUpDown :size="15" />
           </button>
+        </template>
+        <template v-else>
+          <div class="completed-todo-selection-copy">{{ selectedCompletedTodoCount }} selected</div>
+          <div class="bulk-completed-todo-delete-control">
+            <button
+              type="button"
+              class="todo-tree-action todo-tree-action-danger"
+              data-testid="bulk-delete-completed-todos"
+              :disabled="selectedCompletedTodoCount === 0"
+              :aria-expanded="confirmBulkDeleteCompletedTodos"
+              aria-controls="bulk-delete-completed-todos-popover"
+              title="Delete selected completed TODOs"
+              @click.stop="openBulkCompletedTodoDeletePopover"
+            >
+              <Trash2 :size="15" />
+              <span>Delete selected ({{ selectedCompletedTodoCount }})</span>
+            </button>
+            <div
+              v-if="confirmBulkDeleteCompletedTodos"
+              id="bulk-delete-completed-todos-popover"
+              class="todo-action-popover bulk-completed-todo-delete-popover"
+              data-testid="bulk-delete-completed-todos-popover"
+              @click.stop
+            >
+              <span class="todo-action-confirm-copy">Delete {{ selectedCompletedTodoCount }} completed TODOs?</span>
+              <div class="todo-action-confirm-actions">
+                <button
+                  type="button"
+                  class="todo-action-confirm-cancel"
+                  data-testid="cancel-bulk-delete-completed-todos"
+                  @click="closeBulkCompletedTodoDeletePopover"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  class="todo-action-confirm-button todo-action-confirm-button-delete"
+                  data-testid="confirm-bulk-delete-completed-todos"
+                  @click="confirmBulkCompletedTodoDeletion"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
         </template>
       </div>
 
@@ -1415,9 +1569,87 @@ watch(
           class="archived-todo completed-todo"
           :data-testid="`completed-todo-${todo.id}`"
         >
-          <div class="archived-todo-title completed-todo-title">
-            <Archive :size="15" />
-            <span>{{ todo.title }}</span>
+          <div class="completed-todo-header">
+            <label class="completed-todo-select">
+              <input
+                type="checkbox"
+                :checked="isCompletedTodoSelected(todo.id)"
+                :data-testid="`select-completed-todo-${todo.id}`"
+                :aria-label="`Select completed TODO ${todo.title}`"
+                @click.stop="toggleCompletedTodoSelection(todo.id)"
+              />
+            </label>
+            <div class="archived-todo-title completed-todo-title">
+              <Archive :size="15" />
+              <span>{{ todo.title }}</span>
+            </div>
+            <div class="todo-action-confirm-control completed-todo-menu-control">
+              <button
+                type="button"
+                class="todo-action-button"
+                :data-testid="`completed-todo-menu-button-${todo.id}`"
+                :title="`${todo.title} menu`"
+                aria-label="Open completed TODO menu"
+                @click.stop="openCompletedTodoMenu(todo.id, $event)"
+              >
+                <EllipsisVertical :size="14" />
+              </button>
+              <div
+                v-if="isCompletedTodoMenuOpen(todo.id)"
+                class="todo-context-menu completed-todo-menu"
+                :data-testid="`completed-todo-menu-${todo.id}`"
+                @click.stop
+              >
+                <button
+                  type="button"
+                  class="todo-context-menu-item"
+                  :data-testid="`completed-todo-menu-edit-${todo.id}`"
+                  @click="emit('edit-todo', todo.id); closeCompletedTodoMenu()"
+                >
+                  <Eye :size="14" />
+                  <span>View details</span>
+                </button>
+                <div class="todo-context-menu-separator"></div>
+                <button
+                  type="button"
+                  class="todo-context-menu-item todo-context-menu-item-danger"
+                  :data-testid="`completed-todo-menu-delete-${todo.id}`"
+                  @click="openTodoActionPopover(todo.id, 'delete')"
+                >
+                  <Trash2 :size="14" />
+                  <span>Delete TODO</span>
+                </button>
+              </div>
+              <div
+                v-if="isTodoActionPopoverOpen(todo.id, 'delete')"
+                :id="`delete-todo-popover-${todo.id}`"
+                class="todo-action-popover"
+                :data-testid="`delete-todo-popover-${todo.id}`"
+                @click.stop
+              >
+                <span class="todo-action-confirm-copy">Delete TODO?</span>
+                <div class="todo-action-confirm-actions">
+                  <button
+                    type="button"
+                    class="todo-action-confirm-cancel"
+                    :data-testid="`cancel-delete-todo-${todo.id}`"
+                    aria-label="Cancel deleting TODO"
+                    @click="closeTodoActionPopover"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    class="todo-action-confirm-button todo-action-confirm-button-delete"
+                    :data-testid="`confirm-delete-todo-${todo.id}`"
+                    aria-label="Confirm deleting TODO"
+                    @click="confirmTodoAction(todo.id, 'delete')"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
           <div class="archived-todo-meta">
             <span>completed</span>

@@ -448,6 +448,16 @@ button {
     color: var(--text-secondary);
 }
 
+.todo-tree-action-danger {
+    color: var(--delete-text);
+}
+
+.todo-tree-action-danger:hover:not(:disabled),
+.todo-tree-action-danger:focus-visible:not(:disabled) {
+    border-color: var(--delete-text);
+    color: var(--delete-text);
+}
+
 .todo-list,
 .archived-todos {
     display: grid;
@@ -897,12 +907,61 @@ button {
 }
 
 .archived-todo {
+    position: relative;
     display: grid;
     min-width: 0;
     gap: 7px;
     padding: 10px;
     border: 1px solid var(--border-soft);
     background: var(--surface-muted);
+}
+
+.todo-tree-toolbar:has(.bulk-completed-todo-delete-control) {
+    position: relative;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.completed-todo-selection-copy {
+    min-width: 0;
+    color: var(--muted-text);
+    font-size: 11px;
+    font-weight: 800;
+}
+
+.bulk-completed-todo-delete-control {
+    position: relative;
+}
+
+.bulk-completed-todo-delete-control .todo-tree-action {
+    width: auto;
+    min-width: 32px;
+    padding: 0 9px;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.completed-todo-header {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: 18px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 6px;
+}
+
+.completed-todo-select {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+}
+
+.completed-todo-select input {
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    accent-color: var(--accent);
 }
 
 .archived-todo-title {
@@ -937,6 +996,20 @@ button {
     display: grid;
     min-width: 0;
     gap: 4px;
+}
+
+.completed-todo-menu-control {
+    position: relative;
+}
+
+.completed-todo-menu {
+    position: absolute;
+    top: 32px;
+    right: 0;
+}
+
+.todo-project-snapshot {
+    grid-template-columns: minmax(0, 1fr);
 }
 
 .archived-project {
@@ -1139,7 +1212,8 @@ button {
 
 .todo-project-remove-popover,
 .project-delete-popover,
-.bulk-project-delete-popover {
+.bulk-project-delete-popover,
+.bulk-completed-todo-delete-popover {
     position: absolute;
     z-index: 22;
     top: 44px;
@@ -1153,7 +1227,8 @@ button {
     box-shadow: 0 12px 28px var(--shadow);
 }
 
-.bulk-project-delete-popover {
+.bulk-project-delete-popover,
+.bulk-completed-todo-delete-popover {
     top: 36px;
 }
 

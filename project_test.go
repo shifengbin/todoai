@@ -782,6 +782,111 @@ func TestProjectManagerDeletesTodoFromVisibleState(t *testing.T) {
 	}
 }
 
+func TestProjectManagerDeletesCompletedTodoFromVisibleState(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	manager := NewProjectManager(
+		configPath,
+		WithProjectIDGenerator(sequenceIDs("todo-a")),
+	)
+	if _, err := manager.CreateTodo(CreateTodoRequest{Title: "完成任务"}); err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	if _, err := manager.ChangeTodoStatus("todo-a", TodoStatusInProgress); err != nil {
+		t.Fatalf("ChangeTodoStatus() error = %v", err)
+	}
+	if _, err := manager.CompleteTodo("todo-a"); err != nil {
+		t.Fatalf("CompleteTodo() error = %v", err)
+	}
+
+	state, err := manager.DeleteTodo("todo-a")
+	if err != nil {
+		t.Fatalf("DeleteTodo(completed) error = %v", err)
+	}
+
+	if len(state.Todos) != 0 {
+		t.Fatalf("Todos length = %d, want completed todo removed", len(state.Todos))
+	}
+	if len(state.TodoProjects) != 0 {
+		t.Fatalf("TodoProjects length = %d, want no restored associations", len(state.TodoProjects))
+	}
+}
+
+func TestProjectManagerDeleteCompletedTodosRemovesOnlyCompletedTodos(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	manager := NewProjectManager(
+		configPath,
+		WithProjectIDGenerator(sequenceIDs("todo-a", "todo-b")),
+	)
+	if _, err := manager.CreateTodo(CreateTodoRequest{Title: "完成任务 A"}); err != nil {
+		t.Fatalf("CreateTodo(A) error = %v", err)
+	}
+	if _, err := manager.ChangeTodoStatus("todo-a", TodoStatusInProgress); err != nil {
+		t.Fatalf("ChangeTodoStatus(A) error = %v", err)
+	}
+	if _, err := manager.CompleteTodo("todo-a"); err != nil {
+		t.Fatalf("CompleteTodo(A) error = %v", err)
+	}
+	if _, err := manager.CreateTodo(CreateTodoRequest{Title: "完成任务 B"}); err != nil {
+		t.Fatalf("CreateTodo(B) error = %v", err)
+	}
+	if _, err := manager.ChangeTodoStatus("todo-b", TodoStatusInProgress); err != nil {
+		t.Fatalf("ChangeTodoStatus(B) error = %v", err)
+	}
+	if _, err := manager.CompleteTodo("todo-b"); err != nil {
+		t.Fatalf("CompleteTodo(B) error = %v", err)
+	}
+
+	state, err := manager.DeleteCompletedTodos([]string{"todo-a", "todo-b"})
+	if err != nil {
+		t.Fatalf("DeleteCompletedTodos() error = %v", err)
+	}
+
+	if len(state.Todos) != 0 {
+		t.Fatalf("Todos = %#v, want all completed todos removed", state.Todos)
+	}
+}
+
+func TestProjectManagerDeleteCompletedTodosRejectsInvalidInputWithoutChangingState(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	manager := NewProjectManager(
+		configPath,
+		WithProjectIDGenerator(sequenceIDs("todo-a", "todo-b")),
+	)
+	if _, err := manager.CreateTodo(CreateTodoRequest{Title: "完成任务"}); err != nil {
+		t.Fatalf("CreateTodo(completed) error = %v", err)
+	}
+	if _, err := manager.ChangeTodoStatus("todo-a", TodoStatusInProgress); err != nil {
+		t.Fatalf("ChangeTodoStatus(completed) error = %v", err)
+	}
+	if _, err := manager.CompleteTodo("todo-a"); err != nil {
+		t.Fatalf("CompleteTodo() error = %v", err)
+	}
+	if _, err := manager.CreateTodo(CreateTodoRequest{Title: "执行中任务"}); err != nil {
+		t.Fatalf("CreateTodo(open) error = %v", err)
+	}
+	if _, err := manager.ChangeTodoStatus("todo-b", TodoStatusInProgress); err != nil {
+		t.Fatalf("ChangeTodoStatus(open) error = %v", err)
+	}
+
+	if _, err := manager.DeleteCompletedTodos([]string{" "}); err == nil {
+		t.Fatal("DeleteCompletedTodos(empty) error = nil, want error")
+	}
+	if _, err := manager.DeleteCompletedTodos([]string{"todo-a", "missing-todo"}); err == nil {
+		t.Fatal("DeleteCompletedTodos(missing) error = nil, want error")
+	}
+	if _, err := manager.DeleteCompletedTodos([]string{"todo-a", "todo-b"}); err == nil {
+		t.Fatal("DeleteCompletedTodos(open) error = nil, want completed-only error")
+	}
+
+	state, err := manager.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if findTodo(state.Todos, "todo-a") == nil || findTodo(state.Todos, "todo-b") == nil {
+		t.Fatalf("Todos after invalid bulk delete = %#v, want unchanged", state.Todos)
+	}
+}
+
 func TestProjectManagerImportsProjectsFromParentDirectory(t *testing.T) {
 	parentDir := t.TempDir()
 	existingDir := filepath.Join(parentDir, "existing")

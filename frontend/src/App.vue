@@ -18,6 +18,7 @@ import {
   CreateProjectFromDialog,
   CreateTodo,
   CreateTodoTerminal,
+  DeleteCompletedTodos,
   DeleteProject,
   DeleteProjects,
   DeleteTerminal,
@@ -120,7 +121,9 @@ const todoDetail = reactive({
   description: '',
   priority: 'medium',
   projectIds: [],
+  projectSnapshots: [],
   projectSearch: '',
+  readOnly: false,
   saving: false
 })
 const projectPicker = reactive({
@@ -270,11 +273,17 @@ const todoFormProjectOptions = computed(() => {
 })
 
 const selectedTodoDetailProjects = computed(() => {
+  if (todoDetail.readOnly) {
+    return []
+  }
   const selectedProjectIds = new Set(todoDetail.projectIds)
   return projects.value.filter((project) => selectedProjectIds.has(project.id))
 })
 
 const todoDetailProjectOptions = computed(() => {
+  if (todoDetail.readOnly) {
+    return []
+  }
   return filteredProjects(projects.value, todoDetail.projectSearch)
 })
 
@@ -480,7 +489,9 @@ function editTodo(todoId) {
   todoDetail.projectIds = todoProjects.value
     .filter((todoProject) => todoProject.todoId === todo.id)
     .map((todoProject) => todoProject.projectId)
+  todoDetail.projectSnapshots = Array.isArray(todo.projectSnapshots) ? todo.projectSnapshots : []
   todoDetail.projectSearch = ''
+  todoDetail.readOnly = todo.status === 'completed'
   todoDetail.saving = false
   errorMessage.value = ''
 }
@@ -492,22 +503,30 @@ function closeTodoDetail() {
   todoDetail.description = ''
   todoDetail.priority = 'medium'
   todoDetail.projectIds = []
+  todoDetail.projectSnapshots = []
   todoDetail.projectSearch = ''
+  todoDetail.readOnly = false
   todoDetail.saving = false
 }
 
 function toggleTodoDetailProject(project) {
-  if (!project?.id) {
+  if (todoDetail.readOnly || !project?.id) {
     return
   }
   todoDetail.projectIds = toggleProjectId(todoDetail.projectIds, project.id)
 }
 
 function removeTodoDetailProject(projectId) {
+  if (todoDetail.readOnly) {
+    return
+  }
   todoDetail.projectIds = todoDetail.projectIds.filter((selectedProjectId) => selectedProjectId !== projectId)
 }
 
 async function submitTodoDetail() {
+  if (todoDetail.readOnly) {
+    return
+  }
   const title = todoDetail.title.trim()
   if (!title) {
     showError('TODO title is required')
@@ -685,6 +704,18 @@ async function completeTodo(todoId) {
 async function deleteTodo(todoId) {
   try {
     applyState(await DeleteTodo(todoId))
+    await activateActiveTerminal()
+  } catch (error) {
+    showError(error)
+  }
+}
+
+async function deleteCompletedTodos(todoIds) {
+  if (!Array.isArray(todoIds) || todoIds.length === 0) {
+    return
+  }
+  try {
+    applyState(await DeleteCompletedTodos(todoIds))
     await activateActiveTerminal()
   } catch (error) {
     showError(error)
@@ -1336,6 +1367,7 @@ function showError(error) {
       @complete-todo="completeTodo"
       @copy-todo-description="copyTodoDescription"
       @delete-todo="deleteTodo"
+      @delete-completed-todos="deleteCompletedTodos"
       @create-terminal="createTerminal"
       @select-terminal="selectTerminal"
       @delete-project="deleteProject"
@@ -1592,6 +1624,7 @@ function showError(error) {
               v-model="todoDetail.title"
               type="text"
               class="todo-text-input"
+              :readonly="todoDetail.readOnly"
               data-testid="todo-detail-name-input"
             />
           </label>
@@ -1602,6 +1635,7 @@ function showError(error) {
               v-model="todoDetail.description"
               class="todo-textarea"
               rows="3"
+              :readonly="todoDetail.readOnly"
               data-testid="todo-detail-description-input"
             ></textarea>
           </label>
@@ -1619,6 +1653,7 @@ function showError(error) {
                   v-model="todoDetail.priority"
                   type="radio"
                   :value="priority.value"
+                  :disabled="todoDetail.readOnly"
                   :data-testid="`todo-detail-priority-${priority.value}`"
                 />
                 <span>{{ priority.label }}</span>
@@ -1629,7 +1664,29 @@ function showError(error) {
           <div class="settings-field">
             <span class="settings-label">Projects</span>
             <div
-              v-if="selectedTodoDetailProjects.length"
+              v-if="todoDetail.readOnly && todoDetail.projectSnapshots.length"
+              class="todo-selected-project-tags"
+              data-testid="todo-detail-project-snapshots"
+            >
+              <span
+                v-for="snapshot in todoDetail.projectSnapshots"
+                :key="`${snapshot.projectId}-${snapshot.path}`"
+                class="todo-selected-project-tag todo-project-snapshot"
+                :data-testid="`todo-detail-project-snapshot-${snapshot.projectId}`"
+              >
+                <span class="project-name">{{ snapshot.name }}</span>
+                <span class="project-path">{{ snapshot.path }}</span>
+              </span>
+            </div>
+            <span
+              v-else-if="todoDetail.readOnly"
+              class="sidebar-empty"
+              data-testid="todo-detail-project-snapshots-empty"
+            >
+              No completed project snapshots
+            </span>
+            <div
+              v-else-if="selectedTodoDetailProjects.length"
               class="todo-selected-project-tags"
               data-testid="todo-detail-selected-projects"
             >
@@ -1654,12 +1711,13 @@ function showError(error) {
               </span>
             </div>
             <input
+              v-if="!todoDetail.readOnly"
               v-model="todoDetail.projectSearch"
               type="text"
               class="todo-text-input"
               data-testid="todo-detail-project-filter"
             />
-            <div class="todo-project-options" data-testid="todo-detail-project-options">
+            <div v-if="!todoDetail.readOnly" class="todo-project-options" data-testid="todo-detail-project-options">
               <button
                 v-for="project in todoDetailProjectOptions"
                 :key="project.id"
@@ -1682,6 +1740,7 @@ function showError(error) {
         <footer class="settings-actions">
           <button type="button" class="toolbar-button" @click="closeTodoDetail">Cancel</button>
           <button
+            v-if="!todoDetail.readOnly"
             type="button"
             class="toolbar-button primary"
             data-testid="todo-detail-submit"

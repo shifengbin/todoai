@@ -352,6 +352,52 @@ func TestAppCompletesTodoAndClosesOnlyOwnedTerminals(t *testing.T) {
 	}
 }
 
+func TestAppDeletesCompletedTodosThroughPublicAPI(t *testing.T) {
+	starter := newFakeShellStarter()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		starter.Start,
+	)
+
+	state, err := app.CreateTodo(CreateTodoRequest{Title: "完成任务 A"})
+	if err != nil {
+		t.Fatalf("CreateTodo(A) error = %v", err)
+	}
+	todoAID := state.Todos[0].ID
+	if _, err := app.ChangeTodoStatus(todoAID, TodoStatusInProgress); err != nil {
+		t.Fatalf("ChangeTodoStatus(A) error = %v", err)
+	}
+	if _, err := app.CompleteTodo(todoAID); err != nil {
+		t.Fatalf("CompleteTodo(A) error = %v", err)
+	}
+	state, err = app.CreateTodo(CreateTodoRequest{Title: "完成任务 B"})
+	if err != nil {
+		t.Fatalf("CreateTodo(B) error = %v", err)
+	}
+	todoBID := state.Todos[1].ID
+	if _, err := app.ChangeTodoStatus(todoBID, TodoStatusInProgress); err != nil {
+		t.Fatalf("ChangeTodoStatus(B) error = %v", err)
+	}
+	if _, err := app.CompleteTodo(todoBID); err != nil {
+		t.Fatalf("CompleteTodo(B) error = %v", err)
+	}
+
+	state, err = app.DeleteCompletedTodos([]string{todoAID, todoBID})
+	if err != nil {
+		t.Fatalf("DeleteCompletedTodos() error = %v", err)
+	}
+
+	if len(state.Todos) != 0 {
+		t.Fatalf("Todos = %#v, want completed todos removed", state.Todos)
+	}
+	if state.Terminals == nil {
+		t.Fatalf("Terminals = nil, want shell state included")
+	}
+	if len(starter.requests) != 0 {
+		t.Fatalf("shell start count = %d, want no shell processes started", len(starter.requests))
+	}
+}
+
 func TestAppUpdateTodoRemovesProjectAndClosesOnlyThatTodoProjectTerminals(t *testing.T) {
 	projectDir := t.TempDir()
 	otherProjectDir := t.TempDir()

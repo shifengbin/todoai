@@ -38,6 +38,10 @@ export function CreateTodoTerminal(arg1, arg2, arg3) {
   return window['go']['main']['App']['CreateTodoTerminal'](arg1, arg2, arg3);
 }
 
+export function DeleteCompletedTodos(arg1) {
+  return window['go']['main']['App']['DeleteCompletedTodos'](arg1);
+}
+
 export function DeleteProject(arg1) {
   return window['go']['main']['App']['DeleteProject'](arg1);
 }

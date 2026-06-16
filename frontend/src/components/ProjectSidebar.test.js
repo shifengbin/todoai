@@ -295,7 +295,7 @@ describe('ProjectSidebar', () => {
     expect(actionsRule).toContain('flex-wrap: nowrap;')
   })
 
-  it('keeps a toolbar height placeholder in completed view without open TODO controls', async () => {
+  it('uses the top toolbar for completed bulk deletion without open TODO controls', async () => {
     const wrapper = mountSidebar()
 
     expect(wrapper.find('[data-testid="todo-tree-toolbar"]').exists()).toBe(true)
@@ -308,12 +308,95 @@ describe('ProjectSidebar', () => {
     await nextTick()
 
     expect(wrapper.find('[data-testid="todo-tree-toolbar"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="todo-tree-toolbar"]').attributes('aria-hidden')).toBe('true')
-    expect(wrapper.find('[data-testid="todo-tree-toolbar"]').attributes('role')).toBeUndefined()
+    expect(wrapper.find('[data-testid="todo-tree-toolbar"]').attributes('role')).toBe('toolbar')
     expect(wrapper.find('[data-testid="sort-active-todos-priority"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="sort-active-todos-time"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="collapse-all-todos"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="expand-all-todos"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="bulk-delete-completed-todos"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="completed-todo-toolbar"]').exists()).toBe(false)
+  })
+
+  it('opens completed TODO details from the completed row menu', async () => {
+    const wrapper = mountSidebar()
+
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
+    await wrapper.find('[data-testid="completed-todo-menu-button-todo-completed"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="completed-todo-menu-todo-completed"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="completed-todo-menu-edit-todo-completed"]').exists()).toBe(true)
+
+    await wrapper.find('[data-testid="completed-todo-menu-edit-todo-completed"]').trigger('click')
+
+    expect(wrapper.emitted('edit-todo')[0]).toEqual(['todo-completed'])
+    expect(wrapper.find('[data-testid="completed-todo-menu-todo-completed"]').exists()).toBe(false)
+  })
+
+  it('confirms completed TODO deletion from the completed row menu', async () => {
+    const wrapper = mountSidebar()
+
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
+    await wrapper.find('[data-testid="completed-todo-menu-button-todo-completed"]').trigger('click')
+    await wrapper.find('[data-testid="completed-todo-menu-delete-todo-completed"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="delete-todo-popover-todo-completed"]').exists()).toBe(true)
+    expect(wrapper.emitted('delete-todo')).toBeUndefined()
+
+    await wrapper.find('[data-testid="confirm-delete-todo-todo-completed"]').trigger('click')
+
+    expect(wrapper.emitted('delete-todo')[0]).toEqual(['todo-completed'])
+    expect(wrapper.find('[data-testid="delete-todo-popover-todo-completed"]').exists()).toBe(false)
+  })
+
+  it('selects completed TODOs and confirms bulk deletion from the completed view only', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        todos: [
+          { id: 'todo-a', title: '活动任务', status: 'not-started' },
+          { id: 'todo-completed-a', title: '已完成 A', status: 'completed', completedAt: '2026-06-10T10:00:00Z' },
+          { id: 'todo-completed-b', title: '已完成 B', status: 'completed', completedAt: '2026-06-10T11:00:00Z' }
+        ],
+        todoProjects: [],
+        terminals: [],
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      }
+    })
+
+    expect(wrapper.find('[data-testid="bulk-delete-completed-todos"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
+    const bulkDelete = wrapper.find('[data-testid="bulk-delete-completed-todos"]')
+    expect(bulkDelete.attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-testid="collapse-all-todos"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="expand-all-todos"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="select-completed-todo-todo-completed-a"]').trigger('click')
+    await wrapper.find('[data-testid="select-completed-todo-todo-completed-b"]').trigger('click')
+
+    expect(wrapper.find('[data-testid="select-completed-todo-todo-completed-a"]').element.checked).toBe(true)
+    expect(wrapper.find('[data-testid="select-completed-todo-todo-completed-b"]').element.checked).toBe(true)
+    expect(wrapper.find('[data-testid="bulk-delete-completed-todos"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('[data-testid="bulk-delete-completed-todos"]').text()).toContain('2')
+
+    await wrapper.find('[data-testid="bulk-delete-completed-todos"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="bulk-delete-completed-todos-popover"]').exists()).toBe(true)
+    expect(wrapper.emitted('delete-completed-todos')).toBeUndefined()
+
+    await wrapper.find('[data-testid="cancel-bulk-delete-completed-todos"]').trigger('click')
+    await nextTick()
+    expect(wrapper.find('[data-testid="bulk-delete-completed-todos-popover"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="bulk-delete-completed-todos"]').trigger('click')
+    await wrapper.find('[data-testid="confirm-bulk-delete-completed-todos"]').trigger('click')
+
+    expect(wrapper.emitted('delete-completed-todos')[0]).toEqual([['todo-completed-a', 'todo-completed-b']])
+    expect(wrapper.find('[data-testid="bulk-delete-completed-todos-popover"]').exists()).toBe(false)
   })
 
   it('collapses only TODO branches in the current open status view', async () => {

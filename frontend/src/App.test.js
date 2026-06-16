@@ -9,6 +9,7 @@ import {
   CompleteTodo,
   CreateTodo,
   CreateTodoTerminal,
+  DeleteCompletedTodos,
   DeleteProject,
   DeleteProjects,
   DeleteTerminal,
@@ -37,6 +38,7 @@ const appApiMock = vi.hoisted(() => ({
   CreateTodo: vi.fn(),
   CreateTodoTerminal: vi.fn(),
   CreateProjectFromDialog: vi.fn(),
+  DeleteCompletedTodos: vi.fn(),
   DeleteProject: vi.fn(),
   DeleteProjects: vi.fn(),
   DeleteTerminal: vi.fn(),
@@ -168,6 +170,16 @@ describe('App project terminal tree', () => {
         activeProjectId: '',
         activeTodoProjectId: '',
         terminals: [],
+        activeTerminalId: ''
+      })
+    )
+    appApiMock.DeleteCompletedTodos.mockResolvedValue(
+      projectState({
+        todos: [],
+        todoProjects: [],
+        terminals: [],
+        activeTodoId: '',
+        activeTodoProjectId: '',
         activeTerminalId: ''
       })
     )
@@ -813,6 +825,53 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="todo-detail-dialog"]').exists()).toBe(false)
   })
 
+  it('opens completed TODO details in read-only mode with project snapshots', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'frontend-app', path: '/work/frontend-app', available: true },
+          { id: 'project-b', name: 'api-service', path: '/work/api-service', available: true }
+        ],
+        todos: [
+          completedTodo({
+            title: 'Fix login',
+            description: '登录后跳回首页',
+            priority: 'high',
+            projectSnapshots: [
+              { projectId: 'project-a', name: 'frontend-app', path: '/work/frontend-app' }
+            ]
+          })
+        ],
+        todoProjects: [],
+        terminals: [],
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
+    await wrapper.find('[data-testid="completed-todo-menu-button-todo-a"]').trigger('click')
+    await wrapper.find('[data-testid="completed-todo-menu-edit-todo-a"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="todo-detail-dialog"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="todo-detail-name-input"]').element.value).toBe('Fix login')
+    expect(wrapper.find('[data-testid="todo-detail-name-input"]').attributes('readonly')).toBeDefined()
+    expect(wrapper.find('[data-testid="todo-detail-description-input"]').element.value).toBe('登录后跳回首页')
+    expect(wrapper.find('[data-testid="todo-detail-description-input"]').attributes('readonly')).toBeDefined()
+    expect(wrapper.find('[data-testid="todo-detail-priority-high"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-testid="todo-detail-submit"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="todo-detail-project-filter"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="todo-detail-selected-project-remove-project-a"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="todo-detail-project-snapshot-project-a"]').text()).toContain('frontend-app')
+    expect(wrapper.find('[data-testid="todo-detail-project-snapshot-project-a"]').text()).toContain('/work/frontend-app')
+
+    await wrapper.find('[data-testid="todo-detail-name-input"]').setValue('Changed')
+    expect(UpdateTodo).not.toHaveBeenCalled()
+  })
+
   it('keeps TODO detail editor open when terminal-closing save is cancelled', async () => {
     window.confirm.mockReturnValue(false)
     appApiMock.ListProjects.mockResolvedValue(
@@ -891,6 +950,67 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="terminal-terminal-a"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="completed-todos"]').text()).toContain('completed')
     expect(wrapper.find('[data-testid="completed-todos"]').text()).toContain('/work/alpha')
+  })
+
+  it('deletes a completed TODO after completed-view confirmation', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        todos: [completedTodo()],
+        todoProjects: [],
+        terminals: [],
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
+    await wrapper.find('[data-testid="completed-todo-menu-button-todo-a"]').trigger('click')
+    await wrapper.find('[data-testid="completed-todo-menu-delete-todo-a"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="delete-todo-popover-todo-a"]').exists()).toBe(true)
+    expect(DeleteTodo).not.toHaveBeenCalled()
+
+    await wrapper.find('[data-testid="confirm-delete-todo-todo-a"]').trigger('click')
+    await flushPromises()
+
+    expect(DeleteTodo).toHaveBeenCalledWith('todo-a')
+    expect(wrapper.find('[data-testid="completed-todo-todo-a"]').exists()).toBe(false)
+  })
+
+  it('bulk deletes selected completed TODOs from the completed view', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        todos: [
+          completedTodo({ id: 'todo-a', title: '完成 A' }),
+          completedTodo({ id: 'todo-b', title: '完成 B', completedAt: '2026-06-10T11:00:00Z' })
+        ],
+        todoProjects: [],
+        terminals: [],
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
+    await wrapper.find('[data-testid="select-completed-todo-todo-a"]').trigger('click')
+    await wrapper.find('[data-testid="select-completed-todo-todo-b"]').trigger('click')
+    await wrapper.find('[data-testid="bulk-delete-completed-todos"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="bulk-delete-completed-todos-popover"]').exists()).toBe(true)
+    expect(DeleteCompletedTodos).not.toHaveBeenCalled()
+
+    await wrapper.find('[data-testid="confirm-bulk-delete-completed-todos"]').trigger('click')
+    await flushPromises()
+
+    expect(DeleteCompletedTodos).toHaveBeenCalledWith(['todo-a', 'todo-b'])
+    expect(wrapper.find('[data-testid="completed-todo-todo-a"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="completed-todo-todo-b"]').exists()).toBe(false)
   })
 
   it('does not delete a TODO when the sidebar confirmation is cancelled', async () => {

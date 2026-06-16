@@ -20,6 +20,8 @@ export function CreateTodo(arg1:main.CreateTodoRequest):Promise<main.ProjectStat
 
 export function CreateTodoTerminal(arg1:string,arg2:number,arg3:number):Promise<main.ProjectState>;
 
+export function DeleteCompletedTodos(arg1:Array<string>):Promise<main.ProjectState>;
+
 export function DeleteProject(arg1:string):Promise<main.ProjectState>;
 
 export function DeleteProjects(arg1:Array<string>):Promise<main.ProjectState>;

@@ -560,7 +560,7 @@ func (manager *ProjectManager) DeleteTodo(todoID string) (ProjectState, error) {
 	}
 	todoIndex := -1
 	for index := range state.Todos {
-		if state.Todos[index].ID == todoID && isOpenTodoStatus(state.Todos[index].Status) {
+		if state.Todos[index].ID == todoID && isDeletableTodoStatus(state.Todos[index].Status) {
 			todoIndex = index
 			break
 		}
@@ -571,6 +571,48 @@ func (manager *ProjectManager) DeleteTodo(todoID string) (ProjectState, error) {
 	state.Todos = append(state.Todos[:todoIndex], state.Todos[todoIndex+1:]...)
 	state.TodoProjects = removeTodoProjectsForTodo(state.TodoProjects, todoID)
 	clearActiveTodoContext(&state, todoID)
+	if err := manager.saveLocked(state); err != nil {
+		return ProjectState{}, err
+	}
+	return state, nil
+}
+
+func (manager *ProjectManager) DeleteCompletedTodos(todoIDs []string) (ProjectState, error) {
+	normalizedTodoIDs := normalizeTodoIDs(todoIDs)
+	if len(normalizedTodoIDs) == 0 {
+		return ProjectState{}, errors.New("todo not found")
+	}
+
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	state, err := manager.loadLocked()
+	if err != nil {
+		return ProjectState{}, err
+	}
+	todosByID := map[string]Todo{}
+	for _, todo := range state.Todos {
+		todosByID[todo.ID] = todo
+	}
+	deletedTodoIDs := map[string]bool{}
+	for _, todoID := range normalizedTodoIDs {
+		todo, ok := todosByID[todoID]
+		if !ok {
+			return ProjectState{}, errors.New("todo not found")
+		}
+		if todo.Status != TodoStatusCompleted {
+			return ProjectState{}, errors.New("todo is not completed")
+		}
+		deletedTodoIDs[todoID] = true
+	}
+
+	nextTodos := make([]Todo, 0, len(state.Todos)-len(deletedTodoIDs))
+	for _, todo := range state.Todos {
+		if !deletedTodoIDs[todo.ID] {
+			nextTodos = append(nextTodos, todo)
+		}
+	}
+	state.Todos = nextTodos
 	if err := manager.saveLocked(state); err != nil {
 		return ProjectState{}, err
 	}
@@ -896,6 +938,10 @@ func isOpenTodoStatus(status string) bool {
 	return status == TodoStatusNotStarted || status == TodoStatusInProgress
 }
 
+func isDeletableTodoStatus(status string) bool {
+	return isOpenTodoStatus(status) || status == TodoStatusCompleted
+}
+
 func directoryAvailable(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
@@ -1099,6 +1145,20 @@ func normalizeProjectIDs(projectIDs []string) []string {
 		}
 		seen[projectID] = true
 		normalized = append(normalized, projectID)
+	}
+	return normalized
+}
+
+func normalizeTodoIDs(todoIDs []string) []string {
+	normalized := []string{}
+	seen := map[string]bool{}
+	for _, todoID := range todoIDs {
+		todoID = strings.TrimSpace(todoID)
+		if todoID == "" || seen[todoID] {
+			continue
+		}
+		seen[todoID] = true
+		normalized = append(normalized, todoID)
 	}
 	return normalized
 }
