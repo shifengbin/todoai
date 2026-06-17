@@ -928,6 +928,52 @@ func TestAppTodoProjectUIStatePersistsUnderWorkspaceData(t *testing.T) {
 	}
 }
 
+func TestAppStartupRestoresTodoProjectUIStateFromWorkspaceData(t *testing.T) {
+	appConfigDir := t.TempDir()
+	workspaceDir := t.TempDir()
+	projectDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(appConfigDir, "projects.json"),
+		newFakeShellStarter().Start,
+		WithInitialWorkspaceClosed(),
+		WithRestoreLastWorkspaceOnStartup(),
+		WithClaudeStatusDir(""),
+	)
+	state, err := app.OpenWorkspaceFromPath(workspaceDir)
+	if err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err = app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	_, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", state.Projects[0].ID)
+	if err := app.SaveTodoProjectUIState(todoProjectID, TodoProjectUIState{TodoView: "in-progress", SidebarWidth: 420}); err != nil {
+		t.Fatalf("SaveTodoProjectUIState() error = %v", err)
+	}
+
+	restarted := NewAppWithConfigAndShellStarter(
+		filepath.Join(appConfigDir, "projects.json"),
+		newFakeShellStarter().Start,
+		WithInitialWorkspaceClosed(),
+		WithRestoreLastWorkspaceOnStartup(),
+		WithClaudeStatusDir(""),
+	)
+	restarted.startup(nil)
+	defer restarted.shutdown(nil)
+
+	loaded, err := restarted.LoadTodoProjectUIState()
+	if err != nil {
+		t.Fatalf("LoadTodoProjectUIState() error = %v", err)
+	}
+	if loaded.TodoProjects[todoProjectID].TodoView != "in-progress" {
+		t.Fatalf("TodoView = %q, want in-progress", loaded.TodoProjects[todoProjectID].TodoView)
+	}
+	if loaded.TodoProjects[todoProjectID].SidebarWidth != 420 {
+		t.Fatalf("SidebarWidth = %d, want 420", loaded.TodoProjects[todoProjectID].SidebarWidth)
+	}
+}
+
 func TestAppTodoProjectUIStateRequiresWorkspace(t *testing.T) {
 	app := NewAppWithConfigAndShellStarter(
 		filepath.Join(t.TempDir(), "projects.json"),

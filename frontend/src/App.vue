@@ -86,6 +86,7 @@ const sidebarMinWidth = 220
 const sidebarMaxWidth = 520
 const currentTodoView = ref('not-started')
 const todoProjectUIStates = ref({})
+const todoProjectUIStateSaveQueues = new Map()
 const defaultTerminalLaunchProfiles = [
   { name: 'codex', command: 'codex --dangerously-bypass-hook-trust --dangerously-bypass-approvals-and-sandbox', enabled: true },
   { name: 'claude', command: 'claude --dangerously-skip-permissions', enabled: true }
@@ -1380,7 +1381,36 @@ function persistActiveTodoProjectUIState() {
     ...todoProjectUIStates.value,
     [todoProjectId]: state
   }
-  SaveTodoProjectUIState(todoProjectId, state).catch(showError)
+  queueTodoProjectUIStateSave(todoProjectId, state)
+}
+
+function queueTodoProjectUIStateSave(todoProjectId, state) {
+  const queue = todoProjectUIStateSaveQueues.get(todoProjectId) || {
+    saving: false,
+    pending: null
+  }
+  queue.pending = state
+  todoProjectUIStateSaveQueues.set(todoProjectId, queue)
+  if (!queue.saving) {
+    drainTodoProjectUIStateSaveQueue(todoProjectId, queue)
+  }
+}
+
+async function drainTodoProjectUIStateSaveQueue(todoProjectId, queue) {
+  queue.saving = true
+  while (queue.pending) {
+    const nextState = queue.pending
+    queue.pending = null
+    try {
+      await SaveTodoProjectUIState(todoProjectId, nextState)
+    } catch (error) {
+      showError(error)
+    }
+  }
+  queue.saving = false
+  if (!queue.pending) {
+    todoProjectUIStateSaveQueues.delete(todoProjectId)
+  }
 }
 
 function normalizeTodoView(view) {

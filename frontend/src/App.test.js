@@ -1172,6 +1172,41 @@ describe('App project terminal tree', () => {
     })
   })
 
+  it('serializes TODO project UI state saves so a slower earlier save cannot overwrite newer width', async () => {
+    let resolveFirstSave
+    const firstSave = new Promise((resolve) => {
+      resolveFirstSave = resolve
+    })
+    appApiMock.SaveTodoProjectUIState
+      .mockImplementationOnce(() => firstSave)
+      .mockResolvedValue()
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+    await flushPromises()
+    expect(SaveTodoProjectUIState).toHaveBeenCalledTimes(1)
+    expect(SaveTodoProjectUIState).toHaveBeenLastCalledWith('todo-project-a', {
+      todoView: 'in-progress',
+      sidebarWidth: 280
+    })
+
+    await wrapper.find('[data-testid="sidebar-resize-handle"]').trigger('mousedown', { clientX: 280 })
+    window.dispatchEvent(new MouseEvent('mousemove', { clientX: 360 }))
+    window.dispatchEvent(new MouseEvent('mouseup', { clientX: 360 }))
+    await flushPromises()
+
+    expect(SaveTodoProjectUIState).toHaveBeenCalledTimes(1)
+
+    resolveFirstSave()
+    await flushPromises()
+
+    expect(SaveTodoProjectUIState).toHaveBeenCalledTimes(2)
+    expect(SaveTodoProjectUIState).toHaveBeenLastCalledWith('todo-project-a', {
+      todoView: 'in-progress',
+      sidebarWidth: 360
+    })
+  })
+
   it('completes a TODO and shows its completed snapshot', async () => {
     appApiMock.ListProjects.mockResolvedValue(inProgressProjectState())
     const wrapper = await mountReadyApp()
