@@ -890,6 +890,134 @@ func TestAppRemoveTodoProjectClosesOnlyThatTodoProjectTerminals(t *testing.T) {
 	}
 }
 
+func TestAppTodoProjectUIStatePersistsUnderWorkspaceData(t *testing.T) {
+	appConfigDir := t.TempDir()
+	workspaceDir := t.TempDir()
+	projectDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(appConfigDir, "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	state, err := app.OpenWorkspaceFromPath(workspaceDir)
+	if err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	dataPath := state.CurrentWorkspace.DataPath
+	state, err = app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	_, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", state.Projects[0].ID)
+
+	if err := app.SaveTodoProjectUIState(todoProjectID, TodoProjectUIState{TodoView: "completed", SidebarWidth: 360}); err != nil {
+		t.Fatalf("SaveTodoProjectUIState() error = %v", err)
+	}
+	loaded, err := app.LoadTodoProjectUIState()
+	if err != nil {
+		t.Fatalf("LoadTodoProjectUIState() error = %v", err)
+	}
+
+	if loaded.TodoProjects[todoProjectID].TodoView != "completed" {
+		t.Fatalf("TodoView = %q, want completed", loaded.TodoProjects[todoProjectID].TodoView)
+	}
+	if loaded.TodoProjects[todoProjectID].SidebarWidth != 360 {
+		t.Fatalf("SidebarWidth = %d, want 360", loaded.TodoProjects[todoProjectID].SidebarWidth)
+	}
+	if _, err := os.Stat(filepath.Join(dataPath, "todo-project-ui-state.json")); err != nil {
+		t.Fatalf("todo project ui state file missing under .data: %v", err)
+	}
+}
+
+func TestAppTodoProjectUIStateRequiresWorkspace(t *testing.T) {
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+		WithInitialWorkspaceClosed(),
+	)
+
+	if _, err := app.LoadTodoProjectUIState(); !errors.Is(err, ErrWorkspaceRequired) {
+		t.Fatalf("LoadTodoProjectUIState() error = %v, want ErrWorkspaceRequired", err)
+	}
+	if err := app.SaveTodoProjectUIState("todo-project-a", TodoProjectUIState{TodoView: "completed", SidebarWidth: 360}); !errors.Is(err, ErrWorkspaceRequired) {
+		t.Fatalf("SaveTodoProjectUIState() error = %v, want ErrWorkspaceRequired", err)
+	}
+	if err := app.DeleteTodoProjectUIState([]string{"todo-project-a"}); !errors.Is(err, ErrWorkspaceRequired) {
+		t.Fatalf("DeleteTodoProjectUIState() error = %v, want ErrWorkspaceRequired", err)
+	}
+}
+
+func TestAppRemoveTodoProjectDeletesTodoProjectUIState(t *testing.T) {
+	projectDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	projectID := state.Projects[0].ID
+	_, todoProjectAID := createTodoProjectForApp(t, app, "修复登录问题", projectID)
+	_, todoProjectBID := createTodoProjectForApp(t, app, "升级依赖", projectID)
+	if err := app.SaveTodoProjectUIState(todoProjectAID, TodoProjectUIState{TodoView: "completed", SidebarWidth: 360}); err != nil {
+		t.Fatalf("SaveTodoProjectUIState(A) error = %v", err)
+	}
+	if err := app.SaveTodoProjectUIState(todoProjectBID, TodoProjectUIState{TodoView: "in-progress", SidebarWidth: 420}); err != nil {
+		t.Fatalf("SaveTodoProjectUIState(B) error = %v", err)
+	}
+
+	if _, err := app.RemoveTodoProject(todoProjectAID); err != nil {
+		t.Fatalf("RemoveTodoProject() error = %v", err)
+	}
+	loaded, err := app.LoadTodoProjectUIState()
+	if err != nil {
+		t.Fatalf("LoadTodoProjectUIState() error = %v", err)
+	}
+
+	if _, ok := loaded.TodoProjects[todoProjectAID]; ok {
+		t.Fatalf("removed todo-project UI state still exists: %#v", loaded.TodoProjects)
+	}
+	if loaded.TodoProjects[todoProjectBID].SidebarWidth != 420 {
+		t.Fatalf("remaining todo-project UI state = %#v, want B preserved", loaded.TodoProjects[todoProjectBID])
+	}
+}
+
+func TestAppDeleteTodoDeletesTodoProjectUIState(t *testing.T) {
+	projectDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	projectID := state.Projects[0].ID
+	todoAID, todoProjectAID := createTodoProjectForApp(t, app, "修复登录问题", projectID)
+	_, todoProjectBID := createTodoProjectForApp(t, app, "升级依赖", projectID)
+	if err := app.SaveTodoProjectUIState(todoProjectAID, TodoProjectUIState{TodoView: "completed", SidebarWidth: 360}); err != nil {
+		t.Fatalf("SaveTodoProjectUIState(A) error = %v", err)
+	}
+	if err := app.SaveTodoProjectUIState(todoProjectBID, TodoProjectUIState{TodoView: "in-progress", SidebarWidth: 420}); err != nil {
+		t.Fatalf("SaveTodoProjectUIState(B) error = %v", err)
+	}
+
+	if _, err := app.DeleteTodo(todoAID); err != nil {
+		t.Fatalf("DeleteTodo() error = %v", err)
+	}
+	loaded, err := app.LoadTodoProjectUIState()
+	if err != nil {
+		t.Fatalf("LoadTodoProjectUIState() error = %v", err)
+	}
+
+	if _, ok := loaded.TodoProjects[todoProjectAID]; ok {
+		t.Fatalf("deleted TODO project UI state still exists: %#v", loaded.TodoProjects)
+	}
+	if loaded.TodoProjects[todoProjectBID].SidebarWidth != 420 {
+		t.Fatalf("remaining todo-project UI state = %#v, want B preserved", loaded.TodoProjects[todoProjectBID])
+	}
+}
+
 func TestAppImportsProjectsFromParentDirectory(t *testing.T) {
 	parentDir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(parentDir, "frontend-app"), 0o755); err != nil {

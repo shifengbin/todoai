@@ -66,6 +66,10 @@ export function DeleteTodo(arg1) {
   return window['go']['main']['App']['DeleteTodo'](arg1);
 }
 
+export function DeleteTodoProjectUIState(arg1) {
+  return window['go']['main']['App']['DeleteTodoProjectUIState'](arg1);
+}
+
 export function DetectTerminalShell() {
   return window['go']['main']['App']['DetectTerminalShell']();
 }
@@ -98,6 +102,10 @@ export function LoadTerminalSettings() {
   return window['go']['main']['App']['LoadTerminalSettings']();
 }
 
+export function LoadTodoProjectUIState() {
+  return window['go']['main']['App']['LoadTodoProjectUIState']();
+}
+
 export function OpenRecentWorkspace(arg1) {
   return window['go']['main']['App']['OpenRecentWorkspace'](arg1);
 }
@@ -128,6 +136,10 @@ export function SaveTerminalShell(arg1, arg2) {
 
 export function SaveTerminalTheme(arg1) {
   return window['go']['main']['App']['SaveTerminalTheme'](arg1);
+}
+
+export function SaveTodoProjectUIState(arg1, arg2) {
+  return window['go']['main']['App']['SaveTodoProjectUIState'](arg1, arg2);
 }
 
 export function SelectProject(arg1) {

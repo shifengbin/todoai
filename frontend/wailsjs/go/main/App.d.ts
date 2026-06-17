@@ -34,6 +34,8 @@ export function DeleteTerminal(arg1:string):Promise<main.ProjectState>;
 
 export function DeleteTodo(arg1:string):Promise<main.ProjectState>;
 
+export function DeleteTodoProjectUIState(arg1:Array<string>):Promise<void>;
+
 export function DetectTerminalShell():Promise<main.TerminalShellSetting>;
 
 export function GetProjectGitStatus(arg1:string):Promise<main.GitStatus>;
@@ -50,6 +52,8 @@ export function ListProjects():Promise<main.ProjectState>;
 
 export function LoadTerminalSettings():Promise<main.TerminalSettingsState>;
 
+export function LoadTodoProjectUIState():Promise<main.TodoProjectUIStateFile>;
+
 export function OpenRecentWorkspace(arg1:string):Promise<main.ProjectState>;
 
 export function OpenWorkspaceFromDialog():Promise<main.ProjectState>;
@@ -65,6 +69,8 @@ export function SaveTerminalLaunchProfiles(arg1:Array<main.TerminalLaunchProfile
 export function SaveTerminalShell(arg1:string,arg2:string):Promise<main.TerminalSettingsState>;
 
 export function SaveTerminalTheme(arg1:string):Promise<main.TerminalSettingsState>;
+
+export function SaveTodoProjectUIState(arg1:string,arg2:main.TodoProjectUIState):Promise<void>;
 
 export function SelectProject(arg1:string):Promise<main.ProjectState>;
 

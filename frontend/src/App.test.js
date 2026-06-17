@@ -22,6 +22,7 @@ import {
   ImportProjectsFromParentDirectoryDialog,
   InitializeProjectGitRepository,
   LoadTerminalSettings,
+  LoadTodoProjectUIState,
   OpenRecentWorkspace,
   OpenWorkspaceFromDialog,
   OpenWorkspaceFromPath,
@@ -29,6 +30,7 @@ import {
   SaveTerminalLaunchProfiles,
   SaveTerminalShell,
   SaveTerminalTheme,
+  SaveTodoProjectUIState,
   SelectTerminal,
   SendTerminalInput,
   StartShell,
@@ -58,6 +60,7 @@ const appApiMock = vi.hoisted(() => ({
   InitializeProjectGitRepository: vi.fn(),
   ListProjects: vi.fn(),
   LoadTerminalSettings: vi.fn(),
+  LoadTodoProjectUIState: vi.fn(),
   OpenRecentWorkspace: vi.fn(),
   OpenWorkspaceFromDialog: vi.fn(),
   OpenWorkspaceFromPath: vi.fn(),
@@ -69,6 +72,7 @@ const appApiMock = vi.hoisted(() => ({
   SaveTerminalLaunchProfiles: vi.fn(),
   SaveTerminalShell: vi.fn(),
   SaveTerminalTheme: vi.fn(),
+  SaveTodoProjectUIState: vi.fn(),
   SendTerminalInput: vi.fn(),
   StartShell: vi.fn(),
   UpdateTodo: vi.fn(),
@@ -139,6 +143,8 @@ describe('App project terminal tree', () => {
     })
     appApiMock.ListProjects.mockResolvedValue(projectState())
     appApiMock.LoadTerminalSettings.mockResolvedValue(settingsState())
+    appApiMock.LoadTodoProjectUIState.mockResolvedValue(todoProjectUIStateFile())
+    appApiMock.SaveTodoProjectUIState.mockResolvedValue()
     appApiMock.DetectTerminalShell.mockResolvedValue(shellSetting({ path: '/usr/bin/bash', displayName: 'bash' }))
     appApiMock.SaveTerminalShell.mockResolvedValue(
       settingsState({ selected: shellSetting({ path: '/usr/bin/bash', displayName: 'bash', source: 'detected' }) })
@@ -1092,6 +1098,78 @@ describe('App project terminal tree', () => {
 
     expect(wrapper.find('.app-shell').attributes('style')).toContain('--sidebar-width: 360px')
     expect(fitAddon.fit).toHaveBeenCalled()
+  })
+
+  it('restores and saves TODO project UI state for the active TODO project', async () => {
+    appApiMock.LoadTodoProjectUIState.mockResolvedValue(
+      todoProjectUIStateFile({
+        todoProjects: {
+          'todo-project-a': { todoView: 'completed', sidebarWidth: 360 },
+          'todo-project-b': { todoView: 'in-progress', sidebarWidth: 420 }
+        }
+      })
+    )
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        todos: [
+          todo({ id: 'todo-a', status: 'not-started' }),
+          todo({ id: 'todo-b', title: 'Write tests', status: 'in-progress' }),
+          completedTodo({ id: 'todo-completed', title: 'Done' })
+        ],
+        todoProjects: [
+          todoProject({ id: 'todo-project-a', todoId: 'todo-a' }),
+          todoProject({ id: 'todo-project-b', todoId: 'todo-b', projectId: 'project-a' })
+        ],
+        activeTodoProjectId: 'todo-project-a'
+      })
+    )
+    const todoProjectBState = projectState({
+      todos: [
+        todo({ id: 'todo-a', status: 'not-started' }),
+        todo({ id: 'todo-b', title: 'Write tests', status: 'in-progress' }),
+        completedTodo({ id: 'todo-completed', title: 'Done' })
+      ],
+      todoProjects: [
+        todoProject({ id: 'todo-project-a', todoId: 'todo-a' }),
+        todoProject({ id: 'todo-project-b', todoId: 'todo-b', projectId: 'project-a' })
+      ],
+      activeTodoId: 'todo-b',
+      activeTodoProjectId: 'todo-project-b'
+    })
+    const wrapper = await mountReadyApp()
+
+    expect(LoadTodoProjectUIState).toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="todo-view-completed"]').classes()).toContain('active')
+    expect(wrapper.find('.app-shell').attributes('style')).toContain('--sidebar-width: 360px')
+
+    runtimeMock.handlers['workspace-state'](todoProjectBState)
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="todo-view-in-progress"]').classes()).toContain('active')
+    expect(wrapper.find('.app-shell').attributes('style')).toContain('--sidebar-width: 420px')
+
+    await wrapper.find('[data-testid="todo-view-not-started"]').trigger('click')
+    await flushPromises()
+
+    expect(SaveTodoProjectUIState).toHaveBeenLastCalledWith('todo-project-b', {
+      todoView: 'not-started',
+      sidebarWidth: 420
+    })
+  })
+
+  it('saves sidebar width after divider dragging ends for the active TODO project', async () => {
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="sidebar-resize-handle"]').trigger('mousedown', { clientX: 280 })
+    window.dispatchEvent(new MouseEvent('mousemove', { clientX: 360 }))
+    expect(SaveTodoProjectUIState).not.toHaveBeenCalled()
+    window.dispatchEvent(new MouseEvent('mouseup', { clientX: 360 }))
+    await flushPromises()
+
+    expect(SaveTodoProjectUIState).toHaveBeenLastCalledWith('todo-project-a', {
+      todoView: 'not-started',
+      sidebarWidth: 360
+    })
   })
 
   it('completes a TODO and shows its completed snapshot', async () => {
@@ -2387,6 +2465,14 @@ function settingsState(overrides = {}) {
       { name: 'codex', command: defaultCodexLaunchCommand },
       { name: 'claude', command: defaultClaudeLaunchCommand }
     ],
+    ...overrides
+  }
+}
+
+function todoProjectUIStateFile(overrides = {}) {
+  return {
+    version: 1,
+    todoProjects: {},
     ...overrides
   }
 }

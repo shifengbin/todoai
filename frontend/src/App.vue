@@ -29,6 +29,7 @@ import {
   InitializeProjectGitRepository,
   ListProjects,
   LoadTerminalSettings,
+  LoadTodoProjectUIState,
   OpenRecentWorkspace,
   RemoveTodoProject,
   ResizeTerminal,
@@ -38,6 +39,7 @@ import {
   SaveTerminalLaunchProfiles,
   SaveTerminalShell,
   SaveTerminalTheme,
+  SaveTodoProjectUIState,
   SendTerminalInput,
   StartShell,
   UpdateTodo
@@ -73,13 +75,16 @@ const terminalMenu = reactive({
   y: 0
 })
 const sidebarWidth = ref(280)
+const defaultSidebarWidth = 280
 const sidebarResize = reactive({
   active: false,
   startX: 0,
-  startWidth: 280
+  startWidth: defaultSidebarWidth
 })
 const sidebarMinWidth = 220
 const sidebarMaxWidth = 520
+const currentTodoView = ref('not-started')
+const todoProjectUIStates = ref({})
 const defaultTerminalLaunchProfiles = [
   { name: 'codex', command: 'codex --dangerously-bypass-hook-trust --dangerously-bypass-approvals-and-sandbox', enabled: true },
   { name: 'claude', command: 'claude --dangerously-skip-permissions', enabled: true }
@@ -381,6 +386,7 @@ onMounted(async () => {
 
   try {
     applyState(await ListProjects())
+    await loadTodoProjectUIStateForCurrentWorkspace()
     await loadTerminalSettingsForCurrentWorkspace()
     await activateActiveTerminal()
   } catch (error) {
@@ -446,6 +452,7 @@ function applyState(state, options = {}) {
   if (!hasWorkspace.value) {
     closeWorkspaceScopedPanels()
   }
+  applyTodoProjectUIState(activeTodoProjectId.value)
   closeTerminalMenu()
   syncGitStatusForActiveProject(previousActiveProjectId, {
     refresh: options.refreshGitStatus !== false,
@@ -456,6 +463,7 @@ function applyState(state, options = {}) {
 
 async function applyWorkspaceProjectState(state) {
   applyState(state, { forceGitStatusRefresh: true })
+  await loadTodoProjectUIStateForCurrentWorkspace()
   errorMessage.value = ''
   await activateActiveTerminal()
 }
@@ -501,6 +509,23 @@ function closeWorkspaceScopedPanels() {
   closeTodoForm()
   closeTodoDetail()
   closeProjectPicker()
+}
+
+async function loadTodoProjectUIStateForCurrentWorkspace() {
+  if (!hasWorkspace.value) {
+    todoProjectUIStates.value = {}
+    applyTodoProjectUIState('')
+    return
+  }
+  try {
+    const state = await LoadTodoProjectUIState()
+    todoProjectUIStates.value = state?.todoProjects || {}
+    applyTodoProjectUIState(activeTodoProjectId.value)
+  } catch (error) {
+    todoProjectUIStates.value = {}
+    applyTodoProjectUIState(activeTodoProjectId.value)
+    showError(error)
+  }
 }
 
 async function createProject() {
@@ -1316,7 +1341,40 @@ function stopSidebarResize() {
   sidebarResize.active = false
   window.removeEventListener('mousemove', resizeSidebar)
   window.removeEventListener('mouseup', stopSidebarResize)
+  persistActiveTodoProjectUIState()
   scheduleFitActiveTerminal()
+}
+
+function handleTodoViewChange(view) {
+  currentTodoView.value = normalizeTodoView(view)
+  persistActiveTodoProjectUIState()
+}
+
+function applyTodoProjectUIState(todoProjectId) {
+  const state = todoProjectId ? todoProjectUIStates.value[todoProjectId] : null
+  currentTodoView.value = normalizeTodoView(state?.todoView)
+  sidebarWidth.value = clampNumber(state?.sidebarWidth || defaultSidebarWidth, sidebarMinWidth, sidebarMaxWidth)
+  scheduleFitActiveTerminal()
+}
+
+function persistActiveTodoProjectUIState() {
+  const todoProjectId = activeTodoProjectId.value
+  if (!hasWorkspace.value || !todoProjectId) {
+    return
+  }
+  const state = {
+    todoView: normalizeTodoView(currentTodoView.value),
+    sidebarWidth: clampNumber(sidebarWidth.value, sidebarMinWidth, sidebarMaxWidth)
+  }
+  todoProjectUIStates.value = {
+    ...todoProjectUIStates.value,
+    [todoProjectId]: state
+  }
+  SaveTodoProjectUIState(todoProjectId, state).catch(showError)
+}
+
+function normalizeTodoView(view) {
+  return ['not-started', 'in-progress', 'completed'].includes(view) ? view : 'not-started'
 }
 
 function clampNumber(value, min, max) {
@@ -1497,6 +1555,7 @@ function showError(error) {
       :launch-profiles="terminalLaunchProfiles"
       :import-summary="importSummary"
       :has-workspace="hasWorkspace"
+      :todo-view="currentTodoView"
       @create-project="createProject"
       @import-projects="importProjectsFromParentDirectory"
       @select-project="selectProject"
@@ -1516,6 +1575,7 @@ function showError(error) {
       @delete-project="deleteProject"
       @delete-projects="deleteProjects"
       @delete-terminal="deleteTerminal"
+      @todo-view-change="handleTodoViewChange"
     />
 
     <div
