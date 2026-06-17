@@ -5,24 +5,23 @@ TBD - created by archiving change add-todo-centric-workspace. Update Purpose aft
 ## Requirements
 ### Requirement: Display Workspace Tabs
 
-系统 SHALL 在左侧工作区提供 `TODO` 和 `项目` 两个 tab。`TODO` tab SHALL 作为终端工作主入口，`项目` tab SHALL 作为项目库管理入口。
+系统 SHALL 在左侧工作区直接显示 TODO 工作树。左侧工作区 SHALL NOT 提供独立的 `项目` tab。全局项目候选管理 SHALL 出现在创建 TODO、编辑 TODO 或添加工程弹窗中，不作为左侧独立工作区视图。
 
-#### Scenario: User switches between workspace tabs
+#### Scenario: User views the sidebar workspace
 
-- **WHEN** 用户在左侧工作区点击 `TODO` tab
-- **THEN** 系统显示 TODO 工作树
+- **WHEN** 用户打开一个 workspace
+- **THEN** 系统在左侧工作区显示 TODO 工作树
 - **AND** 终端入口按 TODO 上下文展示
-- **WHEN** 用户点击 `项目` tab
-- **THEN** 系统显示项目库管理视图
-- **AND** 项目库视图不显示可操作终端入口
+- **AND** 系统不显示 `项目` tab
+- **AND** 系统不显示独立项目库管理视图
 
 ### Requirement: Create Todo
 
-系统 SHALL 允许用户通过应用内表单创建 TODO。创建表单 SHALL 包含必填 TODO 名称、选填 TODO 描述、任务优先级和选填工程。工程 SHALL 支持多选。任务优先级 SHALL 支持 `高`、`中`、`低` 三档，并 SHALL 默认选择 `中`。创建后的 TODO SHALL 默认保存为 `not-started` 状态，出现在 `未执行` 视图中，并 SHALL 可作为后续项目关联和终端创建的上下文。创建后的 TODO 分支 SHALL 默认收起，且创建操作 SHALL 不改变当前 TODO、当前项目、当前 TODO 项目或当前终端上下文。
+系统 SHALL 允许用户通过应用内表单创建 TODO。创建表单 SHALL 包含必填 TODO 名称、选填 TODO 描述、任务优先级和选填工程。工程 SHALL 从全局项目候选中多选。任务优先级 SHALL 支持 `高`、`中`、`低` 三档，并 SHALL 默认选择 `中`。创建后的 TODO SHALL 默认保存为 `not-started` 状态，出现在 `未执行` 视图中，并 SHALL 可作为后续项目关联和终端创建的上下文。创建时选择的工程 SHALL 在当前 workspace 中保存为 TODO 工程副本，包含添加时的名称、路径和来源候选 ID。创建后的 TODO 分支 SHALL 默认收起，且创建操作 SHALL 不改变当前 TODO、当前项目、当前 TODO 项目或当前终端上下文。
 
 #### Scenario: User creates a todo without a project
 
-- **WHEN** 用户在 TODO tab 中创建名称为 `修复登录问题`、描述为空、优先级为 `中` 且未选择工程的 TODO
+- **WHEN** 用户在 TODO 工作区中创建名称为 `修复登录问题`、描述为空、优先级为 `中` 且未选择工程的 TODO
 - **THEN** `未执行` 视图包含 `修复登录问题`
 - **AND** TODO `修复登录问题` 的状态为 `not-started`
 - **AND** 该 TODO 的优先级为 `中`
@@ -31,7 +30,7 @@ TBD - created by archiving change add-todo-centric-workspace. Update Purpose aft
 
 #### Scenario: User creates a todo with description and priority
 
-- **WHEN** 用户在 TODO tab 中创建名称为 `修复登录问题`、描述为 `登录后跳回首页`、优先级为 `高` 的 TODO
+- **WHEN** 用户在 TODO 工作区中创建名称为 `修复登录问题`、描述为 `登录后跳回首页`、优先级为 `高` 的 TODO
 - **THEN** `未执行` 视图包含 `修复登录问题`
 - **AND** 该 TODO 保存描述 `登录后跳回首页`
 - **AND** 该 TODO 的优先级为 `高`
@@ -39,15 +38,16 @@ TBD - created by archiving change add-todo-centric-workspace. Update Purpose aft
 
 #### Scenario: User creates a todo with optional projects
 
-- **WHEN** 项目库包含 `frontend-app` 和 `api-service`
+- **WHEN** 全局项目候选包含 `frontend-app` 和 `api-service`
 - **AND** 当前 TODO 项目上下文为 TODO `升级依赖` 下的 `docs-site`
 - **AND** 用户在创建 TODO 表单中输入名称 `修复登录问题`
 - **AND** 用户选择优先级 `高`
 - **AND** 用户选择工程 `frontend-app`
 - **AND** 用户选择工程 `api-service`
 - **THEN** `未执行` 视图包含 `修复登录问题`
-- **AND** TODO `修复登录问题` 下保存项目 `frontend-app`
-- **AND** TODO `修复登录问题` 下保存项目 `api-service`
+- **AND** TODO `修复登录问题` 下保存工程副本 `frontend-app`
+- **AND** TODO `修复登录问题` 下保存工程副本 `api-service`
+- **AND** 工程副本保存添加时的名称和路径
 - **AND** 当前 TODO 项目上下文仍为 TODO `升级依赖` 下的 `docs-site`
 - **AND** TODO `修复登录问题` 的分支默认收起
 
@@ -59,7 +59,7 @@ TBD - created by archiving change add-todo-centric-workspace. Update Purpose aft
 
 #### Scenario: Project selection can be searched while creating todo
 
-- **WHEN** 项目库包含 `frontend-app` 和 `api-service`
+- **WHEN** 全局项目候选包含 `frontend-app` 和 `api-service`
 - **AND** 用户打开创建 TODO 表单
 - **AND** 用户在工程筛选框输入 `front`
 - **THEN** 工程选择列表显示 `frontend-app`
@@ -76,9 +76,11 @@ TBD - created by archiving change add-todo-centric-workspace. Update Purpose aft
 - **AND** 创建 TODO 表单仍选中 `api-service`
 
 ### Requirement: Persist Todos
-系统 SHALL 在当前 workspace 数据目录中持久化 TODO、TODO 描述、TODO 优先级、TODO 工作流状态、TODO 与项目的关联、TODO 选中状态和已完成状态，并 SHALL 在该 workspace 重新打开后恢复。不同 workspace 的 TODO 数据 SHALL NOT 全局共享。旧数据中缺少优先级的 TODO SHALL 按 `中` 优先级处理。旧数据中状态为 `active` 的 TODO SHALL 按 `not-started` 处理。旧数据中状态为 `archived` 且归档原因为 `completed` 的 TODO SHALL 按 `completed` 处理。旧数据中状态为 `archived` 且归档原因为 `deleted` 的 TODO SHALL 不在 TODO 工作区列表中展示。
+
+系统 SHALL 在当前 workspace 数据目录中持久化 TODO、TODO 描述、TODO 优先级、TODO 工作流状态、TODO 工程副本、TODO 选中状态和已完成状态，并 SHALL 在该 workspace 重新打开后恢复。不同 workspace 的 TODO 数据 SHALL NOT 全局共享。TODO 工程副本 SHALL 保存添加时的项目名称、路径和来源候选 ID，且 SHALL NOT 依赖全局候选继续存在。旧数据中缺少优先级的 TODO SHALL 按 `中` 优先级处理。旧数据中状态为 `active` 的 TODO SHALL 按 `not-started` 处理。旧数据中状态为 `archived` 且归档原因为 `completed` 的 TODO SHALL 按 `completed` 处理。旧数据中状态为 `archived` 且归档原因为 `deleted` 的 TODO SHALL 不在 TODO 工作区列表中展示。
 
 #### Scenario: Todo workspace is restored after reopening workspace
+
 - **WHEN** 用户打开 workspace `/work/customer-a`
 - **AND** 用户创建 TODO `修复登录问题`
 - **AND** 用户填写描述 `登录后跳回首页`
@@ -90,27 +92,42 @@ TBD - created by archiving change add-todo-centric-workspace. Update Purpose aft
 - **AND** TODO `修复登录问题` 的描述仍为 `登录后跳回首页`
 - **AND** TODO `修复登录问题` 的优先级仍为 `高`
 - **AND** TODO `修复登录问题` 的状态仍为 `in-progress`
-- **AND** `frontend-app` 仍保存为该 TODO 下的关联项目
+- **AND** `frontend-app` 仍保存为该 TODO 下的工程副本
+- **AND** 该工程副本仍包含添加时保存的路径
 
 #### Scenario: Todo workspace is isolated by workspace
+
 - **WHEN** 用户打开 workspace `/work/customer-a`
 - **AND** 用户创建 TODO `修复登录问题`
 - **AND** 用户打开 workspace `/work/customer-b`
-- **THEN** TODO tab 不显示 `修复登录问题`
+- **THEN** TODO 工作区不显示 `修复登录问题`
+
+#### Scenario: Legacy todo project copies are populated
+
+- **WHEN** 当前 workspace 持久化数据中 TODO `修复登录问题` 包含旧 `todoProject` 引用 `project-a`
+- **AND** 旧项目库中 `project-a` 的名称为 `frontend-app`
+- **AND** 旧项目库中 `project-a` 的路径为 `/repo/frontend-app`
+- **AND** 用户打开该 workspace
+- **THEN** TODO `修复登录问题` 下的工程副本名称为 `frontend-app`
+- **AND** 该工程副本路径为 `/repo/frontend-app`
+- **AND** 该工程副本来源候选 ID 指向迁移后的全局候选或旧项目 ID
 
 #### Scenario: Legacy todo without priority uses medium
+
 - **WHEN** 当前 workspace 持久化数据中 TODO `修复登录问题` 不包含优先级字段
 - **AND** 用户打开该 workspace
-- **THEN** TODO tab 显示 `修复登录问题`
+- **THEN** TODO 工作区显示 `修复登录问题`
 - **AND** TODO `修复登录问题` 按 `中` 优先级展示
 
 #### Scenario: Legacy active todo becomes not-started
+
 - **WHEN** 当前 workspace 持久化数据中 TODO `修复登录问题` 的状态为 `active`
 - **AND** 用户打开该 workspace
 - **THEN** `未执行` 视图显示 `修复登录问题`
 - **AND** TODO `修复登录问题` 的状态按 `not-started` 处理
 
 #### Scenario: Legacy completed archived todo remains completed
+
 - **WHEN** 当前 workspace 持久化数据中 TODO `修复登录问题` 的状态为 `archived`
 - **AND** TODO `修复登录问题` 的归档原因为 `completed`
 - **AND** 用户打开该 workspace
@@ -118,64 +135,66 @@ TBD - created by archiving change add-todo-centric-workspace. Update Purpose aft
 - **AND** TODO `修复登录问题` 的状态按 `completed` 处理
 
 #### Scenario: Legacy deleted archived todo is hidden
+
 - **WHEN** 当前 workspace 持久化数据中 TODO `废弃任务` 的状态为 `archived`
 - **AND** TODO `废弃任务` 的归档原因为 `deleted`
 - **AND** 用户打开该 workspace
-- **THEN** TODO tab 不在 `未执行` 视图显示 `废弃任务`
-- **AND** TODO tab 不在 `执行中` 视图显示 `废弃任务`
-- **AND** TODO tab 不在 `已完成` 视图显示 `废弃任务`
+- **THEN** TODO 工作区不在 `未执行` 视图显示 `废弃任务`
+- **AND** TODO 工作区不在 `执行中` 视图显示 `废弃任务`
+- **AND** TODO 工作区不在 `已完成` 视图显示 `废弃任务`
 
 ### Requirement: Associate Projects With Todo
 
-系统 SHALL 允许用户从项目库中通过可搜索多选控件选择一个或多个项目关联到 TODO，并 SHALL 允许用户从 TODO 中移除已关联项目。同一个项目 SHALL 可关联到多个不同 TODO。项目选择 SHALL 支持按项目名称和路径筛选，且 SHALL 不要求用户手动输入完整项目名称。移除 TODO 下的工程关联 SHALL 只影响当前 TODO 下的该工程关联。
+系统 SHALL 允许用户从全局项目候选中通过可搜索多选控件选择一个或多个项目关联到 TODO。关联时系统 SHALL 在当前 workspace 中创建 TODO 工程副本，并 SHALL 保存添加时的项目名称、路径和来源候选 ID。系统 SHALL 允许用户从 TODO 中移除已关联工程副本。同一路径 SHALL 可关联到多个不同 TODO。项目选择 SHALL 支持按项目名称和路径筛选，且 SHALL 不要求用户手动输入完整项目名称。移除 TODO 下的工程关联 SHALL 只影响当前 TODO 下的该工程副本。
 
 #### Scenario: User associates projects with a todo
 
-- **WHEN** 项目库包含 `frontend-app` 和 `api-service`
+- **WHEN** 全局项目候选包含 `frontend-app` 和 `api-service`
 - **AND** 用户为 TODO `修复登录问题` 选择这两个项目
-- **THEN** TODO `修复登录问题` 下显示项目 `frontend-app`
-- **AND** TODO `修复登录问题` 下显示项目 `api-service`
+- **THEN** TODO `修复登录问题` 下显示工程副本 `frontend-app`
+- **AND** TODO `修复登录问题` 下显示工程副本 `api-service`
+- **AND** 两个工程副本均保存添加时的路径
 
 #### Scenario: Same project is associated with multiple todos
 
-- **WHEN** 项目库包含 `frontend-app`
+- **WHEN** 全局项目候选包含 `frontend-app`
 - **AND** 用户将 `frontend-app` 关联到 TODO `修复登录问题`
 - **AND** 用户将 `frontend-app` 关联到 TODO `升级依赖`
 - **THEN** `frontend-app` 同时显示在两个 TODO 下
-- **AND** 两个 TODO 下的 `frontend-app` 关联互不替代
+- **AND** 两个 TODO 下的 `frontend-app` 工程副本互不替代
 
 #### Scenario: Duplicate association is ignored
 
-- **WHEN** TODO `修复登录问题` 已关联项目 `frontend-app`
-- **AND** 用户再次将 `frontend-app` 关联到该 TODO
-- **THEN** TODO `修复登录问题` 下只显示一个 `frontend-app` 关联
+- **WHEN** TODO `修复登录问题` 已关联路径为 `/repo/frontend-app` 的工程副本
+- **AND** 用户再次将路径为 `/repo/frontend-app` 的全局候选关联到该 TODO
+- **THEN** TODO `修复登录问题` 下只显示一个路径为 `/repo/frontend-app` 的工程副本
 
 #### Scenario: User filters projects while associating a todo
 
-- **WHEN** 项目库包含名称为 `frontend-app` 的项目
-- **AND** 项目库包含路径为 `/work/api-service` 的项目
+- **WHEN** 全局项目候选包含名称为 `frontend-app` 的项目
+- **AND** 全局项目候选包含路径为 `/work/api-service` 的项目
 - **AND** 用户为 TODO `修复登录问题` 打开添加工程控件
 - **AND** 用户在工程筛选框输入 `api`
-- **THEN** 工程选择列表显示 `/work/api-service` 对应项目
+- **THEN** 工程选择列表显示 `/work/api-service` 对应候选项目
 - **AND** 工程选择列表不显示 `frontend-app`
 
 #### Scenario: User associates multiple filtered projects with a todo
 
-- **WHEN** 项目库包含 `frontend-app`、`api-service` 和 `docs-site`
+- **WHEN** 全局项目候选包含 `frontend-app`、`api-service` 和 `docs-site`
 - **AND** 用户为 TODO `修复登录问题` 打开添加工程控件
 - **AND** 用户选择 `frontend-app`
 - **AND** 用户选择 `api-service`
 - **AND** 用户确认添加
-- **THEN** TODO `修复登录问题` 下显示项目 `frontend-app`
-- **AND** TODO `修复登录问题` 下显示项目 `api-service`
+- **THEN** TODO `修复登录问题` 下显示工程副本 `frontend-app`
+- **AND** TODO `修复登录问题` 下显示工程副本 `api-service`
 - **AND** TODO `修复登录问题` 下不新增 `docs-site`
 
 #### Scenario: Already linked project is excluded from selectable projects
 
-- **WHEN** TODO `修复登录问题` 已关联项目 `frontend-app`
-- **AND** 项目库还包含 `api-service`
+- **WHEN** TODO `修复登录问题` 已关联路径为 `/repo/frontend-app` 的工程副本
+- **AND** 全局项目候选还包含路径为 `/repo/api-service` 的 `api-service`
 - **AND** 用户为 TODO `修复登录问题` 打开添加工程控件
-- **THEN** 工程选择列表不显示 `frontend-app`
+- **THEN** 工程选择列表不显示路径为 `/repo/frontend-app` 的候选项目
 - **AND** 工程选择列表显示 `api-service`
 
 #### Scenario: Selected projects can be removed while associating a todo
@@ -187,31 +206,31 @@ TBD - created by archiving change add-todo-centric-workspace. Update Purpose aft
 - **AND** 添加工程控件在筛选框上方以 tag 展示 `api-service`
 - **WHEN** 用户删除 `api-service` tag
 - **AND** 用户确认添加
-- **THEN** TODO `修复登录问题` 下显示项目 `frontend-app`
+- **THEN** TODO `修复登录问题` 下显示工程副本 `frontend-app`
 - **AND** TODO `修复登录问题` 下不新增 `api-service`
 
 #### Scenario: User removes project from todo list with popover confirmation
 
-- **WHEN** TODO `修复登录问题` 下显示工程 `frontend-app`
+- **WHEN** TODO `修复登录问题` 下显示工程副本 `frontend-app`
 - **AND** 用户点击 `frontend-app` 工程行上的删除按钮
 - **THEN** 系统在删除按钮旁显示删除确认气泡
 - **WHEN** 用户在确认气泡中确认删除
-- **THEN** TODO `修复登录问题` 下不再显示工程 `frontend-app`
+- **THEN** TODO `修复登录问题` 下不再显示工程副本 `frontend-app`
 
 #### Scenario: User cancels project removal popover
 
-- **WHEN** TODO `修复登录问题` 下显示工程 `frontend-app`
+- **WHEN** TODO `修复登录问题` 下显示工程副本 `frontend-app`
 - **AND** 用户点击 `frontend-app` 工程行上的删除按钮
 - **AND** 系统显示删除确认气泡
 - **WHEN** 用户取消删除
-- **THEN** TODO `修复登录问题` 下仍显示工程 `frontend-app`
+- **THEN** TODO `修复登录问题` 下仍显示工程副本 `frontend-app`
 
 #### Scenario: Removing project from one todo preserves other todos
 
-- **WHEN** 工程 `frontend-app` 同时关联到 TODO `修复登录问题` 和 TODO `升级依赖`
-- **AND** 用户从 TODO `修复登录问题` 下移除工程 `frontend-app`
-- **THEN** TODO `修复登录问题` 下不再显示工程 `frontend-app`
-- **AND** TODO `升级依赖` 下仍显示工程 `frontend-app`
+- **WHEN** 工程路径 `/repo/frontend-app` 同时关联到 TODO `修复登录问题` 和 TODO `升级依赖`
+- **AND** 用户从 TODO `修复登录问题` 下移除工程副本 `frontend-app`
+- **THEN** TODO `修复登录问题` 下不再显示工程副本 `frontend-app`
+- **AND** TODO `升级依赖` 下仍显示工程副本 `frontend-app`
 
 ### Requirement: Display Todo Project Terminal Tree
 
@@ -234,7 +253,7 @@ TBD - created by archiving change add-todo-centric-workspace. Update Purpose aft
 
 ### Requirement: Collapse Todo Branches
 
-系统 SHALL 允许用户独立展开和收起 `未执行` 与 `执行中` 视图中的 TODO 分支。收起 TODO SHALL 隐藏其项目和终端子项，但 SHALL 保留 TODO 行可见。若收起的 TODO 下存在终端，TODO 行 SHALL 反映被隐藏子终端的聚合活动状态；聚合优先级 SHALL 为 `needs-input` 高于 `busy` 高于 `idle`。折叠 TODO 的非空聚合活动状态 SHALL 使用覆盖 TODO item 整行的呼吸式状态反馈表达，并 SHALL 区分 `busy` 与 `needs-input`。折叠 TODO 行 MUST NOT 复用终端行的转圈或警告活动图标来表达聚合状态。
+系统 SHALL 允许用户独立展开和收起 `未执行` 与 `执行中` 视图中的 TODO 分支。收起 TODO SHALL 隐藏其项目和终端子项，但 SHALL 保留 TODO 行可见。若收起的 TODO 下存在终端，TODO 行 SHALL 反映被隐藏子终端的聚合活动状态；聚合优先级 SHALL 为 `needs-input` 高于 `needs-ack` 高于 `busy` 高于 `idle`。折叠 TODO 的非空聚合活动状态 SHALL 使用覆盖 TODO item 整行的呼吸式状态反馈表达，并 SHALL 区分 `busy`、`needs-ack` 与 `needs-input`。折叠 TODO 行 MUST NOT 复用终端行的转圈或警告活动图标来表达聚合状态。
 
 #### Scenario: User collapses a todo
 
@@ -250,6 +269,14 @@ TBD - created by archiving change add-todo-centric-workspace. Update Purpose aft
 - **THEN** TODO `修复登录问题` 行使用整行呼吸式状态反馈显示运行中的聚合活动状态
 - **AND** TODO `修复登录问题` 行不显示终端行的转圈活动图标
 
+#### Scenario: Collapsed todo shows hidden terminal confirmation as urgent row breathing
+
+- **WHEN** TODO `修复登录问题` 下存在确认状态为 `needs-ack` 的终端
+- **AND** TODO `修复登录问题` 已收起
+- **THEN** TODO `修复登录问题` 行使用整行急促呼吸式状态反馈显示待确认聚合活动状态
+- **AND** 待确认的整行状态反馈与运行中的整行状态反馈可区分
+- **AND** TODO `修复登录问题` 行不显示终端行的三角感叹号图标
+
 #### Scenario: Collapsed todo shows hidden terminal needing input as row breathing
 
 - **WHEN** TODO `修复登录问题` 下存在活动状态为 `needs-input` 的终端
@@ -258,12 +285,21 @@ TBD - created by archiving change add-todo-centric-workspace. Update Purpose aft
 - **AND** 等待输入的整行状态反馈与运行中的整行状态反馈可区分
 - **AND** TODO `修复登录问题` 行不显示终端行的警告活动图标
 
-#### Scenario: Collapsed todo prioritizes needs input over busy
+#### Scenario: Collapsed todo prioritizes needs input over confirmation and busy
 
 - **WHEN** TODO `修复登录问题` 下存在活动状态为 `busy` 的终端
+- **AND** TODO `修复登录问题` 下存在确认状态为 `needs-ack` 的终端
 - **AND** TODO `修复登录问题` 下还存在活动状态为 `needs-input` 的终端
 - **AND** TODO `修复登录问题` 已收起
 - **THEN** TODO `修复登录问题` 行显示等待输入的整行呼吸式状态反馈
+- **AND** TODO `修复登录问题` 行不以待确认或运行中状态作为最高优先级提示
+
+#### Scenario: Collapsed todo prioritizes confirmation over busy
+
+- **WHEN** TODO `修复登录问题` 下存在活动状态为 `busy` 的终端
+- **AND** TODO `修复登录问题` 下还存在确认状态为 `needs-ack` 的终端
+- **AND** TODO `修复登录问题` 已收起
+- **THEN** TODO `修复登录问题` 行显示待确认的整行急促呼吸式状态反馈
 - **AND** TODO `修复登录问题` 行不以运行中状态作为最高优先级提示
 
 #### Scenario: Expanded todo relies on terminal rows for activity state
@@ -273,10 +309,18 @@ TBD - created by archiving change add-todo-centric-workspace. Update Purpose aft
 - **THEN** 该终端行显示运行中的活动提示
 - **AND** TODO `修复登录问题` 行不重复显示收起态聚合活动提示
 
+#### Scenario: Expanded todo shows confirmation on terminal row
+
+- **WHEN** TODO `修复登录问题` 下存在确认状态为 `needs-ack` 的终端
+- **AND** TODO `修复登录问题` 已展开
+- **THEN** 该终端行显示三角感叹号确认态提示
+- **AND** TODO `修复登录问题` 行不重复显示收起态聚合活动提示
+
 #### Scenario: Collapsed todo without active hidden terminal has no breathing feedback
 
 - **WHEN** TODO `修复登录问题` 已收起
 - **AND** TODO `修复登录问题` 下不存在活动状态为 `busy` 或 `needs-input` 的终端
+- **AND** TODO `修复登录问题` 下不存在确认状态为 `needs-ack` 的终端
 - **THEN** TODO `修复登录问题` 行不显示整行呼吸式状态反馈
 - **AND** TODO `修复登录问题` 行不显示终端活动图标
 
@@ -288,22 +332,31 @@ TBD - created by archiving change add-todo-centric-workspace. Update Purpose aft
 
 ### Requirement: Select Todo Project Context
 
-系统 SHALL 允许用户选择 TODO 下的项目作为当前工作上下文。选择 TODO 项目上下文 SHALL 更新当前 TODO、当前项目和当前 TODO 项目关联，但 SHALL 只使用该 TODO 项目下的终端集合。
+系统 SHALL 允许用户选择 TODO 下的工程副本作为当前工作上下文。选择 TODO 工程上下文 SHALL 更新当前 TODO、当前项目路径和当前 TODO 工程关联，但 SHALL 只使用该 TODO 工程副本下的终端集合。选择 TODO 工程 SHALL 使用工程副本保存的名称、路径和可用性，不要求来源全局候选仍然存在。
 
 #### Scenario: User selects a project under a todo
 
-- **WHEN** 用户在 TODO `修复登录问题` 下选择项目 `frontend-app`
+- **WHEN** 用户在 TODO `修复登录问题` 下选择工程副本 `frontend-app`
 - **THEN** 当前 TODO 为 `修复登录问题`
-- **AND** 当前项目为 `frontend-app`
-- **AND** 终端区域只关联该 TODO 项目上下文中的终端
+- **AND** 当前项目路径为该工程副本保存的路径
+- **AND** 终端区域只关联该 TODO 工程上下文中的终端
 
 #### Scenario: Same project selected under different todos
 
-- **WHEN** 项目 `frontend-app` 同时关联到 TODO `修复登录问题` 和 TODO `升级依赖`
+- **WHEN** 项目路径 `/repo/frontend-app` 同时关联到 TODO `修复登录问题` 和 TODO `升级依赖`
 - **AND** 用户选择 TODO `修复登录问题` 下的 `frontend-app`
 - **THEN** 终端区域显示 `修复登录问题` 下 `frontend-app` 的终端集合
 - **WHEN** 用户选择 TODO `升级依赖` 下的 `frontend-app`
 - **THEN** 终端区域显示 `升级依赖` 下 `frontend-app` 的终端集合
+
+#### Scenario: Todo project remains selectable after global candidate is cleared
+
+- **WHEN** TODO `修复登录问题` 下存在工程副本 `frontend-app`
+- **AND** 用户清空全局项目候选库
+- **AND** 用户选择 TODO `修复登录问题` 下的 `frontend-app`
+- **THEN** 当前 TODO 为 `修复登录问题`
+- **AND** 当前项目路径为该工程副本保存的路径
+- **AND** 系统不因为来源候选缺失而报错
 
 ### Requirement: Show Todo Project Terminal Launch Menu
 
@@ -486,13 +539,13 @@ TBD - created by archiving change add-todo-centric-workspace. Update Purpose aft
 
 ### Requirement: Preserve Archived Project Snapshots
 
-系统 SHALL 在 TODO 归档时保存关联项目的名称、路径和项目 ID 快照。后续项目库变化 SHALL 不改变已归档 TODO 的项目快照。
+系统 SHALL 在 TODO 归档时保存关联工程副本的名称、路径和来源项目 ID 快照。后续全局项目候选变化 SHALL 不改变已归档 TODO 的项目快照。
 
 #### Scenario: Archived todo keeps project snapshot after project deletion
 
-- **WHEN** TODO `修复登录问题` 关联项目 `frontend-app`
+- **WHEN** TODO `修复登录问题` 关联工程副本 `frontend-app`
 - **AND** 用户完成该 TODO
-- **AND** 用户随后从项目库删除 `frontend-app`
+- **AND** 用户随后从全局候选库删除 `frontend-app`
 - **THEN** 归档视图中 TODO `修复登录问题` 仍显示 `frontend-app` 的归档名称和路径
 
 ### Requirement: Display Todo Priority Visuals
@@ -1029,4 +1082,56 @@ TBD - created by archiving change add-todo-centric-workspace. Update Purpose aft
 - **AND** TODO `修复登录问题` 的状态为 `in-progress`
 - **THEN** 系统拒绝批量删除请求
 - **AND** TODO `修复登录问题` 仍显示在 `执行中` 视图
+
+### Requirement: Persist Todo Project UI State
+
+系统 SHALL 以 TODO 工程为单位持久化 TODO 工作区 UI 状态。TODO 工程 UI 状态 SHALL 包含上次选择的 TODO 视图标签和左侧 TODO 栏宽度。TODO 视图标签 SHALL 支持 `not-started`、`in-progress` 和 `completed`，分别对应 `未执行`、`执行中` 和 `已完成`。TODO 工程 UI 状态 SHALL 按当前 workspace 隔离，并 SHALL 在应用重启、前端重新加载或重新打开 workspace 后恢复。
+
+#### Scenario: Todo project UI state is restored after reopening workspace
+- **WHEN** 用户打开 workspace `/work/customer-a`
+- **AND** 当前 TODO 工程为 TODO `修复登录问题` 下的工程 `frontend-app`
+- **AND** 用户选择 `已完成` 视图
+- **AND** 用户将左侧 TODO 栏宽度调整为 `360`
+- **AND** 用户关闭并重新打开 workspace `/work/customer-a`
+- **THEN** 当前 TODO 工程仍为 TODO `修复登录问题` 下的工程 `frontend-app`
+- **AND** TODO 工作区显示 `已完成` 视图
+- **AND** 左侧 TODO 栏宽度恢复为 `360`
+
+#### Scenario: Todo project UI state is isolated by todo project
+- **WHEN** 用户打开 workspace `/work/customer-a`
+- **AND** TODO 工程 `frontend-app` 的 TODO 视图标签已保存为 `completed`
+- **AND** TODO 工程 `frontend-app` 的左侧 TODO 栏宽度已保存为 `360`
+- **AND** TODO 工程 `api-service` 的 TODO 视图标签已保存为 `in-progress`
+- **AND** TODO 工程 `api-service` 的左侧 TODO 栏宽度已保存为 `420`
+- **WHEN** 用户选择 TODO 工程 `frontend-app`
+- **THEN** TODO 工作区显示 `已完成` 视图
+- **AND** 左侧 TODO 栏宽度为 `360`
+- **WHEN** 用户选择 TODO 工程 `api-service`
+- **THEN** TODO 工作区显示 `执行中` 视图
+- **AND** 左侧 TODO 栏宽度为 `420`
+
+#### Scenario: Todo project without UI state uses defaults
+- **WHEN** 用户打开 workspace `/work/customer-a`
+- **AND** 当前 TODO 工程没有已保存的 UI 状态
+- **THEN** TODO 工作区显示 `未执行` 视图
+- **AND** 左侧 TODO 栏宽度使用系统默认值
+
+#### Scenario: Todo view selection is saved for active todo project
+- **WHEN** 当前 TODO 工程为 TODO `修复登录问题` 下的工程 `frontend-app`
+- **AND** 用户点击 `执行中` 视图标签
+- **THEN** 系统将该 TODO 工程的 TODO 视图标签保存为 `in-progress`
+- **AND** 用户重新选择该 TODO 工程时恢复 `执行中` 视图
+
+#### Scenario: Sidebar width is saved after divider drag ends
+- **WHEN** 当前 TODO 工程为 TODO `修复登录问题` 下的工程 `frontend-app`
+- **AND** 用户拖动分割线将左侧 TODO 栏宽度调整为 `380`
+- **AND** 用户结束拖动
+- **THEN** 系统将该 TODO 工程的左侧 TODO 栏宽度保存为 `380`
+- **AND** 用户重新选择该 TODO 工程时恢复左侧 TODO 栏宽度 `380`
+
+#### Scenario: Removing todo project removes its UI state
+- **WHEN** TODO `修复登录问题` 下的工程 `frontend-app` 已保存 TODO 工程 UI 状态
+- **AND** 用户从 TODO `修复登录问题` 移除工程 `frontend-app`
+- **THEN** 系统删除该 TODO 工程的 UI 状态
+- **AND** 其他 TODO 工程的 UI 状态保持不变
 
