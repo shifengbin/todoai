@@ -132,6 +132,22 @@ describe('ProjectSidebar', () => {
     expect(wrapper.find('[data-testid="completed-todos"]').text()).not.toContain('已删除任务')
   })
 
+  it('uses the controlled TODO view prop and emits changes', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        todoView: 'completed'
+      }
+    })
+
+    expect(wrapper.find('[data-testid="todo-view-completed"]').classes()).toContain('active')
+    expect(completedTodoTitles(wrapper)).toEqual(['已完成任务'])
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+
+    expect(wrapper.emitted('update:todo-view')[0]).toEqual(['in-progress'])
+    expect(wrapper.emitted('todo-view-change')[0]).toEqual(['in-progress'])
+  })
+
   it('emits manual TODO status changes from TODO rows', async () => {
     const wrapper = mountSidebar({
       props: {

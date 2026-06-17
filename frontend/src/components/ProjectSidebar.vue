@@ -64,6 +64,10 @@ const props = defineProps({
   hasWorkspace: {
     type: Boolean,
     default: true
+  },
+  todoView: {
+    type: String,
+    default: ''
   }
 })
 
@@ -86,10 +90,12 @@ const emit = defineEmits([
   'create-terminal',
   'select-terminal',
   'delete-terminal',
-  'todo-expanded'
+  'todo-expanded',
+  'update:todo-view',
+  'todo-view-change'
 ])
 
-const todoView = ref('not-started')
+const internalTodoView = ref('not-started')
 const activeTodoSortMode = ref('priority')
 const collapsedTodoIds = ref(new Set())
 const knownTodoIds = ref(new Set(props.todos.map((todo) => todo.id)))
@@ -125,6 +131,8 @@ const terminalLaunchOptions = computed(() => [
   { name: 'Terminal', command: '' },
   ...props.launchProfiles.filter((profile) => profile?.enabled !== false)
 ])
+
+const todoView = computed(() => normalizedTodoView(props.todoView || internalTodoView.value))
 
 const todoPriorityOrder = {
   high: 0,
@@ -459,8 +467,19 @@ function confirmTodoAction(todoId, action) {
 
 function changeTodoStatus(todoId, status) {
   hideTodoDescriptionTooltip()
-  todoView.value = status
+  setTodoView(status)
   emit('change-todo-status', todoId, status)
+}
+
+function setTodoView(view) {
+  const nextView = normalizedTodoView(view)
+  internalTodoView.value = nextView
+  emit('update:todo-view', nextView)
+  emit('todo-view-change', nextView)
+}
+
+function normalizedTodoView(view) {
+  return ['not-started', 'in-progress', 'completed'].includes(view) ? view : 'not-started'
 }
 
 function openProjectDeletePopover(projectId) {
@@ -1011,7 +1030,7 @@ watch(
           class="todo-view-tab"
           :class="{ active: todoView === 'not-started' }"
           data-testid="todo-view-not-started"
-          @click="todoView = 'not-started'"
+          @click="setTodoView('not-started')"
         >
           未执行
         </button>
@@ -1020,7 +1039,7 @@ watch(
           class="todo-view-tab"
           :class="{ active: todoView === 'in-progress' }"
           data-testid="todo-view-in-progress"
-          @click="todoView = 'in-progress'"
+          @click="setTodoView('in-progress')"
         >
           执行中
         </button>
@@ -1029,7 +1048,7 @@ watch(
           class="todo-view-tab"
           :class="{ active: todoView === 'completed' }"
           data-testid="todo-view-completed"
-          @click="todoView = 'completed'"
+          @click="setTodoView('completed')"
         >
           已完成
         </button>

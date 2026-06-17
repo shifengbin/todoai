@@ -32,6 +32,7 @@ type App struct {
 	shells                        *ShellSessionManager
 	settings                      *SettingsManager
 	history                       *TerminalHistoryStore
+	todoProjectUIState            *TodoProjectUIStateStore
 	starter                       ShellStarter
 	shellOpts                     []ShellSessionManagerOption
 	gitStatus                     func(path string) (GitStatus, error)
@@ -71,12 +72,13 @@ func NewAppWithConfigAndShellStarter(configPath string, starter ShellStarter, op
 			configPath,
 			WithGlobalProjectCandidatesPath(defaultGlobalProjectCandidatesPath(configPath)),
 		),
-		settings:        NewSettingsManager(defaultSettingsConfigPath(configPath)),
-		history:         historyStore,
-		starter:         starter,
-		gitStatus:       queryGitStatus,
-		gitInit:         initializeGitRepository,
-		claudeStatusDir: defaultClaudeStatusDir,
+		settings:           NewSettingsManager(defaultSettingsConfigPath(configPath)),
+		history:            historyStore,
+		todoProjectUIState: NewTodoProjectUIStateStore(configDir),
+		starter:            starter,
+		gitStatus:          queryGitStatus,
+		gitInit:            initializeGitRepository,
+		claudeStatusDir:    defaultClaudeStatusDir,
 	}
 	var shellOpts []ShellSessionManagerOption
 	for _, opt := range opts {
@@ -426,6 +428,9 @@ func (a *App) RemoveTodoProject(todoProjectID string) (ProjectState, error) {
 	for _, removedTodoProjectID := range removedTodoProjectIDs {
 		a.shells.DeleteTodoProjectTerminals(removedTodoProjectID)
 	}
+	if len(removedTodoProjectIDs) > 0 {
+		_ = a.deleteTodoProjectUIState(removedTodoProjectIDs)
+	}
 	return a.withShellState(state), nil
 }
 
@@ -562,11 +567,17 @@ func (a *App) DeleteTodo(todoID string) (ProjectState, error) {
 	if !a.hasWorkspace() {
 		return a.currentProjectStateWithError(ErrWorkspaceRequired)
 	}
+	previous, err := a.projects.Load()
+	if err != nil {
+		return ProjectState{}, err
+	}
+	removedTodoProjectIDs := todoProjectIDsForTodo(previous.TodoProjects, todoID)
 	state, err := a.projects.DeleteTodo(todoID)
 	if err != nil {
 		return ProjectState{}, err
 	}
 	a.shells.DeleteTodoTerminals(todoID)
+	_ = a.deleteTodoProjectUIState(removedTodoProjectIDs)
 	return a.withShellState(state), nil
 }
 
@@ -574,11 +585,43 @@ func (a *App) DeleteCompletedTodos(todoIDs []string) (ProjectState, error) {
 	if !a.hasWorkspace() {
 		return a.currentProjectStateWithError(ErrWorkspaceRequired)
 	}
+	previous, err := a.projects.Load()
+	if err != nil {
+		return ProjectState{}, err
+	}
+	removedTodoProjectIDs := todoProjectIDsForTodos(previous.TodoProjects, todoIDs)
 	state, err := a.projects.DeleteCompletedTodos(todoIDs)
 	if err != nil {
 		return ProjectState{}, err
 	}
+	_ = a.deleteTodoProjectUIState(removedTodoProjectIDs)
 	return a.withShellState(state), nil
+}
+
+func (a *App) LoadTodoProjectUIState() (TodoProjectUIStateFile, error) {
+	if !a.hasWorkspace() {
+		return TodoProjectUIStateFile{}, ErrWorkspaceRequired
+	}
+	return a.todoProjectUIState.Load()
+}
+
+func (a *App) SaveTodoProjectUIState(todoProjectID string, state TodoProjectUIState) error {
+	if !a.hasWorkspace() {
+		return ErrWorkspaceRequired
+	}
+	current, err := a.todoProjectUIState.Load()
+	if err != nil {
+		return err
+	}
+	_, err = a.todoProjectUIState.UpsertTodoProject(current, todoProjectID, state)
+	return err
+}
+
+func (a *App) DeleteTodoProjectUIState(todoProjectIDs []string) error {
+	if !a.hasWorkspace() {
+		return ErrWorkspaceRequired
+	}
+	return a.deleteTodoProjectUIState(todoProjectIDs)
 }
 
 func (a *App) ChangeTodoStatus(todoID string, status string) (ProjectState, error) {
@@ -834,6 +877,7 @@ func (a *App) bindWorkspace(workspace Workspace) {
 		WithGlobalProjectCandidatesPath(a.globalProjectCandidatesPath),
 	)
 	a.history = NewTerminalHistoryStore(workspace.DataPath)
+	a.todoProjectUIState = NewTodoProjectUIStateStore(workspace.DataPath)
 	a.rebuildShellSessionManager()
 }
 
@@ -842,8 +886,46 @@ func (a *App) bindNoWorkspace() {
 		filepath.Join(os.TempDir(), applicationID, "closed-workspace", "projects.json"),
 		WithGlobalProjectCandidatesPath(a.globalProjectCandidatesPath),
 	)
-	a.history = NewTerminalHistoryStore(filepath.Join(os.TempDir(), applicationID, "closed-workspace"))
+	closedWorkspaceDir := filepath.Join(os.TempDir(), applicationID, "closed-workspace")
+	a.history = NewTerminalHistoryStore(closedWorkspaceDir)
+	a.todoProjectUIState = NewTodoProjectUIStateStore(closedWorkspaceDir)
 	a.rebuildShellSessionManager()
+}
+
+func (a *App) deleteTodoProjectUIState(todoProjectIDs []string) error {
+	if len(todoProjectIDs) == 0 {
+		return nil
+	}
+	current, err := a.todoProjectUIState.Load()
+	if err != nil {
+		return err
+	}
+	_, err = a.todoProjectUIState.DeleteTodoProjects(current, todoProjectIDs)
+	return err
+}
+
+func todoProjectIDsForTodo(todoProjects []TodoProject, todoID string) []string {
+	ids := []string{}
+	for _, todoProject := range todoProjects {
+		if todoProject.TodoID == todoID {
+			ids = append(ids, todoProject.ID)
+		}
+	}
+	return ids
+}
+
+func todoProjectIDsForTodos(todoProjects []TodoProject, todoIDs []string) []string {
+	todoIDSet := map[string]bool{}
+	for _, todoID := range todoIDs {
+		todoIDSet[todoID] = true
+	}
+	ids := []string{}
+	for _, todoProject := range todoProjects {
+		if todoIDSet[todoProject.TodoID] {
+			ids = append(ids, todoProject.ID)
+		}
+	}
+	return ids
 }
 
 func (a *App) resetRuntimeForWorkspaceChange() {
