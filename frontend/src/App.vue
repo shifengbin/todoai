@@ -61,6 +61,7 @@ const shellStatuses = reactive({})
 const terminalContainers = new Map()
 const titleActivityTimers = new Map()
 const autoRestartedTerminals = new Set()
+const terminalAckIds = reactive(new Set())
 const errorMessage = ref('')
 let gitStatusRequestId = 0
 let gitStatusInFlightProjectId = ''
@@ -361,6 +362,13 @@ const selectedProjectPickerProjects = computed(() => {
   return projects.value.filter((project) => selectedProjectIds.has(project.id))
 })
 
+const sidebarTerminals = computed(() =>
+  terminals.value.map((terminal) => ({
+    ...terminal,
+    attentionState: terminalAckIds.has(terminal.id) ? 'needs-ack' : ''
+  }))
+)
+
 onMounted(async () => {
   EventsOn('terminal-output', (event) => {
     terminalManager.write(event.terminalId, event.data)
@@ -436,6 +444,7 @@ function applyState(state, options = {}) {
       terminalContainers.delete(terminalId)
       clearTitleActivityTimer(terminalId)
       autoRestartedTerminals.delete(terminalId)
+      terminalAckIds.delete(terminalId)
       delete shellStatuses[terminalId]
     }
   }
@@ -762,6 +771,7 @@ async function removeTodoProject(todoProjectId) {
 
 async function selectTerminal(terminalId) {
   try {
+    terminalAckIds.delete(terminalId)
     applyState(await SelectTerminal(terminalId))
     await activateActiveTerminal()
     terminalManager.focus(terminalId)
@@ -1469,7 +1479,28 @@ function handleTerminalAgentStatus(event) {
 }
 
 function applyTerminalAgentEvent(terminal, event) {
+  const previousActivityState = visibleTerminalActivityState(terminal)
   Object.assign(terminal, applyAgentStatusEvent(terminal, event))
+  updateTerminalAckState(terminal, previousActivityState)
+}
+
+function visibleTerminalActivityState(terminal) {
+  const state = terminal?.activityState || terminal?.agentStatus?.phase || AGENT_PHASE.IDLE
+  return [AGENT_PHASE.BUSY, AGENT_PHASE.NEEDS_INPUT].includes(state) ? state : AGENT_PHASE.IDLE
+}
+
+function updateTerminalAckState(terminal, previousActivityState) {
+  const nextActivityState = visibleTerminalActivityState(terminal)
+  if (nextActivityState === AGENT_PHASE.BUSY) {
+    terminalAckIds.delete(terminal.id)
+    return
+  }
+  if (
+    previousActivityState === AGENT_PHASE.BUSY &&
+    terminal.id !== activeTerminalId.value
+  ) {
+    terminalAckIds.add(terminal.id)
+  }
 }
 
 function markTerminalTitleActivity(terminal, at = Date.now()) {
@@ -1547,7 +1578,7 @@ function showError(error) {
       :projects="projects"
       :todos="todos"
       :todo-projects="todoProjects"
-      :terminals="terminals"
+      :terminals="sidebarTerminals"
       :active-project-id="activeProjectId"
       :active-todo-id="activeTodoId"
       :active-todo-project-id="activeTodoProjectId"

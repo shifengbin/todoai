@@ -1627,6 +1627,154 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="terminal-terminal-a"]').attributes('data-activity-state')).toBe('busy')
   })
 
+  it.each([
+    ['idle', { phase: 'idle', source: 'codex-jsonl', reason: 'turn-idle' }],
+    ['done', { phase: 'done', source: 'codex-jsonl', reason: 'turn-completed' }],
+    ['failed', { phase: 'failed', source: 'codex-jsonl', reason: 'turn-failed' }],
+    ['exited', { phase: 'exited', source: 'shell', reason: 'shell-exited', shellState: 'exited' }]
+  ])('marks a background terminal needs-ack when busy becomes %s', async (_label, event) => {
+    const twoTerminalState = projectState({
+      terminals: [terminal({ id: 'terminal-a' }), terminal({ id: 'terminal-b', shellName: 'bash' })],
+      activeTerminalId: 'terminal-a'
+    })
+    appApiMock.ListProjects.mockResolvedValue(twoTerminalState)
+    const wrapper = await mountReadyApp()
+
+    runtimeMock.handlers['terminal-agent-status']({
+      projectId: 'project-a',
+      terminalId: 'terminal-b',
+      phase: 'busy',
+      source: 'codex-jsonl',
+      confidence: 'authoritative',
+      reason: 'turn-started',
+      updatedAt: 10
+    })
+    await nextTick()
+
+    if (event.shellState) {
+      runtimeMock.handlers['terminal-status']({
+        projectId: 'project-a',
+        terminalId: 'terminal-b',
+        state: event.shellState
+      })
+    } else {
+      runtimeMock.handlers['terminal-agent-status']({
+        projectId: 'project-a',
+        terminalId: 'terminal-b',
+        phase: event.phase,
+        source: event.source,
+        confidence: 'authoritative',
+        reason: event.reason,
+        updatedAt: 20
+      })
+    }
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="terminal-terminal-b"]').attributes('data-activity-state')).toBe('needs-ack')
+  })
+
+  it('does not mark the active terminal needs-ack when busy becomes idle', async () => {
+    const wrapper = await mountReadyApp()
+
+    runtimeMock.handlers['terminal-agent-status']({
+      projectId: 'project-a',
+      terminalId: 'terminal-a',
+      phase: 'busy',
+      source: 'codex-jsonl',
+      confidence: 'authoritative',
+      reason: 'turn-started',
+      updatedAt: 10
+    })
+    await nextTick()
+    runtimeMock.handlers['terminal-agent-status']({
+      projectId: 'project-a',
+      terminalId: 'terminal-a',
+      phase: 'idle',
+      source: 'codex-jsonl',
+      confidence: 'authoritative',
+      reason: 'turn-idle',
+      updatedAt: 20
+    })
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="terminal-terminal-a"]').attributes('data-activity-state')).toBe('idle')
+  })
+
+  it('clears needs-ack when selecting the corresponding terminal', async () => {
+    const twoTerminalState = projectState({
+      terminals: [terminal({ id: 'terminal-a' }), terminal({ id: 'terminal-b', shellName: 'bash' })],
+      activeTerminalId: 'terminal-a'
+    })
+    appApiMock.ListProjects.mockResolvedValue(twoTerminalState)
+    appApiMock.SelectTerminal.mockResolvedValue(
+      projectState({
+        terminals: [terminal({ id: 'terminal-a' }), terminal({ id: 'terminal-b', shellName: 'bash' })],
+        activeTerminalId: 'terminal-b'
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    runtimeMock.handlers['terminal-agent-status']({
+      projectId: 'project-a',
+      terminalId: 'terminal-b',
+      phase: 'busy',
+      source: 'codex-jsonl',
+      confidence: 'authoritative',
+      reason: 'turn-started',
+      updatedAt: 10
+    })
+    await nextTick()
+    runtimeMock.handlers['terminal-agent-status']({
+      projectId: 'project-a',
+      terminalId: 'terminal-b',
+      phase: 'done',
+      source: 'codex-jsonl',
+      confidence: 'authoritative',
+      reason: 'turn-completed',
+      updatedAt: 20
+    })
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="terminal-terminal-b"]').attributes('data-activity-state')).toBe('needs-ack')
+
+    await wrapper.find('[data-testid="terminal-terminal-b"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="terminal-terminal-b"]').attributes('data-activity-state')).toBe('idle')
+  })
+
+  it('does not mark a background terminal needs-ack when needs-input becomes idle', async () => {
+    const twoTerminalState = projectState({
+      terminals: [terminal({ id: 'terminal-a' }), terminal({ id: 'terminal-b', shellName: 'bash' })],
+      activeTerminalId: 'terminal-a'
+    })
+    appApiMock.ListProjects.mockResolvedValue(twoTerminalState)
+    const wrapper = await mountReadyApp()
+
+    runtimeMock.handlers['terminal-agent-status']({
+      projectId: 'project-a',
+      terminalId: 'terminal-b',
+      phase: 'needs-input',
+      source: 'claude-hook',
+      confidence: 'structured',
+      reason: 'permission-prompt',
+      updatedAt: 10
+    })
+    await nextTick()
+    runtimeMock.handlers['terminal-agent-status']({
+      projectId: 'project-a',
+      terminalId: 'terminal-b',
+      phase: 'idle',
+      source: 'claude-hook',
+      confidence: 'structured',
+      reason: 'stop',
+      updatedAt: 20
+    })
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="terminal-terminal-b"]').attributes('data-activity-state')).toBe('idle')
+  })
+
   it('clears previous interactive title activity when a new shell command starts', async () => {
     const wrapper = await mountReadyApp()
 
