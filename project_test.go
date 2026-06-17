@@ -928,7 +928,7 @@ func TestProjectManagerImportsProjectsFromParentDirectory(t *testing.T) {
 	}
 }
 
-func TestProjectManagerDeleteProjectRemovesActiveTodoAssociationsButPreservesArchivedSnapshots(t *testing.T) {
+func TestProjectManagerDeleteProjectPreservesActiveTodoCopiesAndArchivedSnapshots(t *testing.T) {
 	projectDir := t.TempDir()
 	configPath := filepath.Join(t.TempDir(), "projects.json")
 	manager := NewProjectManager(
@@ -963,8 +963,11 @@ func TestProjectManagerDeleteProjectRemovesActiveTodoAssociationsButPreservesArc
 		t.Fatalf("DeleteProject() error = %v", err)
 	}
 
-	if len(state.TodoProjects) != 0 {
-		t.Fatalf("TodoProjects = %#v, want active project associations removed", state.TodoProjects)
+	if len(state.TodoProjects) != 1 || state.TodoProjects[0].ID != "todo-project-active" {
+		t.Fatalf("TodoProjects = %#v, want active TODO project copy preserved", state.TodoProjects)
+	}
+	if state.TodoProjects[0].Path != projectDir {
+		t.Fatalf("TodoProject path = %q, want %q", state.TodoProjects[0].Path, projectDir)
 	}
 	archived := findTodo(state.Todos, "todo-archived")
 	if archived == nil || len(archived.ProjectSnapshots) != 1 || archived.ProjectSnapshots[0].Path != projectDir {
@@ -1121,6 +1124,117 @@ func TestProjectManagerDeleteProjectReturnsErrorWhenProjectIsMissing(t *testing.
 	}
 }
 
+func TestProjectManagerGlobalCandidateRemovalPreservesTodoProjectCopy(t *testing.T) {
+	projectDir := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "workspace", "projects.json")
+	globalPath := filepath.Join(t.TempDir(), "global-projects.json")
+	manager := NewProjectManager(
+		configPath,
+		WithGlobalProjectCandidatesPath(globalPath),
+		WithProjectIDGenerator(sequenceIDs("project-a", "todo-a", "todo-project-a")),
+	)
+	project, _, err := manager.AddProjectPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectPath() error = %v", err)
+	}
+	if _, err := manager.CreateTodo(CreateTodoRequest{Title: "修复登录问题", ProjectIDs: []string{project.ID}}); err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+
+	state, err := manager.DeleteProject(project.ID)
+	if err != nil {
+		t.Fatalf("DeleteProject() error = %v", err)
+	}
+
+	if len(state.Projects) != 0 {
+		t.Fatalf("global candidates after delete = %#v, want empty", state.Projects)
+	}
+	if len(state.TodoProjects) != 1 {
+		t.Fatalf("TodoProjects after deleting candidate = %#v, want preserved copy", state.TodoProjects)
+	}
+	todoProject := state.TodoProjects[0]
+	if todoProject.SourceProjectID != project.ID || todoProject.Name != filepath.Base(projectDir) || todoProject.Path != projectDir {
+		t.Fatalf("TodoProject copy = %#v, want source/name/path preserved", todoProject)
+	}
+	if _, _, projectCopy, err := manager.SelectTodoProject(todoProject.ID); err != nil {
+		t.Fatalf("SelectTodoProject() after candidate delete error = %v", err)
+	} else if projectCopy.Path != projectDir || projectCopy.Name != filepath.Base(projectDir) {
+		t.Fatalf("selected project copy = %#v, want todo project path %q", projectCopy, projectDir)
+	}
+}
+
+func TestProjectManagerMigratesLegacyWorkspaceProjectsToGlobalCandidatesAndTodoCopies(t *testing.T) {
+	projectDir := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "workspace", "projects.json")
+	globalPath := filepath.Join(t.TempDir(), "global-projects.json")
+	legacyJSON := `{
+  "version": 1,
+  "projects": [
+    {
+      "id": "project-a",
+      "name": "frontend-app",
+      "path": "` + filepath.ToSlash(projectDir) + `",
+      "available": true,
+      "createdAt": "2026-06-10T09:00:00Z",
+      "lastSelectedAt": "2026-06-10T09:00:00Z"
+    }
+  ],
+  "todos": [
+    {
+      "id": "todo-a",
+      "title": "修复登录问题",
+      "priority": "medium",
+      "status": "not-started",
+      "createdAt": "2026-06-10T09:00:00Z"
+    }
+  ],
+  "todoProjects": [
+    {
+      "id": "todo-project-a",
+      "todoId": "todo-a",
+      "projectId": "project-a",
+      "createdAt": "2026-06-10T09:00:00Z",
+      "lastSelectedAt": "2026-06-10T09:00:00Z"
+    }
+  ]
+}`
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte(legacyJSON), 0o600); err != nil {
+		t.Fatalf("write legacy config: %v", err)
+	}
+	manager := NewProjectManager(configPath, WithGlobalProjectCandidatesPath(globalPath))
+
+	state, err := manager.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if len(state.Projects) != 1 || state.Projects[0].Path != projectDir {
+		t.Fatalf("global candidates = %#v, want migrated project path %q", state.Projects, projectDir)
+	}
+	if len(state.TodoProjects) != 1 {
+		t.Fatalf("TodoProjects = %#v, want migrated copy", state.TodoProjects)
+	}
+	todoProject := state.TodoProjects[0]
+	if todoProject.SourceProjectID != "project-a" || todoProject.Name != "frontend-app" || todoProject.Path != projectDir {
+		t.Fatalf("migrated TodoProject = %#v, want source/name/path populated", todoProject)
+	}
+
+	reloaded := NewProjectManager(configPath, WithGlobalProjectCandidatesPath(globalPath))
+	persisted, err := reloaded.Load()
+	if err != nil {
+		t.Fatalf("reloaded Load() error = %v", err)
+	}
+	if len(persisted.Projects) != 1 || persisted.Projects[0].Path != projectDir {
+		t.Fatalf("persisted global candidates = %#v, want migrated project", persisted.Projects)
+	}
+	if len(persisted.TodoProjects) != 1 || persisted.TodoProjects[0].Path != projectDir {
+		t.Fatalf("persisted TodoProjects = %#v, want copied path", persisted.TodoProjects)
+	}
+}
+
 func TestProjectManagerDeleteProjectsRemovesProjectsAndAssociationsSelectsFallback(t *testing.T) {
 	dirA := t.TempDir()
 	dirB := t.TempDir()
@@ -1175,11 +1289,11 @@ func TestProjectManagerDeleteProjectsRemovesProjectsAndAssociationsSelectsFallba
 	if state.ActiveProjectID != "project-b" {
 		t.Fatalf("ActiveProjectID = %q, want project-b", state.ActiveProjectID)
 	}
-	if state.ActiveTodoID != "" || state.ActiveTodoProjectID != "" || state.ActiveTerminalID != "" {
-		t.Fatalf("active TODO/terminal context = %q/%q/%q, want empty", state.ActiveTodoID, state.ActiveTodoProjectID, state.ActiveTerminalID)
+	if state.ActiveTodoID != "todo-a" || state.ActiveTodoProjectID != "todo-project-a" || state.ActiveTerminalID != "" {
+		t.Fatalf("active TODO/terminal context = %q/%q/%q, want active todo project preserved", state.ActiveTodoID, state.ActiveTodoProjectID, state.ActiveTerminalID)
 	}
-	if countTodoProjectAssociations(state.TodoProjects, "project-a") != 0 || countTodoProjectAssociations(state.TodoProjects, "project-c") != 0 {
-		t.Fatalf("TodoProjects = %#v, want deleted project associations removed", state.TodoProjects)
+	if countTodoProjectAssociations(state.TodoProjects, "project-a") != 1 || countTodoProjectAssociations(state.TodoProjects, "project-c") != 0 {
+		t.Fatalf("TodoProjects = %#v, want project-a TODO copy preserved and no project-c copy", state.TodoProjects)
 	}
 	if countTodoProjectAssociations(state.TodoProjects, "project-b") != 1 {
 		t.Fatalf("TodoProjects = %#v, want project-b association preserved", state.TodoProjects)

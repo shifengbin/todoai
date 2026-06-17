@@ -596,15 +596,19 @@ func (manager *ShellSessionManager) RestoreTerminals(state ProjectState) []Termi
 		todoIDs[todo.ID] = true
 	}
 	todoProjectIDs := map[string]bool{}
+	todoProjectProjectIDs := map[string]string{}
+	todoProjectSourceProjectIDs := map[string]string{}
 	for _, todoProject := range state.TodoProjects {
 		todoProjectIDs[todoProject.ID] = true
+		todoProjectProjectIDs[todoProject.ID] = todoProject.ProjectID
+		todoProjectSourceProjectIDs[todoProject.ID] = todoProject.SourceProjectID
 	}
 
 	valid := make([]TerminalHistoryRecord, 0, len(history.Records))
 	orphaned := false
 
 	for _, record := range history.Records {
-		if !projectIDs[record.ProjectID] {
+		if !restorableTerminalProject(record, projectIDs, todoProjectProjectIDs, todoProjectSourceProjectIDs) {
 			orphaned = true
 			continue
 		}
@@ -648,6 +652,19 @@ func (manager *ShellSessionManager) RestoreTerminals(state ProjectState) []Termi
 	}
 
 	return valid
+}
+
+func restorableTerminalProject(record TerminalHistoryRecord, projectIDs map[string]bool, todoProjectProjectIDs map[string]string, todoProjectSourceProjectIDs map[string]string) bool {
+	if projectIDs[record.ProjectID] {
+		return true
+	}
+	if record.TodoProjectID == "" {
+		return false
+	}
+	if todoProjectProjectIDs[record.TodoProjectID] == record.ProjectID {
+		return true
+	}
+	return todoProjectSourceProjectIDs[record.TodoProjectID] == record.ProjectID
 }
 
 func (manager *ShellSessionManager) registerTerminalLocked(todoProject TodoProject, project Project) ProjectTerminal {
@@ -760,6 +777,23 @@ func (manager *ShellSessionManager) Shutdown() {
 	for _, session := range manager.sessions {
 		sessions = append(sessions, session)
 	}
+	manager.mu.Unlock()
+
+	for _, session := range sessions {
+		_ = session.process.Close()
+		session.cleanupSession()
+	}
+}
+
+func (manager *ShellSessionManager) Reset() {
+	manager.mu.Lock()
+	sessions := make([]*ShellSession, 0, len(manager.sessions))
+	for _, session := range manager.sessions {
+		sessions = append(sessions, session)
+	}
+	manager.sessions = map[string]*ShellSession{}
+	manager.terminals = map[string]*ProjectTerminal{}
+	manager.activeByContext = map[string]string{}
 	manager.mu.Unlock()
 
 	for _, session := range sessions {

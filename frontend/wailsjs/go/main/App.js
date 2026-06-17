@@ -18,6 +18,14 @@ export function ChangeTodoStatus(arg1, arg2) {
   return window['go']['main']['App']['ChangeTodoStatus'](arg1, arg2);
 }
 
+export function ClearRecentWorkspaces() {
+  return window['go']['main']['App']['ClearRecentWorkspaces']();
+}
+
+export function CloseWorkspace() {
+  return window['go']['main']['App']['CloseWorkspace']();
+}
+
 export function CompleteTodo(arg1) {
   return window['go']['main']['App']['CompleteTodo'](arg1);
 }
@@ -58,6 +66,10 @@ export function DeleteTodo(arg1) {
   return window['go']['main']['App']['DeleteTodo'](arg1);
 }
 
+export function DeleteTodoProjectUIState(arg1) {
+  return window['go']['main']['App']['DeleteTodoProjectUIState'](arg1);
+}
+
 export function DetectTerminalShell() {
   return window['go']['main']['App']['DetectTerminalShell']();
 }
@@ -90,6 +102,22 @@ export function LoadTerminalSettings() {
   return window['go']['main']['App']['LoadTerminalSettings']();
 }
 
+export function LoadTodoProjectUIState() {
+  return window['go']['main']['App']['LoadTodoProjectUIState']();
+}
+
+export function OpenRecentWorkspace(arg1) {
+  return window['go']['main']['App']['OpenRecentWorkspace'](arg1);
+}
+
+export function OpenWorkspaceFromDialog() {
+  return window['go']['main']['App']['OpenWorkspaceFromDialog']();
+}
+
+export function OpenWorkspaceFromPath(arg1) {
+  return window['go']['main']['App']['OpenWorkspaceFromPath'](arg1);
+}
+
 export function RemoveTodoProject(arg1) {
   return window['go']['main']['App']['RemoveTodoProject'](arg1);
 }
@@ -108,6 +136,10 @@ export function SaveTerminalShell(arg1, arg2) {
 
 export function SaveTerminalTheme(arg1) {
   return window['go']['main']['App']['SaveTerminalTheme'](arg1);
+}
+
+export function SaveTodoProjectUIState(arg1, arg2) {
+  return window['go']['main']['App']['SaveTodoProjectUIState'](arg1, arg2);
 }
 
 export function SelectProject(arg1) {
@@ -132,4 +164,8 @@ export function StartShell(arg1, arg2, arg3) {
 
 export function UpdateTodo(arg1) {
   return window['go']['main']['App']['UpdateTodo'](arg1);
+}
+
+export function WorkspaceState() {
+  return window['go']['main']['App']['WorkspaceState']();
 }

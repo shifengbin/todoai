@@ -8,7 +8,6 @@ import {
   CircleAlert,
   Copy,
   EllipsisVertical,
-  FolderInput,
   FolderPlus,
   Eye,
   ListChevronsDownUp,
@@ -18,6 +17,7 @@ import {
   Play,
   Plus,
   TerminalSquare,
+  TriangleAlert,
   Trash2
 } from '@lucide/vue'
 
@@ -61,6 +61,14 @@ const props = defineProps({
   importSummary: {
     type: Object,
     default: null
+  },
+  hasWorkspace: {
+    type: Boolean,
+    default: true
+  },
+  todoView: {
+    type: String,
+    default: ''
   }
 })
 
@@ -83,11 +91,12 @@ const emit = defineEmits([
   'create-terminal',
   'select-terminal',
   'delete-terminal',
-  'todo-expanded'
+  'todo-expanded',
+  'update:todo-view',
+  'todo-view-change'
 ])
 
-const activeTab = ref('todos')
-const todoView = ref('not-started')
+const internalTodoView = ref('not-started')
 const activeTodoSortMode = ref('priority')
 const collapsedTodoIds = ref(new Set())
 const knownTodoIds = ref(new Set(props.todos.map((todo) => todo.id)))
@@ -123,6 +132,8 @@ const terminalLaunchOptions = computed(() => [
   { name: 'Terminal', command: '' },
   ...props.launchProfiles.filter((profile) => profile?.enabled !== false)
 ])
+
+const todoView = computed(() => normalizedTodoView(props.todoView || internalTodoView.value))
 
 const todoPriorityOrder = {
   high: 0,
@@ -209,6 +220,17 @@ function todoProjectsForTodo(todoId) {
 }
 
 function projectForTodoProject(todoProject) {
+  if (!todoProject) {
+    return null
+  }
+  if (todoProject.name || todoProject.path) {
+    return {
+      id: todoProject.projectId,
+      name: todoProject.name || 'Missing project',
+      path: todoProject.path || todoProject.projectId,
+      available: todoProject.available !== false
+    }
+  }
   return projectsById.value.get(todoProject.projectId) || null
 }
 
@@ -446,8 +468,19 @@ function confirmTodoAction(todoId, action) {
 
 function changeTodoStatus(todoId, status) {
   hideTodoDescriptionTooltip()
-  todoView.value = status
+  setTodoView(status)
   emit('change-todo-status', todoId, status)
+}
+
+function setTodoView(view) {
+  const nextView = normalizedTodoView(view)
+  internalTodoView.value = nextView
+  emit('update:todo-view', nextView)
+  emit('todo-view-change', nextView)
+}
+
+function normalizedTodoView(view) {
+  return ['not-started', 'in-progress', 'completed'].includes(view) ? view : 'not-started'
 }
 
 function openProjectDeletePopover(projectId) {
@@ -784,8 +817,11 @@ function compareTodoCreatedAt(left, right) {
 }
 
 function terminalActivityState(terminal) {
+  if (terminal.attentionState === 'needs-ack') {
+    return 'needs-ack'
+  }
   const state = terminal.activityState || terminal.agentStatus?.phase || 'idle'
-  return ['busy', 'needs-input'].includes(state) ? state : 'idle'
+  return ['busy', 'needs-input', 'needs-ack'].includes(state) ? state : 'idle'
 }
 
 function activityStateLabel(state) {
@@ -794,6 +830,9 @@ function activityStateLabel(state) {
   }
   if (state === 'needs-input') {
     return 'Needs input'
+  }
+  if (state === 'needs-ack') {
+    return 'Review needed'
   }
   return 'Idle'
 }
@@ -809,6 +848,7 @@ function terminalRowLabel(terminal) {
 }
 
 function todoActivityState(todo) {
+  let hasAckTerminal = false
   let hasBusyTerminal = false
   let hasTerminal = false
   for (const terminal of props.terminals) {
@@ -820,12 +860,18 @@ function todoActivityState(todo) {
     if (state === 'needs-input') {
       return 'needs-input'
     }
+    if (state === 'needs-ack') {
+      hasAckTerminal = true
+    }
     if (state === 'busy') {
       hasBusyTerminal = true
     }
   }
   if (!hasTerminal) {
     return ''
+  }
+  if (hasAckTerminal) {
+    return 'needs-ack'
   }
   return hasBusyTerminal ? 'busy' : 'idle'
 }
@@ -836,7 +882,7 @@ function collapsedTodoActivityState(todo) {
 
 function collapsedTodoFeedbackState(todo) {
   const state = collapsedTodoActivityState(todo)
-  return ['busy', 'needs-input'].includes(state) ? state : ''
+  return ['busy', 'needs-input', 'needs-ack'].includes(state) ? state : ''
 }
 
 function collapsedTodoActivityClass(todo) {
@@ -915,8 +961,8 @@ watch(
 )
 
 watch(
-  [() => props.activeTerminalId, () => props.terminals],
-  ([terminalId]) => {
+  () => props.activeTerminalId,
+  (terminalId) => {
     if (!terminalId) {
       return
     }
@@ -975,63 +1021,30 @@ watch(
       <div class="sidebar-title">Workspace</div>
       <div class="sidebar-actions">
         <button
-          v-if="activeTab === 'todos'"
           type="button"
           class="icon-button"
           data-testid="new-todo"
           title="New TODO"
+          :disabled="!hasWorkspace"
           @click="emit('create-todo')"
         >
           <Plus :size="18" />
         </button>
-        <button
-          v-else
-          type="button"
-          class="icon-button"
-          data-testid="new-project"
-          title="New project"
-          @click="emit('create-project')"
-        >
-          <FolderPlus :size="18" />
-        </button>
       </div>
     </div>
 
-    <div class="sidebar-tabs tab-strip" data-testid="workspace-tabs" role="tablist" aria-label="Workspace sections">
-      <button
-        type="button"
-        class="sidebar-tab"
-        :class="{ active: activeTab === 'todos' }"
-        data-testid="sidebar-tab-todos"
-        role="tab"
-        :aria-selected="activeTab === 'todos'"
-        @click="activeTab = 'todos'"
-      >
-        <ListTodo :size="15" />
-        <span>TODO</span>
-      </button>
-      <button
-        type="button"
-        class="sidebar-tab"
-        :class="{ active: activeTab === 'projects' }"
-        data-testid="sidebar-tab-projects"
-        role="tab"
-        :aria-selected="activeTab === 'projects'"
-        @click="activeTab = 'projects'"
-      >
-        <TerminalSquare :size="15" />
-        <span>项目</span>
-      </button>
-    </div>
-
-    <div v-if="activeTab === 'todos'" class="project-list" data-testid="todo-workspace">
+    <div class="project-list" data-testid="todo-workspace">
+      <div v-if="!hasWorkspace" class="sidebar-empty workspace-empty" data-testid="todo-workspace-empty">
+        Open a project
+      </div>
+      <template v-else>
       <div class="todo-view-tabs" data-testid="todo-workflow-tabs" role="tablist" aria-label="TODO views">
         <button
           type="button"
           class="todo-view-tab"
           :class="{ active: todoView === 'not-started' }"
           data-testid="todo-view-not-started"
-          @click="todoView = 'not-started'"
+          @click="setTodoView('not-started')"
         >
           未执行
         </button>
@@ -1040,7 +1053,7 @@ watch(
           class="todo-view-tab"
           :class="{ active: todoView === 'in-progress' }"
           data-testid="todo-view-in-progress"
-          @click="todoView = 'in-progress'"
+          @click="setTodoView('in-progress')"
         >
           执行中
         </button>
@@ -1049,7 +1062,7 @@ watch(
           class="todo-view-tab"
           :class="{ active: todoView === 'completed' }"
           data-testid="todo-view-completed"
-          @click="todoView = 'completed'"
+          @click="setTodoView('completed')"
         >
           已完成
         </button>
@@ -1522,8 +1535,9 @@ watch(
                     :class="{
                       active: terminal.id === activeTerminalId,
                       exited: terminal.state === 'exited',
-                      'activity-busy': terminal.activityState === 'busy',
-                      'activity-needs-input': terminal.activityState === 'needs-input'
+                      'activity-busy': terminalActivityState(terminal) === 'busy',
+                      'activity-needs-input': terminalActivityState(terminal) === 'needs-input',
+                      'activity-needs-ack': terminalActivityState(terminal) === 'needs-ack'
                     }"
                     :aria-label="terminalRowLabel(terminal)"
                     :title="terminalRowLabel(terminal)"
@@ -1540,6 +1554,7 @@ watch(
                     >
                       <LoaderCircle v-if="terminalActivityState(terminal) === 'busy'" :size="13" aria-hidden="true" />
                       <CircleAlert v-else-if="terminalActivityState(terminal) === 'needs-input'" :size="13" aria-hidden="true" />
+                      <TriangleAlert v-else-if="terminalActivityState(terminal) === 'needs-ack'" :size="13" aria-hidden="true" />
                     </span>
                     <TerminalSquare class="terminal-icon" :size="15" />
                     <span class="terminal-name">{{ terminalDisplayName(terminal) }}</span>
@@ -1667,144 +1682,7 @@ watch(
           </div>
         </div>
       </div>
-    </div>
-
-    <div v-else class="project-list" data-testid="project-library">
-      <div class="project-library-actions">
-        <button
-          type="button"
-          class="library-action-button"
-          data-testid="import-parent-directory"
-          @click="emit('import-projects')"
-        >
-          <FolderInput :size="15" />
-          <span>Import parent</span>
-        </button>
-        <div class="bulk-project-delete-control">
-          <button
-            type="button"
-            class="library-action-button library-action-button-delete"
-            data-testid="bulk-delete-projects"
-            :disabled="selectedProjectCount === 0"
-            :aria-expanded="confirmBulkDeleteProjects"
-            aria-controls="bulk-delete-projects-popover"
-            @click.stop="openBulkProjectDeletePopover"
-          >
-            <Trash2 :size="15" />
-            <span>Delete selected ({{ selectedProjectCount }})</span>
-          </button>
-          <div
-            v-if="confirmBulkDeleteProjects"
-            id="bulk-delete-projects-popover"
-            class="bulk-project-delete-popover"
-            data-testid="bulk-delete-projects-popover"
-            @click.stop
-          >
-            <span class="project-delete-copy">Delete {{ selectedProjectCount }} projects?</span>
-            <div class="project-delete-actions">
-              <button
-                type="button"
-                class="project-delete-cancel"
-                data-testid="cancel-bulk-delete-projects"
-                @click="closeBulkProjectDeletePopover"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                class="project-delete-confirm"
-                data-testid="confirm-bulk-delete-projects"
-                @click="confirmBulkProjectDeletion"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div v-if="importSummary" class="import-summary" data-testid="import-summary">
-        <span>{{ importSummary.addedCount || 0 }} imported</span>
-        <span>{{ importSummary.skippedCount || 0 }} skipped</span>
-      </div>
-
-      <div v-if="projects.length === 0" class="sidebar-empty">No projects imported</div>
-
-      <div
-        v-for="project in projects"
-        :key="project.id"
-        class="project-node library-project-node"
-        :class="{
-          'is-active-project': project.id === activeProjectId,
-          'is-unavailable': !project.available
-        }"
-      >
-        <div class="project-header-row library-project-header-row">
-          <input
-            type="checkbox"
-            class="project-select-checkbox"
-            :checked="isProjectSelected(project.id)"
-            :data-testid="`select-project-${project.id}`"
-            :aria-label="`Select ${project.name}`"
-            @click.stop="toggleProjectSelection(project.id)"
-          />
-          <button
-            type="button"
-            class="project-row"
-            :class="{ active: project.id === activeProjectId, unavailable: !project.available }"
-            :data-testid="`project-${project.id}`"
-            @click="emit('select-project', project.id)"
-          >
-            <TerminalSquare class="project-icon" :size="17" />
-            <span class="project-copy">
-              <span class="project-name" :data-testid="`project-name-${project.id}`">{{ project.name }}</span>
-              <span class="project-path">{{ project.path }}</span>
-              <span v-if="!project.available" class="project-status">Unavailable</span>
-            </span>
-          </button>
-
-          <div class="project-delete-control">
-            <button
-              type="button"
-              class="delete-project-button"
-              :data-testid="`delete-project-${project.id}`"
-              title="Delete project"
-              :aria-expanded="confirmDeleteProjectId === project.id"
-              :aria-controls="`delete-project-popover-${project.id}`"
-              @click.stop="openProjectDeletePopover(project.id)"
-            >
-              <Trash2 :size="14" />
-            </button>
-            <div
-              v-if="confirmDeleteProjectId === project.id"
-              :id="`delete-project-popover-${project.id}`"
-              class="project-delete-popover"
-              :data-testid="`delete-project-popover-${project.id}`"
-              @click.stop
-            >
-              <span class="project-delete-copy">Delete project?</span>
-              <div class="project-delete-actions">
-                <button
-                  type="button"
-                  class="project-delete-cancel"
-                  :data-testid="`cancel-delete-project-${project.id}`"
-                  @click="closeProjectDeletePopover"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  class="project-delete-confirm"
-                  :data-testid="`confirm-delete-project-${project.id}`"
-                  @click="confirmProjectDeletion(project.id)"
-                >
-                  Delete
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+      </template>
     </div>
   </aside>
 </template>

@@ -19,9 +19,9 @@ describe('ProjectSidebar', () => {
 
     await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
 
-    expect(wrapper.find('[data-testid="workspace-tabs"]').classes()).toContain('tab-strip')
-    expect(wrapper.find('[data-testid="sidebar-tab-todos"]').classes()).toContain('active')
-    expect(wrapper.find('[data-testid="sidebar-tab-projects"]').text()).toBe('项目')
+    expect(wrapper.find('[data-testid="workspace-tabs"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="sidebar-tab-projects"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="project-library"]').exists()).toBe(false)
     expect(wrapper.text()).toContain('修复登录问题')
     expect(wrapper.text()).toContain('alpha')
     expect(wrapper.text()).toContain('codex')
@@ -130,6 +130,22 @@ describe('ProjectSidebar', () => {
     await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
     expect(completedTodoTitles(wrapper)).toEqual(['已完成任务'])
     expect(wrapper.find('[data-testid="completed-todos"]').text()).not.toContain('已删除任务')
+  })
+
+  it('uses the controlled TODO view prop and emits changes', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        todoView: 'completed'
+      }
+    })
+
+    expect(wrapper.find('[data-testid="todo-view-completed"]').classes()).toContain('active')
+    expect(completedTodoTitles(wrapper)).toEqual(['已完成任务'])
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+
+    expect(wrapper.emitted('update:todo-view')[0]).toEqual(['in-progress'])
+    expect(wrapper.emitted('todo-view-change')[0]).toEqual(['in-progress'])
   })
 
   it('emits manual TODO status changes from TODO rows', async () => {
@@ -270,7 +286,6 @@ describe('ProjectSidebar', () => {
     const actionGroup = wrapper.find('[data-testid="todo-actions-todo-a"]')
     const styles = readFileSync('src/style.css', 'utf8')
     const sidebarHeaderRule = styles.slice(styles.indexOf('.sidebar-header {'), styles.indexOf('.sidebar-title'))
-    const workspaceTabsRule = styles.slice(styles.indexOf('.sidebar-tabs {'), styles.indexOf('.sidebar-tabs.tab-strip'))
     const tabsRule = styles.slice(styles.indexOf('.todo-view-tabs {'), styles.indexOf('.todo-tree-toolbar'))
     const actionsRule = styles.slice(styles.indexOf('.todo-actions {'), styles.indexOf('.todo-action-button'))
 
@@ -289,7 +304,7 @@ describe('ProjectSidebar', () => {
     expect(wrapper.find('[data-testid="add-project-to-todo-todo-a"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="delete-todo-todo-a"]').exists()).toBe(false)
     expect(sidebarHeaderRule).toContain('flex-shrink: 0;')
-    expect(workspaceTabsRule).toContain('flex-shrink: 0;')
+    expect(wrapper.find('[data-testid="workspace-tabs"]').exists()).toBe(false)
     expect(tabsRule).toContain('grid-template-columns: repeat(3, minmax(0, 1fr));')
     expect(actionsRule).toContain('display: inline-flex;')
     expect(actionsRule).toContain('flex-wrap: nowrap;')
@@ -424,90 +439,44 @@ describe('ProjectSidebar', () => {
     expect(wrapper.find('[data-testid="todo-project-list-todo-in-progress"]').exists()).toBe(true)
   })
 
-  it('shows project library management without terminal actions', async () => {
+  it('keeps global candidate management out of the sidebar workspace', () => {
     const wrapper = mountSidebar()
 
-    await wrapper.find('[data-testid="sidebar-tab-projects"]').trigger('click')
-
-    expect(wrapper.find('[data-testid="project-library"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="project-name-project-a"]').text()).toBe('alpha')
-    expect(wrapper.text()).toContain('/work/alpha')
-    expect(wrapper.find('[data-testid="add-terminal-project-a"]').exists()).toBe(false)
-
-    await wrapper.find('[data-testid="new-project"]').trigger('click')
-    await wrapper.find('[data-testid="import-parent-directory"]').trigger('click')
-    await wrapper.find('[data-testid="project-project-a"]').trigger('click')
-
-    expect(wrapper.emitted('create-project')).toHaveLength(1)
-    expect(wrapper.emitted('import-projects')).toHaveLength(1)
-    expect(wrapper.emitted('select-project')[0]).toEqual(['project-a'])
+    expect(wrapper.find('[data-testid="todo-workspace"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="sidebar-tab-projects"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="project-library"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="new-project"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="import-parent-directory"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="bulk-delete-projects"]').exists()).toBe(false)
+    expect(wrapper.emitted('create-project')).toBeUndefined()
+    expect(wrapper.emitted('import-projects')).toBeUndefined()
+    expect(wrapper.emitted('select-project')).toBeUndefined()
     expect(wrapper.emitted('create-terminal')).toBeUndefined()
   })
 
-  it('confirms direct project removal from a popover', async () => {
-    const wrapper = mountSidebar()
-
-    await wrapper.find('[data-testid="sidebar-tab-projects"]').trigger('click')
-    await wrapper.find('[data-testid="delete-project-project-a"]').trigger('click')
-    await nextTick()
-
-    expect(wrapper.find('[data-testid="delete-project-popover-project-a"]').exists()).toBe(true)
-    expect(wrapper.emitted('delete-project')).toBeUndefined()
-
-    await wrapper.find('[data-testid="cancel-delete-project-project-a"]').trigger('click')
-    await nextTick()
-
-    expect(wrapper.find('[data-testid="delete-project-popover-project-a"]').exists()).toBe(false)
-
-    await wrapper.find('[data-testid="delete-project-project-a"]').trigger('click')
-    await wrapper.find('[data-testid="confirm-delete-project-project-a"]').trigger('click')
-
-    expect(wrapper.emitted('delete-project')[0]).toEqual(['project-a'])
-    expect(wrapper.find('[data-testid="delete-project-popover-project-a"]').exists()).toBe(false)
-  })
-
-  it('selects projects and confirms bulk deletion from a popover', async () => {
-    const wrapper = mountSidebar({
+  it('renders TODO project rows from the workspace copy when the global candidate is gone', async () => {
+    const wrapper = mountInProgressSidebar({
       props: {
-        projects: [
-          { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
-          { id: 'project-b', name: 'beta', path: '/work/beta', available: true }
+        projects: [],
+        todoProjects: [
+          {
+            id: 'todo-project-a',
+            todoId: 'todo-a',
+            projectId: 'project-a',
+            sourceProjectId: 'project-a',
+            name: 'alpha-copy',
+            path: '/work/alpha-copy',
+            available: true
+          }
         ]
       }
     })
 
-    await wrapper.find('[data-testid="sidebar-tab-projects"]').trigger('click')
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
 
-    const bulkDelete = wrapper.find('[data-testid="bulk-delete-projects"]')
-    expect(bulkDelete.attributes('disabled')).toBeDefined()
-    await bulkDelete.trigger('click')
-    expect(wrapper.find('[data-testid="bulk-delete-projects-popover"]').exists()).toBe(false)
-
-    await wrapper.find('[data-testid="select-project-project-a"]').trigger('click')
-    await wrapper.find('[data-testid="select-project-project-b"]').trigger('click')
-
-    expect(wrapper.emitted('select-project')).toBeUndefined()
-    expect(wrapper.find('[data-testid="select-project-project-a"]').element.checked).toBe(true)
-    expect(wrapper.find('[data-testid="select-project-project-b"]').element.checked).toBe(true)
-    expect(wrapper.find('[data-testid="bulk-delete-projects"]').attributes('disabled')).toBeUndefined()
-    expect(wrapper.find('[data-testid="bulk-delete-projects"]').text()).toContain('2')
-
-    await wrapper.find('[data-testid="bulk-delete-projects"]').trigger('click')
-    await nextTick()
-
-    expect(wrapper.find('[data-testid="bulk-delete-projects-popover"]').exists()).toBe(true)
-    expect(wrapper.emitted('delete-projects')).toBeUndefined()
-
-    await wrapper.find('[data-testid="cancel-bulk-delete-projects"]').trigger('click')
-    await nextTick()
-
-    expect(wrapper.find('[data-testid="bulk-delete-projects-popover"]').exists()).toBe(false)
-
-    await wrapper.find('[data-testid="bulk-delete-projects"]').trigger('click')
-    await wrapper.find('[data-testid="confirm-bulk-delete-projects"]').trigger('click')
-
-    expect(wrapper.emitted('delete-projects')[0]).toEqual([['project-a', 'project-b']])
-    expect(wrapper.find('[data-testid="bulk-delete-projects-popover"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="todo-project-name-todo-project-a"]').text()).toBe('alpha-copy')
+    expect(wrapper.find('[data-testid="todo-project-todo-project-a"]').text()).toContain('/work/alpha-copy')
+    expect(wrapper.find('[data-testid="add-terminal-todo-project-a"]').exists()).toBe(true)
   })
 
   it('collapses and expands a TODO branch independently', async () => {
@@ -659,6 +628,33 @@ describe('ProjectSidebar', () => {
     expect(terminalRow.attributes('aria-label')).toContain('Needs input')
   })
 
+  it('shows terminal confirmation state in the TODO tree', () => {
+    const wrapper = mountSidebar({
+      props: {
+        terminals: [
+          {
+            id: 'terminal-a',
+            projectId: 'project-a',
+            todoId: 'todo-a',
+            todoProjectId: 'todo-project-a',
+            shellName: 'zsh',
+            currentCommand: 'codex',
+            attentionState: 'needs-ack',
+            state: 'running'
+          }
+        ]
+      }
+    })
+
+    const terminalRow = wrapper.find('[data-testid="terminal-terminal-a"]')
+    const activity = wrapper.find('[data-testid="terminal-activity-terminal-a"]')
+    expect(terminalRow.classes()).toContain('activity-needs-ack')
+    expect(terminalRow.attributes('data-activity-state')).toBe('needs-ack')
+    expect(terminalRow.attributes('aria-label')).toContain('Review needed')
+    expect(activity.classes()).toContain('needs-ack')
+    expect(activity.find('svg').exists()).toBe(true)
+  })
+
   it('shows hidden terminal activity as row state on a collapsed TODO', async () => {
     const wrapper = mountSidebar({
       props: {
@@ -716,6 +712,66 @@ describe('ProjectSidebar', () => {
     expect(wrapper.find('[data-testid="todo-activity-todo-a"]').exists()).toBe(false)
   })
 
+  it('shows hidden confirmation state as urgent collapsed TODO row state', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        terminals: [
+          {
+            id: 'terminal-a',
+            projectId: 'project-a',
+            todoId: 'todo-a',
+            todoProjectId: 'todo-project-a',
+            shellName: 'zsh',
+            attentionState: 'needs-ack',
+            state: 'running'
+          }
+        ]
+      }
+    })
+
+    await wrapper.find('[data-testid="toggle-todo-todo-a"]').trigger('click')
+
+    const todoHeader = todoHeaderFor(wrapper, 'todo-a')
+    expect(wrapper.find('[data-testid="todo-todo-a"]').attributes('data-activity-state')).toBe('needs-ack')
+    expect(wrapper.find('[data-testid="todo-todo-a"]').attributes('title')).toBe('Review needed')
+    expect(todoHeader.attributes('data-activity-state')).toBe('needs-ack')
+    expect(todoHeader.classes()).toContain('todo-activity-needs-ack')
+    expect(wrapper.find('[data-testid="todo-activity-todo-a"]').exists()).toBe(false)
+  })
+
+  it('prioritizes confirmation over busy for a collapsed TODO', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        terminals: [
+          {
+            id: 'terminal-busy',
+            projectId: 'project-a',
+            todoId: 'todo-a',
+            todoProjectId: 'todo-project-a',
+            shellName: 'zsh',
+            activityState: 'busy',
+            state: 'running'
+          },
+          {
+            id: 'terminal-needs-ack',
+            projectId: 'project-a',
+            todoId: 'todo-a',
+            todoProjectId: 'todo-project-a',
+            shellName: 'zsh',
+            attentionState: 'needs-ack',
+            state: 'running'
+          }
+        ]
+      }
+    })
+
+    await wrapper.find('[data-testid="toggle-todo-todo-a"]').trigger('click')
+
+    expect(wrapper.find('[data-testid="todo-todo-a"]').attributes('data-activity-state')).toBe('needs-ack')
+    expect(todoHeaderFor(wrapper, 'todo-a').classes()).toContain('todo-activity-needs-ack')
+    expect(todoHeaderFor(wrapper, 'todo-a').classes()).not.toContain('todo-activity-busy')
+  })
+
   it('prioritizes needs input over busy for a collapsed TODO', async () => {
     const wrapper = mountSidebar({
       props: {
@@ -748,6 +804,39 @@ describe('ProjectSidebar', () => {
     expect(todoHeaderFor(wrapper, 'todo-a').attributes('data-activity-state')).toBe('needs-input')
     expect(todoHeaderFor(wrapper, 'todo-a').classes()).toContain('todo-activity-needs-input')
     expect(wrapper.find('[data-testid="todo-activity-todo-a"]').exists()).toBe(false)
+  })
+
+  it('prioritizes needs input over confirmation for a collapsed TODO', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        terminals: [
+          {
+            id: 'terminal-needs-ack',
+            projectId: 'project-a',
+            todoId: 'todo-a',
+            todoProjectId: 'todo-project-a',
+            shellName: 'zsh',
+            attentionState: 'needs-ack',
+            state: 'running'
+          },
+          {
+            id: 'terminal-needs-input',
+            projectId: 'project-a',
+            todoId: 'todo-a',
+            todoProjectId: 'todo-project-a',
+            shellName: 'zsh',
+            activityState: 'needs-input',
+            state: 'running'
+          }
+        ]
+      }
+    })
+
+    await wrapper.find('[data-testid="toggle-todo-todo-a"]').trigger('click')
+
+    expect(wrapper.find('[data-testid="todo-todo-a"]').attributes('data-activity-state')).toBe('needs-input')
+    expect(todoHeaderFor(wrapper, 'todo-a').classes()).toContain('todo-activity-needs-input')
+    expect(todoHeaderFor(wrapper, 'todo-a').classes()).not.toContain('todo-activity-needs-ack')
   })
 
   it('does not keep done failed or exited agent statuses busy in collapsed TODO summaries', async () => {
@@ -811,6 +900,27 @@ describe('ProjectSidebar', () => {
     expect(wrapper.find('[data-testid="todo-activity-todo-a"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="todo-todo-a"]').attributes('data-activity-state')).toBeUndefined()
     expect(wrapper.find('[data-testid="terminal-terminal-a"]').attributes('data-activity-state')).toBe('busy')
+  })
+
+  it('shows confirmation on terminal rows instead of the parent TODO while expanded', () => {
+    const wrapper = mountSidebar({
+      props: {
+        terminals: [
+          {
+            id: 'terminal-a',
+            projectId: 'project-a',
+            todoId: 'todo-a',
+            todoProjectId: 'todo-project-a',
+            shellName: 'zsh',
+            attentionState: 'needs-ack',
+            state: 'running'
+          }
+        ]
+      }
+    })
+
+    expect(wrapper.find('[data-testid="todo-todo-a"]').attributes('data-activity-state')).toBeUndefined()
+    expect(wrapper.find('[data-testid="terminal-terminal-a"]').attributes('data-activity-state')).toBe('needs-ack')
   })
 
   it('does not label a collapsed TODO without terminals as idle', async () => {
@@ -1431,19 +1541,16 @@ describe('ProjectSidebar', () => {
     expect(styles).toContain('.todo-project-header-row .project-row.active')
   })
 
-  it('defines compact project library selection and delete styles', () => {
+  it('keeps removed project library styles out of the sidebar CSS', () => {
     const styles = readFileSync('src/style.css', 'utf8')
-    const libraryProjectRowIndex = styles.indexOf('.library-project-header-row {')
 
-    expect(libraryProjectRowIndex).toBeGreaterThan(-1)
-    expect(styles.slice(libraryProjectRowIndex, libraryProjectRowIndex + 140)).toContain(
-      'grid-template-columns: 26px minmax(0, 1fr) 30px;'
-    )
-    expect(styles).toContain('.project-select-checkbox')
-    expect(styles).toContain('.project-delete-control')
-    expect(styles).toContain('.project-delete-popover')
-    expect(styles).toContain('.bulk-project-delete-control')
-    expect(styles).toContain('.library-action-button-delete:disabled')
+    expect(styles).toContain('.candidate-management-toolbar')
+    expect(styles).not.toContain('.library-project-header-row')
+    expect(styles).not.toContain('.project-select-checkbox')
+    expect(styles).not.toContain('.project-delete-control')
+    expect(styles).not.toContain('.project-delete-popover')
+    expect(styles).not.toContain('.bulk-project-delete-control')
+    expect(styles).not.toContain('.library-action-button')
   })
 
   it('defines compact bulk TODO branch control styles', () => {
@@ -1492,6 +1599,25 @@ describe('ProjectSidebar', () => {
     expect(reducedMotionRule).toContain('animation: none;')
     expect(reducedMotionRule).toContain('.todo-header-row.todo-activity-busy')
     expect(reducedMotionRule).toContain('.todo-header-row.todo-activity-needs-input')
+  })
+
+  it('defines terminal and collapsed TODO confirmation styles', () => {
+    const styles = readFileSync('src/style.css', 'utf8')
+    const ackRule = styles.slice(styles.indexOf('.todo-header-row.todo-activity-needs-ack {'), styles.indexOf('@keyframes todo-activity-busy-breathe'))
+    const reducedMotionRule = styles.slice(styles.indexOf('@media (prefers-reduced-motion: reduce)'), styles.indexOf('.todo-title-line {'))
+
+    expect(styles).toContain('.terminal-row.activity-needs-ack')
+    expect(styles).toContain('.terminal-activity.needs-ack')
+    expect(styles).toContain('.todo-header-row.todo-activity-needs-ack')
+    expect(ackRule).toContain('animation: todo-activity-needs-ack-breathe')
+    expect(ackRule).toContain('0.9s')
+    expect(ackRule).toContain('rgba(124, 58, 237')
+    expect(ackRule).not.toContain('rgba(15, 118, 110')
+    expect(ackRule).not.toContain('background:')
+    expect(ackRule).not.toMatch(/(^|\n)\s*color:/)
+    expect(styles).toContain('@keyframes todo-activity-needs-ack-breathe')
+    expect(reducedMotionRule).toContain('.todo-header-row.todo-activity-needs-ack')
+    expect(reducedMotionRule).toContain('animation: none;')
   })
 
   it('defines a wide TODO description tooltip style', () => {

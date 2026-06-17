@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -45,6 +46,364 @@ func TestAppAddsAndSelectsProjectsThroughPublicAPI(t *testing.T) {
 	}
 	if len(starter.requests) != 0 {
 		t.Fatalf("shell start count = %d, want 0 after project-library selection", len(starter.requests))
+	}
+}
+
+func TestAppWorkspaceOpenScopesProjectsTodosAndHistoryButKeepsSettingsGlobal(t *testing.T) {
+	appConfigDir := t.TempDir()
+	workspaceA := t.TempDir()
+	workspaceB := t.TempDir()
+	projectA := t.TempDir()
+	projectB := t.TempDir()
+	shellPath := executableFile(t, "zsh-global")
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(appConfigDir, "projects.json"),
+		newFakeShellStarter().Start,
+	)
+
+	state, err := app.OpenWorkspaceFromPath(workspaceA)
+	if err != nil {
+		t.Fatalf("OpenWorkspaceFromPath(A) error = %v", err)
+	}
+	if state.CurrentWorkspace == nil || state.CurrentWorkspace.Path != mustAbs(t, workspaceA) {
+		t.Fatalf("CurrentWorkspace = %#v, want workspace A", state.CurrentWorkspace)
+	}
+	state, err = app.AddProjectFromPath(projectA)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath(A) error = %v", err)
+	}
+	if _, err := app.CreateTodo(CreateTodoRequest{Title: "修复登录问题", ProjectIDs: []string{state.Projects[0].ID}}); err != nil {
+		t.Fatalf("CreateTodo(A) error = %v", err)
+	}
+	if _, err := app.SaveTerminalShell(shellPath, ShellSourceManual); err != nil {
+		t.Fatalf("SaveTerminalShell(global) error = %v", err)
+	}
+
+	state, err = app.OpenWorkspaceFromPath(workspaceB)
+	if err != nil {
+		t.Fatalf("OpenWorkspaceFromPath(B) error = %v", err)
+	}
+	if len(state.Projects) != 1 || state.Projects[0].Path != mustAbs(t, projectA) || len(state.Todos) != 0 {
+		t.Fatalf("workspace B initial state = projects %#v todos %#v, want shared project A and empty todos", state.Projects, state.Todos)
+	}
+	state, err = app.AddProjectFromPath(projectB)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath(B) error = %v", err)
+	}
+	if _, err := app.CreateTodo(CreateTodoRequest{Title: "升级依赖", ProjectIDs: []string{state.ActiveProjectID}}); err != nil {
+		t.Fatalf("CreateTodo(B) error = %v", err)
+	}
+
+	state, err = app.OpenWorkspaceFromPath(workspaceA)
+	if err != nil {
+		t.Fatalf("OpenWorkspaceFromPath(A again) error = %v", err)
+	}
+	if len(state.Projects) != 2 || !containsProjectPath(state.Projects, mustAbs(t, projectA)) || !containsProjectPath(state.Projects, mustAbs(t, projectB)) {
+		t.Fatalf("workspace A projects = %#v, want shared project candidates", state.Projects)
+	}
+	if len(state.Todos) != 1 || state.Todos[0].Title != "修复登录问题" {
+		t.Fatalf("workspace A todos = %#v, want A todo only", state.Todos)
+	}
+	settings, err := app.LoadTerminalSettings()
+	if err != nil {
+		t.Fatalf("LoadTerminalSettings(A) error = %v", err)
+	}
+	if settings.Selected.Path != shellPath {
+		t.Fatalf("workspace A shell = %q, want global %q", settings.Selected.Path, shellPath)
+	}
+
+	state, err = app.OpenWorkspaceFromPath(workspaceB)
+	if err != nil {
+		t.Fatalf("OpenWorkspaceFromPath(B again) error = %v", err)
+	}
+	if len(state.Projects) != 2 || !containsProjectPath(state.Projects, mustAbs(t, projectA)) || !containsProjectPath(state.Projects, mustAbs(t, projectB)) {
+		t.Fatalf("workspace B projects = %#v, want shared project candidates", state.Projects)
+	}
+	if len(state.Todos) != 1 || state.Todos[0].Title != "升级依赖" {
+		t.Fatalf("workspace B todos = %#v, want B todo only", state.Todos)
+	}
+	settings, err = app.LoadTerminalSettings()
+	if err != nil {
+		t.Fatalf("LoadTerminalSettings(B) error = %v", err)
+	}
+	if settings.Selected.Path != shellPath {
+		t.Fatalf("workspace B shell = %q, want global %q", settings.Selected.Path, shellPath)
+	}
+}
+
+func TestAppSharesGlobalProjectCandidatesAcrossWorkspacesButScopesTodos(t *testing.T) {
+	appConfigDir := t.TempDir()
+	workspaceA := t.TempDir()
+	workspaceB := t.TempDir()
+	projectA := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(appConfigDir, "projects.json"),
+		newFakeShellStarter().Start,
+	)
+
+	state, err := app.OpenWorkspaceFromPath(workspaceA)
+	if err != nil {
+		t.Fatalf("OpenWorkspaceFromPath(A) error = %v", err)
+	}
+	state, err = app.AddProjectFromPath(projectA)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath(A) error = %v", err)
+	}
+	projectID := state.Projects[0].ID
+	if _, err := app.CreateTodo(CreateTodoRequest{Title: "修复登录问题", ProjectIDs: []string{projectID}}); err != nil {
+		t.Fatalf("CreateTodo(A) error = %v", err)
+	}
+
+	state, err = app.OpenWorkspaceFromPath(workspaceB)
+	if err != nil {
+		t.Fatalf("OpenWorkspaceFromPath(B) error = %v", err)
+	}
+
+	if len(state.Projects) != 1 || state.Projects[0].Path != mustAbs(t, projectA) {
+		t.Fatalf("workspace B candidates = %#v, want shared project A candidate", state.Projects)
+	}
+	if len(state.Todos) != 0 || len(state.TodoProjects) != 0 {
+		t.Fatalf("workspace B TODO state = todos %#v todoProjects %#v, want isolated empty", state.Todos, state.TodoProjects)
+	}
+}
+
+func TestAppRequiresWorkspaceForWorkspaceScopedOperations(t *testing.T) {
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+		WithInitialWorkspaceClosed(),
+	)
+
+	state, err := app.ListProjects()
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	if state.CurrentWorkspace != nil {
+		t.Fatalf("CurrentWorkspace = %#v, want nil", state.CurrentWorkspace)
+	}
+	if len(state.Projects) != 0 || len(state.Todos) != 0 || len(state.Terminals) != 0 {
+		t.Fatalf("empty workspace state = %#v, want no projects/todos/terminals", state)
+	}
+
+	if _, err := app.CreateTodo(CreateTodoRequest{Title: "修复登录问题"}); !errors.Is(err, ErrWorkspaceRequired) {
+		t.Fatalf("CreateTodo() error = %v, want ErrWorkspaceRequired", err)
+	}
+	if _, err := app.AddProjectFromPath(t.TempDir()); !errors.Is(err, ErrWorkspaceRequired) {
+		t.Fatalf("AddProjectFromPath() error = %v, want ErrWorkspaceRequired", err)
+	}
+	if _, err := app.LoadTerminalSettings(); err != nil {
+		t.Fatalf("LoadTerminalSettings() error = %v, want global settings available without workspace", err)
+	}
+	if _, err := app.GetProjectGitStatus("missing"); !errors.Is(err, ErrWorkspaceRequired) {
+		t.Fatalf("GetProjectGitStatus() error = %v, want ErrWorkspaceRequired", err)
+	}
+}
+
+func TestAppSavesTerminalSettingsWithoutWorkspace(t *testing.T) {
+	shellPath := executableFile(t, "zsh-global")
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+		WithInitialWorkspaceClosed(),
+	)
+
+	state, err := app.SaveTerminalShell(shellPath, ShellSourceManual)
+	if err != nil {
+		t.Fatalf("SaveTerminalShell() error = %v", err)
+	}
+	if state.Selected.Path != shellPath {
+		t.Fatalf("Selected.Path = %q, want %q", state.Selected.Path, shellPath)
+	}
+}
+
+func TestAppStartupRestoresMostRecentWorkspace(t *testing.T) {
+	appConfigDir := t.TempDir()
+	workspaceA := t.TempDir()
+	workspaceB := t.TempDir()
+	projectA := t.TempDir()
+	projectB := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(appConfigDir, "projects.json"),
+		newFakeShellStarter().Start,
+		WithInitialWorkspaceClosed(),
+		WithRestoreLastWorkspaceOnStartup(),
+		WithClaudeStatusDir(""),
+	)
+	state, err := app.OpenWorkspaceFromPath(workspaceA)
+	if err != nil {
+		t.Fatalf("OpenWorkspaceFromPath(A) error = %v", err)
+	}
+	state, err = app.AddProjectFromPath(projectA)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath(A) error = %v", err)
+	}
+	projectAID := state.Projects[0].ID
+
+	state, err = app.OpenWorkspaceFromPath(workspaceB)
+	if err != nil {
+		t.Fatalf("OpenWorkspaceFromPath(B) error = %v", err)
+	}
+	state, err = app.AddProjectFromPath(projectB)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath(B) error = %v", err)
+	}
+	projectBID := state.ActiveProjectID
+
+	restarted := NewAppWithConfigAndShellStarter(
+		filepath.Join(appConfigDir, "projects.json"),
+		newFakeShellStarter().Start,
+		WithInitialWorkspaceClosed(),
+		WithRestoreLastWorkspaceOnStartup(),
+		WithClaudeStatusDir(""),
+	)
+	restarted.startup(nil)
+	defer restarted.shutdown(nil)
+
+	state, err = restarted.ListProjects()
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	if state.CurrentWorkspace == nil || state.CurrentWorkspace.Path != mustAbs(t, workspaceB) {
+		t.Fatalf("CurrentWorkspace = %#v, want most recent workspace B", state.CurrentWorkspace)
+	}
+	if len(state.Projects) != 2 || !containsProjectPath(state.Projects, mustAbs(t, projectA)) || !containsProjectPath(state.Projects, mustAbs(t, projectB)) {
+		t.Fatalf("restored projects = %#v, want shared candidates", state.Projects)
+	}
+	if projectAID == projectBID {
+		t.Fatal("test setup produced identical project IDs")
+	}
+}
+
+func TestAppStartupKeepsNoWorkspaceWhenMostRecentWorkspaceUnavailable(t *testing.T) {
+	appConfigDir := t.TempDir()
+	workspaceA := t.TempDir()
+	workspaceB := t.TempDir()
+	projectA := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(appConfigDir, "projects.json"),
+		newFakeShellStarter().Start,
+		WithInitialWorkspaceClosed(),
+		WithRestoreLastWorkspaceOnStartup(),
+		WithClaudeStatusDir(""),
+	)
+	if _, err := app.OpenWorkspaceFromPath(workspaceA); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath(A) error = %v", err)
+	}
+	if _, err := app.AddProjectFromPath(projectA); err != nil {
+		t.Fatalf("AddProjectFromPath(A) error = %v", err)
+	}
+	if _, err := app.OpenWorkspaceFromPath(workspaceB); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath(B) error = %v", err)
+	}
+	if err := os.RemoveAll(workspaceB); err != nil {
+		t.Fatalf("RemoveAll(workspaceB) error = %v", err)
+	}
+
+	restarted := NewAppWithConfigAndShellStarter(
+		filepath.Join(appConfigDir, "projects.json"),
+		newFakeShellStarter().Start,
+		WithInitialWorkspaceClosed(),
+		WithRestoreLastWorkspaceOnStartup(),
+		WithClaudeStatusDir(""),
+	)
+	restarted.startup(nil)
+	defer restarted.shutdown(nil)
+
+	state, err := restarted.ListProjects()
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	if state.CurrentWorkspace != nil {
+		t.Fatalf("CurrentWorkspace = %#v, want nil when most recent workspace is unavailable", state.CurrentWorkspace)
+	}
+	if len(state.Projects) != 1 || state.Projects[0].Path != mustAbs(t, projectA) {
+		t.Fatalf("Projects = %#v, want global candidates without fallback workspace", state.Projects)
+	}
+	if len(state.RecentWorkspaces) != 2 {
+		t.Fatalf("RecentWorkspaces = %#v, want both recent workspaces retained", state.RecentWorkspaces)
+	}
+	if state.RecentWorkspaces[0].Path != mustAbs(t, workspaceB) || state.RecentWorkspaces[0].Available {
+		t.Fatalf("most recent workspace = %#v, want unavailable workspace B retained first", state.RecentWorkspaces[0])
+	}
+}
+
+func TestAppOpenWorkspaceFailureKeepsPreviousWorkspaceState(t *testing.T) {
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	workspaceDir := t.TempDir()
+	projectDir := t.TempDir()
+	missingWorkspace := filepath.Join(t.TempDir(), "missing")
+
+	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	projectID := state.Projects[0].ID
+
+	state, err = app.OpenWorkspaceFromPath(missingWorkspace)
+	if err == nil {
+		t.Fatal("OpenWorkspaceFromPath(missing) error = nil, want error")
+	}
+	if state.CurrentWorkspace == nil || state.CurrentWorkspace.Path != mustAbs(t, workspaceDir) {
+		t.Fatalf("CurrentWorkspace after failed open = %#v, want previous workspace", state.CurrentWorkspace)
+	}
+	if len(state.Projects) != 1 || state.Projects[0].ID != projectID {
+		t.Fatalf("Projects after failed open = %#v, want previous project", state.Projects)
+	}
+}
+
+func TestAppCloseWorkspaceClearsRuntimeStateAndPreservesData(t *testing.T) {
+	appConfigDir := t.TempDir()
+	workspaceDir := t.TempDir()
+	projectDir := t.TempDir()
+	starter := newFakeShellStarter()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(appConfigDir, "projects.json"),
+		starter.Start,
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-1")),
+	)
+	state, err := app.OpenWorkspaceFromPath(workspaceDir)
+	if err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	dataPath := state.CurrentWorkspace.DataPath
+	state, err = app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	_, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", state.Projects[0].ID)
+	if _, err := app.CreateTodoTerminal(todoProjectID, 80, 24); err != nil {
+		t.Fatalf("CreateTodoTerminal() error = %v", err)
+	}
+
+	state, err = app.CloseWorkspace()
+	if err != nil {
+		t.Fatalf("CloseWorkspace() error = %v", err)
+	}
+
+	if state.CurrentWorkspace != nil {
+		t.Fatalf("CurrentWorkspace = %#v, want nil", state.CurrentWorkspace)
+	}
+	if len(state.Projects) != 1 || state.Projects[0].Path != mustAbs(t, projectDir) || len(state.Todos) != 0 || len(state.Terminals) != 0 || state.ActiveTerminalID != "" {
+		t.Fatalf("closed workspace state = %#v, want global candidates and empty todo/terminal state", state)
+	}
+	if !starter.processes[0].closed {
+		t.Fatal("workspace terminal process was not closed")
+	}
+	if _, err := os.Stat(filepath.Join(dataPath, "projects.json")); err != nil {
+		t.Fatalf("workspace projects data missing after close: %v", err)
+	}
+	workspaceState, err := app.WorkspaceState()
+	if err != nil {
+		t.Fatalf("WorkspaceState() error = %v", err)
+	}
+	if len(workspaceState.RecentWorkspaces) != 1 || workspaceState.RecentWorkspaces[0].Path != mustAbs(t, workspaceDir) {
+		t.Fatalf("RecentWorkspaces = %#v, want closed workspace retained", workspaceState.RecentWorkspaces)
 	}
 }
 
@@ -174,6 +533,15 @@ func TestAppPollsClaudeStatusFilesAndEmitsAgentStatus(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for claude agent status event")
 	}
+}
+
+func mustAbs(t *testing.T, path string) string {
+	t.Helper()
+	absolutePath, err := filepath.Abs(path)
+	if err != nil {
+		t.Fatalf("Abs(%q) error = %v", path, err)
+	}
+	return filepath.Clean(absolutePath)
 }
 
 func TestAppCreateTodoAcceptsStructuredRequestAndOptionalProjects(t *testing.T) {
@@ -522,6 +890,180 @@ func TestAppRemoveTodoProjectClosesOnlyThatTodoProjectTerminals(t *testing.T) {
 	}
 }
 
+func TestAppTodoProjectUIStatePersistsUnderWorkspaceData(t *testing.T) {
+	appConfigDir := t.TempDir()
+	workspaceDir := t.TempDir()
+	projectDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(appConfigDir, "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	state, err := app.OpenWorkspaceFromPath(workspaceDir)
+	if err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	dataPath := state.CurrentWorkspace.DataPath
+	state, err = app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	_, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", state.Projects[0].ID)
+
+	if err := app.SaveTodoProjectUIState(todoProjectID, TodoProjectUIState{TodoView: "completed", SidebarWidth: 360}); err != nil {
+		t.Fatalf("SaveTodoProjectUIState() error = %v", err)
+	}
+	loaded, err := app.LoadTodoProjectUIState()
+	if err != nil {
+		t.Fatalf("LoadTodoProjectUIState() error = %v", err)
+	}
+
+	if loaded.TodoProjects[todoProjectID].TodoView != "completed" {
+		t.Fatalf("TodoView = %q, want completed", loaded.TodoProjects[todoProjectID].TodoView)
+	}
+	if loaded.TodoProjects[todoProjectID].SidebarWidth != 360 {
+		t.Fatalf("SidebarWidth = %d, want 360", loaded.TodoProjects[todoProjectID].SidebarWidth)
+	}
+	if _, err := os.Stat(filepath.Join(dataPath, "todo-project-ui-state.json")); err != nil {
+		t.Fatalf("todo project ui state file missing under .data: %v", err)
+	}
+}
+
+func TestAppStartupRestoresTodoProjectUIStateFromWorkspaceData(t *testing.T) {
+	appConfigDir := t.TempDir()
+	workspaceDir := t.TempDir()
+	projectDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(appConfigDir, "projects.json"),
+		newFakeShellStarter().Start,
+		WithInitialWorkspaceClosed(),
+		WithRestoreLastWorkspaceOnStartup(),
+		WithClaudeStatusDir(""),
+	)
+	state, err := app.OpenWorkspaceFromPath(workspaceDir)
+	if err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err = app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	_, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", state.Projects[0].ID)
+	if err := app.SaveTodoProjectUIState(todoProjectID, TodoProjectUIState{TodoView: "in-progress", SidebarWidth: 420}); err != nil {
+		t.Fatalf("SaveTodoProjectUIState() error = %v", err)
+	}
+
+	restarted := NewAppWithConfigAndShellStarter(
+		filepath.Join(appConfigDir, "projects.json"),
+		newFakeShellStarter().Start,
+		WithInitialWorkspaceClosed(),
+		WithRestoreLastWorkspaceOnStartup(),
+		WithClaudeStatusDir(""),
+	)
+	restarted.startup(nil)
+	defer restarted.shutdown(nil)
+
+	loaded, err := restarted.LoadTodoProjectUIState()
+	if err != nil {
+		t.Fatalf("LoadTodoProjectUIState() error = %v", err)
+	}
+	if loaded.TodoProjects[todoProjectID].TodoView != "in-progress" {
+		t.Fatalf("TodoView = %q, want in-progress", loaded.TodoProjects[todoProjectID].TodoView)
+	}
+	if loaded.TodoProjects[todoProjectID].SidebarWidth != 420 {
+		t.Fatalf("SidebarWidth = %d, want 420", loaded.TodoProjects[todoProjectID].SidebarWidth)
+	}
+}
+
+func TestAppTodoProjectUIStateRequiresWorkspace(t *testing.T) {
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+		WithInitialWorkspaceClosed(),
+	)
+
+	if _, err := app.LoadTodoProjectUIState(); !errors.Is(err, ErrWorkspaceRequired) {
+		t.Fatalf("LoadTodoProjectUIState() error = %v, want ErrWorkspaceRequired", err)
+	}
+	if err := app.SaveTodoProjectUIState("todo-project-a", TodoProjectUIState{TodoView: "completed", SidebarWidth: 360}); !errors.Is(err, ErrWorkspaceRequired) {
+		t.Fatalf("SaveTodoProjectUIState() error = %v, want ErrWorkspaceRequired", err)
+	}
+	if err := app.DeleteTodoProjectUIState([]string{"todo-project-a"}); !errors.Is(err, ErrWorkspaceRequired) {
+		t.Fatalf("DeleteTodoProjectUIState() error = %v, want ErrWorkspaceRequired", err)
+	}
+}
+
+func TestAppRemoveTodoProjectDeletesTodoProjectUIState(t *testing.T) {
+	projectDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	projectID := state.Projects[0].ID
+	_, todoProjectAID := createTodoProjectForApp(t, app, "修复登录问题", projectID)
+	_, todoProjectBID := createTodoProjectForApp(t, app, "升级依赖", projectID)
+	if err := app.SaveTodoProjectUIState(todoProjectAID, TodoProjectUIState{TodoView: "completed", SidebarWidth: 360}); err != nil {
+		t.Fatalf("SaveTodoProjectUIState(A) error = %v", err)
+	}
+	if err := app.SaveTodoProjectUIState(todoProjectBID, TodoProjectUIState{TodoView: "in-progress", SidebarWidth: 420}); err != nil {
+		t.Fatalf("SaveTodoProjectUIState(B) error = %v", err)
+	}
+
+	if _, err := app.RemoveTodoProject(todoProjectAID); err != nil {
+		t.Fatalf("RemoveTodoProject() error = %v", err)
+	}
+	loaded, err := app.LoadTodoProjectUIState()
+	if err != nil {
+		t.Fatalf("LoadTodoProjectUIState() error = %v", err)
+	}
+
+	if _, ok := loaded.TodoProjects[todoProjectAID]; ok {
+		t.Fatalf("removed todo-project UI state still exists: %#v", loaded.TodoProjects)
+	}
+	if loaded.TodoProjects[todoProjectBID].SidebarWidth != 420 {
+		t.Fatalf("remaining todo-project UI state = %#v, want B preserved", loaded.TodoProjects[todoProjectBID])
+	}
+}
+
+func TestAppDeleteTodoDeletesTodoProjectUIState(t *testing.T) {
+	projectDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	projectID := state.Projects[0].ID
+	todoAID, todoProjectAID := createTodoProjectForApp(t, app, "修复登录问题", projectID)
+	_, todoProjectBID := createTodoProjectForApp(t, app, "升级依赖", projectID)
+	if err := app.SaveTodoProjectUIState(todoProjectAID, TodoProjectUIState{TodoView: "completed", SidebarWidth: 360}); err != nil {
+		t.Fatalf("SaveTodoProjectUIState(A) error = %v", err)
+	}
+	if err := app.SaveTodoProjectUIState(todoProjectBID, TodoProjectUIState{TodoView: "in-progress", SidebarWidth: 420}); err != nil {
+		t.Fatalf("SaveTodoProjectUIState(B) error = %v", err)
+	}
+
+	if _, err := app.DeleteTodo(todoAID); err != nil {
+		t.Fatalf("DeleteTodo() error = %v", err)
+	}
+	loaded, err := app.LoadTodoProjectUIState()
+	if err != nil {
+		t.Fatalf("LoadTodoProjectUIState() error = %v", err)
+	}
+
+	if _, ok := loaded.TodoProjects[todoProjectAID]; ok {
+		t.Fatalf("deleted TODO project UI state still exists: %#v", loaded.TodoProjects)
+	}
+	if loaded.TodoProjects[todoProjectBID].SidebarWidth != 420 {
+		t.Fatalf("remaining todo-project UI state = %#v, want B preserved", loaded.TodoProjects[todoProjectBID])
+	}
+}
+
 func TestAppImportsProjectsFromParentDirectory(t *testing.T) {
 	parentDir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(parentDir, "frontend-app"), 0o755); err != nil {
@@ -731,7 +1273,7 @@ func TestAppFallsBackWhenSavedTerminalShellIsUnavailable(t *testing.T) {
 	}
 }
 
-func TestAppDeletesProjectAndOwnedTerminals(t *testing.T) {
+func TestAppDeletesProjectCandidateWithoutClosingTodoProjectTerminals(t *testing.T) {
 	projectDirA := t.TempDir()
 	projectDirB := t.TempDir()
 	starter := newFakeShellStarter()
@@ -757,7 +1299,7 @@ func TestAppDeletesProjectAndOwnedTerminals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddProjectFromPath(B) error = %v", err)
 	}
-	projectBID := state.ActiveProjectID
+	projectBID := findProjectByPathForApp(t, state.Projects, projectDirB).ID
 	_, todoProjectBID := createTodoProjectForApp(t, app, "升级依赖", projectBID)
 	if _, err := app.CreateTodoTerminal(todoProjectBID, 80, 24); err != nil {
 		t.Fatalf("CreateTodoTerminal(B) error = %v", err)
@@ -775,20 +1317,20 @@ func TestAppDeletesProjectAndOwnedTerminals(t *testing.T) {
 		t.Fatalf("ActiveProjectID = %q, want %q", state.ActiveProjectID, projectBID)
 	}
 	if state.ActiveTerminalID != "terminal-b1" {
-		t.Fatalf("ActiveTerminalID = %q, want terminal-b1", state.ActiveTerminalID)
+		t.Fatalf("ActiveTerminalID = %q, want current todo project terminal preserved", state.ActiveTerminalID)
 	}
-	if len(state.Terminals) != 1 || state.Terminals[0].ID != "terminal-b1" {
-		t.Fatalf("Terminals = %#v, want only terminal-b1", state.Terminals)
+	if len(state.Terminals) != 3 {
+		t.Fatalf("Terminals = %#v, want all TODO project terminals preserved", state.Terminals)
 	}
-	if !starter.processes[0].closed || !starter.processes[1].closed {
-		t.Fatal("deleted project terminal processes were not closed")
+	if starter.processes[0].closed || starter.processes[1].closed {
+		t.Fatal("deleted candidate closed TODO project terminal processes")
 	}
 	if starter.processes[2].closed {
 		t.Fatal("remaining project terminal process was closed")
 	}
 }
 
-func TestAppDeletesProjectsAndOwnedTerminals(t *testing.T) {
+func TestAppDeletesProjectCandidatesWithoutClosingTodoProjectTerminals(t *testing.T) {
 	projectDirA := t.TempDir()
 	projectDirB := t.TempDir()
 	projectDirC := t.TempDir()
@@ -813,7 +1355,7 @@ func TestAppDeletesProjectsAndOwnedTerminals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddProjectFromPath(B) error = %v", err)
 	}
-	projectBID := state.ActiveProjectID
+	projectBID := findProjectByPathForApp(t, state.Projects, projectDirB).ID
 	_, todoProjectBID := createTodoProjectForApp(t, app, "升级依赖", projectBID)
 	if _, err := app.CreateTodoTerminal(todoProjectBID, 80, 24); err != nil {
 		t.Fatalf("CreateTodoTerminal(B) error = %v", err)
@@ -823,7 +1365,7 @@ func TestAppDeletesProjectsAndOwnedTerminals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddProjectFromPath(C) error = %v", err)
 	}
-	projectCID := state.ActiveProjectID
+	projectCID := findProjectByPathForApp(t, state.Projects, projectDirC).ID
 	_, todoProjectCID := createTodoProjectForApp(t, app, "整理项目", projectCID)
 	if _, err := app.CreateTodoTerminal(todoProjectCID, 80, 24); err != nil {
 		t.Fatalf("CreateTodoTerminal(C) error = %v", err)
@@ -850,11 +1392,11 @@ func TestAppDeletesProjectsAndOwnedTerminals(t *testing.T) {
 	if state.ActiveTerminalID != "terminal-b1" {
 		t.Fatalf("ActiveTerminalID = %q, want terminal-b1", state.ActiveTerminalID)
 	}
-	if len(state.Terminals) != 1 || state.Terminals[0].ID != "terminal-b1" {
-		t.Fatalf("Terminals = %#v, want only terminal-b1", state.Terminals)
+	if len(state.Terminals) != 3 {
+		t.Fatalf("Terminals = %#v, want all TODO project terminals preserved", state.Terminals)
 	}
-	if !starter.processes[0].closed || !starter.processes[2].closed {
-		t.Fatal("deleted project terminal processes were not closed")
+	if starter.processes[0].closed || starter.processes[2].closed {
+		t.Fatal("deleted candidates closed TODO project terminal processes")
 	}
 	if starter.processes[1].closed {
 		t.Fatal("remaining project terminal process was closed")
@@ -952,6 +1494,43 @@ func TestAppGetsProjectGitStatusForAvailableProject(t *testing.T) {
 	}
 	if status.ChangedCount != 3 {
 		t.Fatalf("ChangedCount = %d, want 3", status.ChangedCount)
+	}
+}
+
+func TestAppGetsProjectGitStatusFromTodoProjectCopyAfterCandidateRemoval(t *testing.T) {
+	projectDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	projectID := state.Projects[0].ID
+	if _, err := app.CreateTodo(CreateTodoRequest{Title: "修复登录问题", ProjectIDs: []string{projectID}}); err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	if _, err := app.DeleteProject(projectID); err != nil {
+		t.Fatalf("DeleteProject() error = %v", err)
+	}
+	app.gitStatus = func(path string) (GitStatus, error) {
+		if path != projectDir {
+			t.Fatalf("git status path = %q, want %q", path, projectDir)
+		}
+		return GitStatus{IsRepo: true, Branch: "main"}, nil
+	}
+
+	status, err := app.GetProjectGitStatus(projectID)
+	if err != nil {
+		t.Fatalf("GetProjectGitStatus() error = %v", err)
+	}
+
+	if status.ProjectID != projectID {
+		t.Fatalf("ProjectID = %q, want %q", status.ProjectID, projectID)
+	}
+	if status.Branch != "main" {
+		t.Fatalf("Branch = %q, want main", status.Branch)
 	}
 }
 
@@ -1140,4 +1719,16 @@ func createTodoProjectForApp(t *testing.T, app *App, title string, projectID str
 		t.Fatalf("ChangeTodoStatus(%q) error = %v", todoID, err)
 	}
 	return todoID, state.ActiveTodoProjectID
+}
+
+func findProjectByPathForApp(t *testing.T, projects []Project, path string) Project {
+	t.Helper()
+	absolutePath := mustAbs(t, path)
+	for _, project := range projects {
+		if project.Path == absolutePath {
+			return project
+		}
+	}
+	t.Fatalf("project path %q not found in %#v", absolutePath, projects)
+	return Project{}
 }

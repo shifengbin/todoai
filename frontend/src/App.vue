@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { ChevronDown, ChevronUp, GitBranch, Plus, RotateCcw, Settings, Trash2, X } from '@lucide/vue'
+import { ChevronDown, ChevronUp, FolderInput, FolderPlus, GitBranch, Plus, RotateCcw, Settings, Trash2, X } from '@lucide/vue'
 import ProjectSidebar from './components/ProjectSidebar.vue'
 import {
   AGENT_CONFIDENCE,
@@ -29,6 +29,8 @@ import {
   InitializeProjectGitRepository,
   ListProjects,
   LoadTerminalSettings,
+  LoadTodoProjectUIState,
+  OpenRecentWorkspace,
   RemoveTodoProject,
   ResizeTerminal,
   SelectProject,
@@ -37,6 +39,7 @@ import {
   SaveTerminalLaunchProfiles,
   SaveTerminalShell,
   SaveTerminalTheme,
+  SaveTodoProjectUIState,
   SendTerminalInput,
   StartShell,
   UpdateTodo
@@ -47,6 +50,8 @@ const projects = ref([])
 const todos = ref([])
 const todoProjects = ref([])
 const terminals = ref([])
+const currentWorkspace = ref(null)
+const recentWorkspaces = ref([])
 const activeProjectId = ref('')
 const activeTodoId = ref('')
 const activeTodoProjectId = ref('')
@@ -56,6 +61,7 @@ const shellStatuses = reactive({})
 const terminalContainers = new Map()
 const titleActivityTimers = new Map()
 const autoRestartedTerminals = new Set()
+const terminalAckIds = reactive(new Set())
 const errorMessage = ref('')
 let gitStatusRequestId = 0
 let gitStatusInFlightProjectId = ''
@@ -70,13 +76,17 @@ const terminalMenu = reactive({
   y: 0
 })
 const sidebarWidth = ref(280)
+const defaultSidebarWidth = 280
 const sidebarResize = reactive({
   active: false,
   startX: 0,
-  startWidth: 280
+  startWidth: defaultSidebarWidth
 })
 const sidebarMinWidth = 220
 const sidebarMaxWidth = 520
+const currentTodoView = ref('not-started')
+const todoProjectUIStates = ref({})
+const todoProjectUIStateSaveQueues = new Map()
 const defaultTerminalLaunchProfiles = [
   { name: 'codex', command: 'codex --dangerously-bypass-hook-trust --dangerously-bypass-approvals-and-sandbox', enabled: true },
   { name: 'claude', command: 'claude --dangerously-skip-permissions', enabled: true }
@@ -133,6 +143,11 @@ const projectPicker = reactive({
   projectIds: [],
   saving: false
 })
+const recentWorkspacePicker = reactive({
+  visible: false,
+  openingPath: '',
+  error: ''
+})
 const terminalManager = new TerminalSessionManager({
   createSession: createXtermSession,
   sendInput: (terminalId, data) => SendTerminalInput(terminalId, data),
@@ -151,8 +166,11 @@ const terminalManager = new TerminalSessionManager({
 })
 
 const activeProject = computed(() => {
-  return projects.value.find((project) => project.id === activeProjectId.value) || null
+  const todoProject = todoProjects.value.find((candidate) => candidate.id === activeTodoProjectId.value)
+  return todoProjectDisplayProject(todoProject) || projects.value.find((project) => project.id === activeProjectId.value) || null
 })
+
+const hasWorkspace = computed(() => Boolean(currentWorkspace.value?.path))
 
 const activeTodo = computed(() => {
   return todos.value.find((todo) => todo.id === activeTodoId.value) || null
@@ -167,7 +185,7 @@ const activeTodoProjectProject = computed(() => {
   if (!todoProject) {
     return null
   }
-  return projects.value.find((project) => project.id === todoProject.projectId) || null
+  return todoProjectDisplayProject(todoProject)
 })
 
 const activeTerminal = computed(() => {
@@ -277,7 +295,24 @@ const selectedTodoDetailProjects = computed(() => {
     return []
   }
   const selectedProjectIds = new Set(todoDetail.projectIds)
-  return projects.value.filter((project) => selectedProjectIds.has(project.id))
+  const selected = []
+  const seenProjectIds = new Set()
+  for (const project of projects.value) {
+    if (selectedProjectIds.has(project.id)) {
+      selected.push(project)
+      seenProjectIds.add(project.id)
+    }
+  }
+  for (const todoProject of todoProjectsForTodo(todoDetail.todoId)) {
+    if (selectedProjectIds.has(todoProject.projectId) && !seenProjectIds.has(todoProject.projectId)) {
+      const project = todoProjectDisplayProject(todoProject)
+      if (project) {
+        selected.push(project)
+        seenProjectIds.add(project.id)
+      }
+    }
+  }
+  return selected
 })
 
 const todoDetailProjectOptions = computed(() => {
@@ -303,13 +338,22 @@ const removedTodoDetailProjectsWithTerminals = computed(() => {
 })
 
 const projectPickerOptions = computed(() => {
-  const linkedProjectIds = new Set(
+  const linkedProjectPaths = new Set(
     todoProjects.value
       .filter((todoProject) => todoProject.todoId === projectPicker.todoId)
+      .map((todoProject) => normalizeProjectPath(todoProject.path))
+      .filter(Boolean)
+  )
+  const linkedProjectIds = new Set(
+    todoProjects.value
+      .filter((todoProject) => todoProject.todoId === projectPicker.todoId && !todoProject.path)
       .map((todoProject) => todoProject.projectId)
   )
   return filteredProjects(
-    projects.value.filter((project) => !linkedProjectIds.has(project.id)),
+    projects.value.filter((project) => {
+      const path = normalizeProjectPath(project.path)
+      return path ? !linkedProjectPaths.has(path) : !linkedProjectIds.has(project.id)
+    }),
     projectPicker.query
   )
 })
@@ -318,6 +362,13 @@ const selectedProjectPickerProjects = computed(() => {
   const selectedProjectIds = new Set(projectPicker.projectIds)
   return projects.value.filter((project) => selectedProjectIds.has(project.id))
 })
+
+const sidebarTerminals = computed(() =>
+  terminals.value.map((terminal) => ({
+    ...terminal,
+    attentionState: terminalAckIds.has(terminal.id) ? 'needs-ack' : ''
+  }))
+)
 
 onMounted(async () => {
   EventsOn('terminal-output', (event) => {
@@ -332,18 +383,20 @@ onMounted(async () => {
   EventsOn('terminal-agent-status', (event) => {
     handleTerminalAgentStatus(event)
   })
+  EventsOn('workspace-state', (state) => {
+    void applyWorkspaceProjectState(state)
+  })
+  EventsOn('workspace-recent', (state) => {
+    showRecentWorkspacePicker(state)
+  })
   window.addEventListener('resize', fitActiveTerminal)
   window.addEventListener('focus', refreshProjectGitStatusOnFocus)
   window.addEventListener('click', closeTerminalMenu)
 
   try {
-    applyTerminalSettings(await LoadTerminalSettings())
-  } catch (error) {
-    showError(error)
-  }
-
-  try {
     applyState(await ListProjects())
+    await loadTodoProjectUIStateForCurrentWorkspace()
+    await loadTerminalSettingsForCurrentWorkspace()
     await activateActiveTerminal()
   } catch (error) {
     showError(error)
@@ -355,6 +408,8 @@ onBeforeUnmount(() => {
   EventsOff('terminal-command-state')
   EventsOff('terminal-status')
   EventsOff('terminal-agent-status')
+  EventsOff('workspace-state')
+  EventsOff('workspace-recent')
   window.removeEventListener('resize', fitActiveTerminal)
   window.removeEventListener('focus', refreshProjectGitStatusOnFocus)
   window.removeEventListener('click', closeTerminalMenu)
@@ -366,6 +421,8 @@ onBeforeUnmount(() => {
 function applyState(state, options = {}) {
   const previousActiveProjectId = activeProjectId.value
   const previousTerminals = new Map(terminals.value.map((terminal) => [terminal.id, terminal]))
+  currentWorkspace.value = state?.currentWorkspace || null
+  recentWorkspaces.value = state?.recentWorkspaces || []
   projects.value = state?.projects || []
   todos.value = state?.todos || []
   todoProjects.value = state?.todoProjects || []
@@ -388,6 +445,7 @@ function applyState(state, options = {}) {
       terminalContainers.delete(terminalId)
       clearTitleActivityTimer(terminalId)
       autoRestartedTerminals.delete(terminalId)
+      terminalAckIds.delete(terminalId)
       delete shellStatuses[terminalId]
     }
   }
@@ -401,6 +459,10 @@ function applyState(state, options = {}) {
       shellStatuses[terminal.id] = terminal.state
     }
   }
+  if (!hasWorkspace.value) {
+    closeWorkspaceScopedPanels()
+  }
+  applyTodoProjectUIState(activeTodoProjectId.value)
   closeTerminalMenu()
   syncGitStatusForActiveProject(previousActiveProjectId, {
     refresh: options.refreshGitStatus !== false,
@@ -409,9 +471,84 @@ function applyState(state, options = {}) {
   })
 }
 
+async function applyWorkspaceProjectState(state) {
+  applyState(state, { forceGitStatusRefresh: true })
+  await loadTodoProjectUIStateForCurrentWorkspace()
+  errorMessage.value = ''
+  await activateActiveTerminal()
+}
+
+function showRecentWorkspacePicker(state) {
+  recentWorkspaces.value = state?.recentWorkspaces || []
+  recentWorkspacePicker.visible = true
+  recentWorkspacePicker.openingPath = ''
+  recentWorkspacePicker.error = ''
+}
+
+function closeRecentWorkspacePicker() {
+  recentWorkspacePicker.visible = false
+  recentWorkspacePicker.openingPath = ''
+  recentWorkspacePicker.error = ''
+}
+
+async function openRecentWorkspace(workspace) {
+  if (!workspace?.path || recentWorkspacePicker.openingPath) {
+    return
+  }
+  recentWorkspacePicker.openingPath = workspace.path
+  recentWorkspacePicker.error = ''
+  try {
+    await applyWorkspaceProjectState(await OpenRecentWorkspace(workspace.path))
+    closeRecentWorkspacePicker()
+  } catch (error) {
+    recentWorkspacePicker.error = errorMessageFrom(error)
+  } finally {
+    recentWorkspacePicker.openingPath = ''
+  }
+}
+
+async function loadTerminalSettingsForCurrentWorkspace() {
+  try {
+    applyTerminalSettings(await LoadTerminalSettings())
+  } catch (error) {
+    showError(error)
+  }
+}
+
+function closeWorkspaceScopedPanels() {
+  closeTodoForm()
+  closeTodoDetail()
+  closeProjectPicker()
+}
+
+async function loadTodoProjectUIStateForCurrentWorkspace() {
+  if (!hasWorkspace.value) {
+    todoProjectUIStates.value = {}
+    applyTodoProjectUIState('')
+    return
+  }
+  try {
+    const state = await LoadTodoProjectUIState()
+    todoProjectUIStates.value = state?.todoProjects || {}
+    applyTodoProjectUIState(activeTodoProjectId.value)
+  } catch (error) {
+    todoProjectUIStates.value = {}
+    applyTodoProjectUIState(activeTodoProjectId.value)
+    showError(error)
+  }
+}
+
 async function createProject() {
   try {
     applyState(await CreateProjectFromDialog())
+  } catch (error) {
+    showError(error)
+  }
+}
+
+async function importSingleProjectCandidate() {
+  try {
+    applyState(await CreateProjectFromDialog(), { refreshGitStatus: false })
   } catch (error) {
     showError(error)
   }
@@ -565,10 +702,6 @@ async function addProjectToTodo(todoId) {
   projectPicker.query = ''
   projectPicker.projectIds = []
   projectPicker.saving = false
-  if (projectPickerOptions.value.length === 0) {
-    showError('No available projects to add')
-    return
-  }
   projectPicker.visible = true
   errorMessage.value = ''
 }
@@ -639,6 +772,7 @@ async function removeTodoProject(todoProjectId) {
 
 async function selectTerminal(terminalId) {
   try {
+    terminalAckIds.delete(terminalId)
     applyState(await SelectTerminal(terminalId))
     await activateActiveTerminal()
     terminalManager.focus(terminalId)
@@ -758,6 +892,21 @@ async function deleteProjects(projectIds) {
   try {
     applyState(await DeleteProjects(projectIds))
     await activateActiveTerminal()
+  } catch (error) {
+    showError(error)
+  }
+}
+
+async function clearGlobalProjectCandidates() {
+  const projectIds = projects.value.map((project) => project.id).filter(Boolean)
+  if (projectIds.length === 0) {
+    return
+  }
+  if (!window.confirm('Clear global project candidates?')) {
+    return
+  }
+  try {
+    applyState(await DeleteProjects(projectIds), { refreshGitStatus: false })
   } catch (error) {
     showError(error)
   }
@@ -1044,12 +1193,12 @@ async function refreshProjectGitStatus(options = {}) {
   gitStatusError.value = ''
   try {
     const status = await GetProjectGitStatus(projectId)
-    if (requestId !== gitStatusRequestId || activeProjectId.value !== projectId) {
+    if (requestId !== gitStatusRequestId || activeProject.value?.id !== projectId) {
       return
     }
     gitStatus.value = status
   } catch (error) {
-    if (requestId !== gitStatusRequestId || activeProjectId.value !== projectId) {
+    if (requestId !== gitStatusRequestId || activeProject.value?.id !== projectId) {
       return
     }
     gitStatus.value = null
@@ -1066,6 +1215,9 @@ async function refreshProjectGitStatus(options = {}) {
 }
 
 function refreshProjectGitStatusOnFocus() {
+  if (!hasWorkspace.value) {
+    return
+  }
   const project = activeProject.value
   const now = Date.now()
   if (
@@ -1097,13 +1249,13 @@ async function initializeActiveProjectGitRepository() {
   errorMessage.value = ''
   try {
     await InitializeProjectGitRepository(projectId)
-    if (activeProjectId.value === projectId) {
+    if (activeProject.value?.id === projectId) {
       await refreshProjectGitStatus()
     }
   } catch (error) {
     showError(error)
   } finally {
-    if (activeProjectId.value === projectId) {
+    if (activeProject.value?.id === projectId) {
       gitInitLoading.value = false
     }
   }
@@ -1121,6 +1273,32 @@ function filteredProjects(projectList, query) {
   return projectList.filter((project) => {
     return [project.name, project.path].some((value) => normalizeSearch(value).includes(normalizedQuery))
   })
+}
+
+function todoProjectsForTodo(todoId) {
+  if (!todoId) {
+    return []
+  }
+  return todoProjects.value.filter((todoProject) => todoProject.todoId === todoId)
+}
+
+function todoProjectDisplayProject(todoProject) {
+  if (!todoProject) {
+    return null
+  }
+  if (todoProject.name || todoProject.path) {
+    return {
+      id: todoProject.projectId,
+      name: todoProject.name || 'Missing project',
+      path: todoProject.path || todoProject.projectId,
+      available: todoProject.available !== false
+    }
+  }
+  return projects.value.find((project) => project.id === todoProject.projectId) || null
+}
+
+function normalizeProjectPath(path) {
+  return (path || '').trim()
 }
 
 function normalizeSearch(value) {
@@ -1174,7 +1352,69 @@ function stopSidebarResize() {
   sidebarResize.active = false
   window.removeEventListener('mousemove', resizeSidebar)
   window.removeEventListener('mouseup', stopSidebarResize)
+  persistActiveTodoProjectUIState()
   scheduleFitActiveTerminal()
+}
+
+function handleTodoViewChange(view) {
+  currentTodoView.value = normalizeTodoView(view)
+  persistActiveTodoProjectUIState()
+}
+
+function applyTodoProjectUIState(todoProjectId) {
+  const state = todoProjectId ? todoProjectUIStates.value[todoProjectId] : null
+  currentTodoView.value = normalizeTodoView(state?.todoView)
+  sidebarWidth.value = clampNumber(state?.sidebarWidth || defaultSidebarWidth, sidebarMinWidth, sidebarMaxWidth)
+  scheduleFitActiveTerminal()
+}
+
+function persistActiveTodoProjectUIState() {
+  const todoProjectId = activeTodoProjectId.value
+  if (!hasWorkspace.value || !todoProjectId) {
+    return
+  }
+  const state = {
+    todoView: normalizeTodoView(currentTodoView.value),
+    sidebarWidth: clampNumber(sidebarWidth.value, sidebarMinWidth, sidebarMaxWidth)
+  }
+  todoProjectUIStates.value = {
+    ...todoProjectUIStates.value,
+    [todoProjectId]: state
+  }
+  queueTodoProjectUIStateSave(todoProjectId, state)
+}
+
+function queueTodoProjectUIStateSave(todoProjectId, state) {
+  const queue = todoProjectUIStateSaveQueues.get(todoProjectId) || {
+    saving: false,
+    pending: null
+  }
+  queue.pending = state
+  todoProjectUIStateSaveQueues.set(todoProjectId, queue)
+  if (!queue.saving) {
+    drainTodoProjectUIStateSaveQueue(todoProjectId, queue)
+  }
+}
+
+async function drainTodoProjectUIStateSaveQueue(todoProjectId, queue) {
+  queue.saving = true
+  while (queue.pending) {
+    const nextState = queue.pending
+    queue.pending = null
+    try {
+      await SaveTodoProjectUIState(todoProjectId, nextState)
+    } catch (error) {
+      showError(error)
+    }
+  }
+  queue.saving = false
+  if (!queue.pending) {
+    todoProjectUIStateSaveQueues.delete(todoProjectId)
+  }
+}
+
+function normalizeTodoView(view) {
+  return ['not-started', 'in-progress', 'completed'].includes(view) ? view : 'not-started'
 }
 
 function clampNumber(value, min, max) {
@@ -1269,7 +1509,28 @@ function handleTerminalAgentStatus(event) {
 }
 
 function applyTerminalAgentEvent(terminal, event) {
+  const previousActivityState = visibleTerminalActivityState(terminal)
   Object.assign(terminal, applyAgentStatusEvent(terminal, event))
+  updateTerminalAckState(terminal, previousActivityState)
+}
+
+function visibleTerminalActivityState(terminal) {
+  const state = terminal?.activityState || terminal?.agentStatus?.phase || AGENT_PHASE.IDLE
+  return [AGENT_PHASE.BUSY, AGENT_PHASE.NEEDS_INPUT].includes(state) ? state : AGENT_PHASE.IDLE
+}
+
+function updateTerminalAckState(terminal, previousActivityState) {
+  const nextActivityState = visibleTerminalActivityState(terminal)
+  if (nextActivityState === AGENT_PHASE.BUSY) {
+    terminalAckIds.delete(terminal.id)
+    return
+  }
+  if (
+    previousActivityState === AGENT_PHASE.BUSY &&
+    terminal.id !== activeTerminalId.value
+  ) {
+    terminalAckIds.add(terminal.id)
+  }
 }
 
 function markTerminalTitleActivity(terminal, at = Date.now()) {
@@ -1347,13 +1608,15 @@ function showError(error) {
       :projects="projects"
       :todos="todos"
       :todo-projects="todoProjects"
-      :terminals="terminals"
+      :terminals="sidebarTerminals"
       :active-project-id="activeProjectId"
       :active-todo-id="activeTodoId"
       :active-todo-project-id="activeTodoProjectId"
       :active-terminal-id="activeTerminalId"
       :launch-profiles="terminalLaunchProfiles"
       :import-summary="importSummary"
+      :has-workspace="hasWorkspace"
+      :todo-view="currentTodoView"
       @create-project="createProject"
       @import-projects="importProjectsFromParentDirectory"
       @select-project="selectProject"
@@ -1373,6 +1636,7 @@ function showError(error) {
       @delete-project="deleteProject"
       @delete-projects="deleteProjects"
       @delete-terminal="deleteTerminal"
+      @todo-view-change="handleTodoViewChange"
     />
 
     <div
@@ -1386,7 +1650,8 @@ function showError(error) {
 
     <section class="workspace">
       <header class="workspace-header">
-        <div v-if="activeTodoProject && activeTodoProjectProject" class="project-heading">
+        <div v-if="!hasWorkspace" class="project-heading muted">Open a project</div>
+        <div v-else-if="activeTodoProject && activeTodoProjectProject" class="project-heading">
           <span class="heading-name">{{ activeTodo?.title || 'TODO' }} / {{ activeTodoProjectProject.name }}</span>
           <span class="heading-path">{{ activeTodoProjectProject.path }}</span>
         </div>
@@ -1450,7 +1715,8 @@ function showError(error) {
           </button>
         </div>
 
-        <div v-if="!activeTodoProject || !activeTodoProjectProject" class="state-layer">Select a TODO project</div>
+        <div v-if="!hasWorkspace" class="state-layer" data-testid="workspace-empty-state">Open a project</div>
+        <div v-else-if="!activeTodoProject || !activeTodoProjectProject" class="state-layer">Select a TODO project</div>
         <div v-else-if="!activeTodoProjectProject.available" class="state-layer warning">Project path unavailable</div>
         <div v-else-if="!activeTerminal" class="state-layer">Select a terminal</div>
         <div v-else-if="activeTerminalState === 'unsupported'" class="state-layer warning">
@@ -1493,7 +1759,13 @@ function showError(error) {
             <h2>New TODO</h2>
             <p>Task context</p>
           </div>
-          <button type="button" class="icon-button" title="Close TODO form" @click="closeTodoForm">
+          <button
+            type="button"
+            class="icon-button"
+            data-testid="todo-create-close"
+            title="Close TODO form"
+            @click="closeTodoForm"
+          >
             <X :size="16" />
           </button>
         </header>
@@ -1540,7 +1812,46 @@ function showError(error) {
           </div>
 
           <div class="settings-field">
-            <span class="settings-label">Projects</span>
+            <span class="settings-label">
+              Projects
+              <span class="field-optional" data-testid="todo-projects-optional">Optional</span>
+            </span>
+            <div class="candidate-management-toolbar" data-testid="todo-project-candidate-tools">
+              <button
+                type="button"
+                class="toolbar-button compact"
+                data-testid="import-single-project-candidate"
+                :disabled="todoForm.saving"
+                @click="importSingleProjectCandidate"
+              >
+                <FolderPlus :size="14" />
+                <span>Import project</span>
+              </button>
+              <button
+                type="button"
+                class="toolbar-button compact"
+                data-testid="import-global-project-candidates"
+                :disabled="todoForm.saving"
+                @click="importProjectsFromParentDirectory"
+              >
+                <FolderInput :size="14" />
+                <span>Import parent</span>
+              </button>
+              <button
+                type="button"
+                class="toolbar-button compact danger"
+                data-testid="clear-global-project-candidates"
+                :disabled="todoForm.saving || projects.length === 0"
+                @click="clearGlobalProjectCandidates"
+              >
+                <Trash2 :size="14" />
+                <span>Clear candidates</span>
+              </button>
+            </div>
+            <div v-if="importSummary" class="import-summary" data-testid="import-summary">
+              <span>{{ importSummary.addedCount || 0 }} imported</span>
+              <span>{{ importSummary.skippedCount || 0 }} skipped</span>
+            </div>
             <div
               v-if="selectedTodoFormProjects.length"
               class="todo-selected-project-tags"
@@ -1585,7 +1896,7 @@ function showError(error) {
                 <span class="project-name">{{ project.name }}</span>
                 <span class="project-path">{{ project.path }}</span>
               </button>
-              <span v-if="todoFormProjectOptions.length === 0" class="sidebar-empty">No matching projects</span>
+              <span v-if="todoFormProjectOptions.length === 0" class="sidebar-empty">No projects selected</span>
             </div>
           </div>
         </div>
@@ -1612,7 +1923,13 @@ function showError(error) {
             <h2>TODO Detail</h2>
             <p>Task context</p>
           </div>
-          <button type="button" class="icon-button" title="Close TODO detail" @click="closeTodoDetail">
+          <button
+            type="button"
+            class="icon-button"
+            data-testid="todo-detail-close"
+            title="Close TODO detail"
+            @click="closeTodoDetail"
+          >
             <X :size="16" />
           </button>
         </header>
@@ -1686,7 +2003,47 @@ function showError(error) {
               No completed project snapshots
             </span>
             <div
-              v-else-if="selectedTodoDetailProjects.length"
+              v-if="!todoDetail.readOnly"
+              class="candidate-management-toolbar"
+              data-testid="todo-detail-project-candidate-tools"
+            >
+              <button
+                type="button"
+                class="toolbar-button compact"
+                data-testid="import-single-project-candidate"
+                :disabled="todoDetail.saving"
+                @click="importSingleProjectCandidate"
+              >
+                <FolderPlus :size="14" />
+                <span>Import project</span>
+              </button>
+              <button
+                type="button"
+                class="toolbar-button compact"
+                data-testid="import-global-project-candidates"
+                :disabled="todoDetail.saving"
+                @click="importProjectsFromParentDirectory"
+              >
+                <FolderInput :size="14" />
+                <span>Import parent</span>
+              </button>
+              <button
+                type="button"
+                class="toolbar-button compact danger"
+                data-testid="clear-global-project-candidates"
+                :disabled="todoDetail.saving || projects.length === 0"
+                @click="clearGlobalProjectCandidates"
+              >
+                <Trash2 :size="14" />
+                <span>Clear candidates</span>
+              </button>
+            </div>
+            <div v-if="!todoDetail.readOnly && importSummary" class="import-summary" data-testid="import-summary">
+              <span>{{ importSummary.addedCount || 0 }} imported</span>
+              <span>{{ importSummary.skippedCount || 0 }} skipped</span>
+            </div>
+            <div
+              v-if="!todoDetail.readOnly && selectedTodoDetailProjects.length"
               class="todo-selected-project-tags"
               data-testid="todo-detail-selected-projects"
             >
@@ -1760,12 +2117,54 @@ function showError(error) {
             <h2>Add Project</h2>
             <p>TODO context</p>
           </div>
-          <button type="button" class="icon-button" title="Close project picker" @click="closeProjectPicker">
+          <button
+            type="button"
+            class="icon-button"
+            data-testid="todo-project-picker-close"
+            title="Close project picker"
+            @click="closeProjectPicker"
+          >
             <X :size="16" />
           </button>
         </header>
 
         <div class="settings-body todo-form-body">
+          <div class="candidate-management-toolbar" data-testid="todo-project-picker-candidate-tools">
+            <button
+              type="button"
+              class="toolbar-button compact"
+              data-testid="import-single-project-candidate"
+              :disabled="projectPicker.saving"
+              @click="importSingleProjectCandidate"
+            >
+              <FolderPlus :size="14" />
+              <span>Import project</span>
+            </button>
+            <button
+              type="button"
+              class="toolbar-button compact"
+              data-testid="import-global-project-candidates"
+              :disabled="projectPicker.saving"
+              @click="importProjectsFromParentDirectory"
+            >
+              <FolderInput :size="14" />
+              <span>Import parent</span>
+            </button>
+            <button
+              type="button"
+              class="toolbar-button compact danger"
+              data-testid="clear-global-project-candidates"
+              :disabled="projectPicker.saving || projects.length === 0"
+              @click="clearGlobalProjectCandidates"
+            >
+              <Trash2 :size="14" />
+              <span>Clear candidates</span>
+            </button>
+          </div>
+          <div v-if="importSummary" class="import-summary" data-testid="import-summary">
+            <span>{{ importSummary.addedCount || 0 }} imported</span>
+            <span>{{ importSummary.skippedCount || 0 }} skipped</span>
+          </div>
           <div
             v-if="selectedProjectPickerProjects.length"
             class="todo-selected-project-tags"
@@ -1830,6 +2229,50 @@ function showError(error) {
           >
             Add
           </button>
+        </footer>
+      </section>
+    </div>
+
+    <div v-if="recentWorkspacePicker.visible" class="settings-overlay" @click="closeRecentWorkspacePicker">
+      <section class="settings-dialog recent-workspace-dialog" data-testid="recent-workspace-dialog" @click.stop>
+        <header class="settings-header">
+          <div>
+            <h2>Recent Projects</h2>
+            <p>Workspaces</p>
+          </div>
+          <button type="button" class="icon-button" title="Close recent projects" @click="closeRecentWorkspacePicker">
+            <X :size="16" />
+          </button>
+        </header>
+
+        <div class="settings-body recent-workspace-list">
+          <div
+            v-if="recentWorkspacePicker.error"
+            class="settings-error"
+            data-testid="recent-workspace-error"
+          >
+            {{ recentWorkspacePicker.error }}
+          </div>
+          <div v-if="recentWorkspaces.length === 0" class="sidebar-empty" data-testid="recent-workspace-empty">
+            No recent projects
+          </div>
+          <button
+            v-for="(workspace, index) in recentWorkspaces"
+            :key="workspace.path"
+            type="button"
+            class="recent-workspace-item"
+            :data-testid="`recent-workspace-${index}`"
+            :disabled="recentWorkspacePicker.openingPath === workspace.path"
+            @click="openRecentWorkspace(workspace)"
+          >
+            <span class="recent-workspace-name">{{ workspace.name || workspace.path }}</span>
+            <span class="recent-workspace-path">{{ workspace.path }}</span>
+            <span v-if="workspace.available === false" class="project-status">Unavailable</span>
+          </button>
+        </div>
+
+        <footer class="settings-actions">
+          <button type="button" class="toolbar-button" @click="closeRecentWorkspacePicker">Cancel</button>
         </footer>
       </section>
     </div>
