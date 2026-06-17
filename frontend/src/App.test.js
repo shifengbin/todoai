@@ -836,6 +836,91 @@ describe('App project terminal tree', () => {
     })
   })
 
+  it('preserves sidebar width after creating a TODO without an active TODO project', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        projects: [],
+        todos: [],
+        todoProjects: [],
+        activeProjectId: '',
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        terminals: [],
+        activeTerminalId: ''
+      })
+    )
+    appApiMock.CreateTodo.mockResolvedValue(
+      projectState({
+        projects: [],
+        todos: [todo({ id: 'todo-no-project', title: 'Write docs' })],
+        todoProjects: [],
+        activeProjectId: '',
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        terminals: [],
+        activeTerminalId: ''
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="sidebar-resize-handle"]').trigger('mousedown', { clientX: 280 })
+    window.dispatchEvent(new MouseEvent('mousemove', { clientX: 360 }))
+    window.dispatchEvent(new MouseEvent('mouseup', { clientX: 360 }))
+    await flushPromises()
+
+    await wrapper.find('[data-testid="new-todo"]').trigger('click')
+    await nextTick()
+    await wrapper.find('[data-testid="todo-name-input"]').setValue('Write docs')
+    await wrapper.find('[data-testid="todo-create-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.app-shell').attributes('style')).toContain('--sidebar-width: 360px')
+  })
+
+  it('preserves current TODO view after creating a TODO without an active TODO project', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        projects: [],
+        todos: [todo({ id: 'todo-running', title: 'Investigate', status: 'in-progress' })],
+        todoProjects: [],
+        activeProjectId: '',
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        terminals: [],
+        activeTerminalId: ''
+      })
+    )
+    appApiMock.CreateTodo.mockResolvedValue(
+      projectState({
+        projects: [],
+        todos: [
+          todo({ id: 'todo-running', title: 'Investigate', status: 'in-progress' }),
+          todo({ id: 'todo-new', title: 'Write docs', status: 'not-started' })
+        ],
+        todoProjects: [],
+        activeProjectId: '',
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        terminals: [],
+        activeTerminalId: ''
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="todo-view-in-progress"]').classes()).toContain('active')
+
+    await wrapper.find('[data-testid="new-todo"]').trigger('click')
+    await nextTick()
+    await wrapper.find('[data-testid="todo-name-input"]').setValue('Write docs')
+    await wrapper.find('[data-testid="todo-create-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="todo-view-in-progress"]').classes()).toContain('active')
+    expect(wrapper.find('[data-testid="todo-todo-running"]').exists()).toBe(true)
+  })
+
   it('does not create a TODO with a blank name', async () => {
     const wrapper = await mountReadyApp()
 
@@ -896,6 +981,61 @@ describe('App project terminal tree', () => {
     expect(AddProjectsToTodo).toHaveBeenCalledWith('todo-a', ['project-b', 'project-c'])
     expect(wrapper.find('[data-testid="todo-project-todo-project-b"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="todo-project-todo-project-c"]').exists()).toBe(true)
+  })
+
+  it('restores sidebar width for the active TODO project after adding projects to a TODO', async () => {
+    appApiMock.LoadTodoProjectUIState.mockResolvedValue(
+      todoProjectUIStateFile({
+        todoProjects: {
+          'todo-project-a': { todoView: 'not-started', sidebarWidth: 360 },
+          'todo-project-b': { todoView: 'not-started', sidebarWidth: 420 }
+        }
+      })
+    )
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'frontend-app', path: '/work/frontend-app', available: true },
+          { id: 'project-b', name: 'api-service', path: '/work/api-service', available: true }
+        ],
+        todoProjects: [todoProject({ id: 'todo-project-a', projectId: 'project-a' })],
+        activeTodoProjectId: 'todo-project-a',
+        activeProjectId: 'project-a',
+        terminals: [],
+        activeTerminalId: ''
+      })
+    )
+    appApiMock.AddProjectsToTodo.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'frontend-app', path: '/work/frontend-app', available: true },
+          { id: 'project-b', name: 'api-service', path: '/work/api-service', available: true }
+        ],
+        todoProjects: [
+          todoProject({ id: 'todo-project-a', projectId: 'project-a' }),
+          todoProject({ id: 'todo-project-b', projectId: 'project-b' })
+        ],
+        activeTodoId: 'todo-a',
+        activeTodoProjectId: 'todo-project-b',
+        activeProjectId: 'project-b',
+        terminals: [],
+        activeTerminalId: ''
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    expect(wrapper.find('.app-shell').attributes('style')).toContain('--sidebar-width: 360px')
+
+    await selectTodoMenuAction(wrapper, 'add-project', 'todo-a')
+    await nextTick()
+    await wrapper.find('[data-testid="todo-project-picker-filter"]').setValue('api')
+    await nextTick()
+    await wrapper.find('[data-testid="todo-project-picker-option-project-b"]').trigger('click')
+    await wrapper.find('[data-testid="todo-project-picker-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(AddProjectsToTodo).toHaveBeenCalledWith('todo-a', ['project-b'])
+    expect(wrapper.find('.app-shell').attributes('style')).toContain('--sidebar-width: 420px')
   })
 
   it('removes selected project tags before adding projects to a TODO', async () => {
@@ -1157,6 +1297,103 @@ describe('App project terminal tree', () => {
     })
   })
 
+  it('restores saved TODO project UI state when the user selects a TODO project', async () => {
+    appApiMock.LoadTodoProjectUIState.mockResolvedValue(
+      todoProjectUIStateFile({
+        todoProjects: {
+          'todo-project-a': { todoView: 'not-started', sidebarWidth: 360 },
+          'todo-project-b': { todoView: 'in-progress', sidebarWidth: 420 }
+        }
+      })
+    )
+    const selectedTodoProjectState = projectState({
+      todos: [
+        todo({ id: 'todo-a', status: 'not-started' }),
+        todo({ id: 'todo-b', title: 'Write tests', status: 'not-started' })
+      ],
+      todoProjects: [
+        todoProject({ id: 'todo-project-a', todoId: 'todo-a' }),
+        todoProject({ id: 'todo-project-b', todoId: 'todo-b', projectId: 'project-a' })
+      ],
+      activeTodoId: 'todo-b',
+      activeTodoProjectId: 'todo-project-b'
+    })
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        todos: [
+          todo({ id: 'todo-a', status: 'not-started' }),
+          todo({ id: 'todo-b', title: 'Write tests', status: 'not-started' })
+        ],
+        todoProjects: [
+          todoProject({ id: 'todo-project-a', todoId: 'todo-a' }),
+          todoProject({ id: 'todo-project-b', todoId: 'todo-b', projectId: 'project-a' })
+        ],
+        activeTodoProjectId: 'todo-project-a'
+      })
+    )
+    appApiMock.SelectTodoProject.mockResolvedValue(selectedTodoProjectState)
+    const wrapper = await mountReadyApp()
+
+    expect(wrapper.find('.app-shell').attributes('style')).toContain('--sidebar-width: 360px')
+
+    await wrapper.find('[data-testid="toggle-todo-todo-b"]').trigger('click')
+    await nextTick()
+    await wrapper.find('[data-testid="todo-project-todo-project-b"]').trigger('click')
+    await flushPromises()
+
+    expect(appApiMock.SelectTodoProject).toHaveBeenCalledWith('todo-project-b')
+    expect(wrapper.find('[data-testid="todo-view-in-progress"]').classes()).toContain('active')
+    expect(wrapper.find('.app-shell').attributes('style')).toContain('--sidebar-width: 420px')
+  })
+
+  it('restores sidebar width per project under the same TODO item', async () => {
+    appApiMock.LoadTodoProjectUIState.mockResolvedValue(
+      todoProjectUIStateFile({
+        todoProjects: {
+          'todo-project-a': { todoView: 'not-started', sidebarWidth: 360 },
+          'todo-project-b': { todoView: 'not-started', sidebarWidth: 420 }
+        }
+      })
+    )
+    const baseState = projectState({
+      projects: [
+        { id: 'project-a', name: 'frontend', path: '/work/frontend', available: true },
+        { id: 'project-b', name: 'api', path: '/work/api', available: true }
+      ],
+      todos: [todo({ id: 'todo-a', status: 'not-started' })],
+      todoProjects: [
+        todoProject({ id: 'todo-project-a', todoId: 'todo-a', projectId: 'project-a' }),
+        todoProject({ id: 'todo-project-b', todoId: 'todo-a', projectId: 'project-b' })
+      ],
+      activeTodoId: 'todo-a',
+      activeTodoProjectId: 'todo-project-a',
+      activeProjectId: 'project-a'
+    })
+    appApiMock.ListProjects.mockResolvedValue(baseState)
+    appApiMock.SelectTodoProject.mockImplementation((todoProjectId) =>
+      Promise.resolve({
+        ...baseState,
+        activeTodoProjectId: todoProjectId,
+        activeProjectId: todoProjectId === 'todo-project-b' ? 'project-b' : 'project-a'
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    expect(wrapper.find('.app-shell').attributes('style')).toContain('--sidebar-width: 360px')
+
+    await wrapper.find('[data-testid="todo-project-todo-project-b"]').trigger('click')
+    await flushPromises()
+
+    expect(appApiMock.SelectTodoProject).toHaveBeenCalledWith('todo-project-b')
+    expect(wrapper.find('.app-shell').attributes('style')).toContain('--sidebar-width: 420px')
+
+    await wrapper.find('[data-testid="todo-project-todo-project-a"]').trigger('click')
+    await flushPromises()
+
+    expect(appApiMock.SelectTodoProject).toHaveBeenCalledWith('todo-project-a')
+    expect(wrapper.find('.app-shell').attributes('style')).toContain('--sidebar-width: 360px')
+  })
+
   it('saves sidebar width after divider dragging ends for the active TODO project', async () => {
     const wrapper = await mountReadyApp()
 
@@ -1343,6 +1580,39 @@ describe('App project terminal tree', () => {
   })
 
   it('changes TODO workflow status from the sidebar', async () => {
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="mark-todo-in-progress-todo-a"]').trigger('click')
+    await flushPromises()
+
+    expect(ChangeTodoStatus).toHaveBeenCalledWith('todo-a', 'in-progress')
+    expect(wrapper.find('[data-testid="todo-view-in-progress"]').classes()).toContain('active')
+    expect(wrapper.find('[data-testid="todo-todo-a"]').exists()).toBe(true)
+  })
+
+  it('stays on in-progress view after starting a TODO without an active TODO project', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        todos: [todo({ id: 'todo-a', status: 'not-started' })],
+        todoProjects: [],
+        activeProjectId: '',
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        terminals: [],
+        activeTerminalId: ''
+      })
+    )
+    appApiMock.ChangeTodoStatus.mockResolvedValue(
+      projectState({
+        todos: [todo({ id: 'todo-a', status: 'in-progress' })],
+        todoProjects: [],
+        activeProjectId: '',
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        terminals: [],
+        activeTerminalId: ''
+      })
+    )
     const wrapper = await mountReadyApp()
 
     await wrapper.find('[data-testid="mark-todo-in-progress-todo-a"]').trigger('click')

@@ -395,7 +395,7 @@ onMounted(async () => {
 
   try {
     applyState(await ListProjects())
-    await loadTodoProjectUIStateForCurrentWorkspace()
+    await loadTodoProjectUIStateForCurrentWorkspace({ restoreTodoProjectUIState: true })
     await loadTerminalSettingsForCurrentWorkspace()
     await activateActiveTerminal()
   } catch (error) {
@@ -420,6 +420,7 @@ onBeforeUnmount(() => {
 
 function applyState(state, options = {}) {
   const previousActiveProjectId = activeProjectId.value
+  const previousActiveTodoProjectId = activeTodoProjectId.value
   const previousTerminals = new Map(terminals.value.map((terminal) => [terminal.id, terminal]))
   currentWorkspace.value = state?.currentWorkspace || null
   recentWorkspaces.value = state?.recentWorkspaces || []
@@ -462,7 +463,12 @@ function applyState(state, options = {}) {
   if (!hasWorkspace.value) {
     closeWorkspaceScopedPanels()
   }
-  applyTodoProjectUIState(activeTodoProjectId.value)
+  if (
+    options.restoreTodoProjectUIState === true ||
+    (activeTodoProjectId.value && activeTodoProjectId.value !== previousActiveTodoProjectId)
+  ) {
+    applyTodoProjectUIState(activeTodoProjectId.value)
+  }
   closeTerminalMenu()
   syncGitStatusForActiveProject(previousActiveProjectId, {
     refresh: options.refreshGitStatus !== false,
@@ -471,9 +477,12 @@ function applyState(state, options = {}) {
   })
 }
 
-async function applyWorkspaceProjectState(state) {
-  applyState(state, { forceGitStatusRefresh: true })
-  await loadTodoProjectUIStateForCurrentWorkspace()
+async function applyWorkspaceProjectState(state, options = {}) {
+  const restoreTodoProjectUIState =
+    options.restoreTodoProjectUIState === true ||
+    (state?.currentWorkspace?.path || '') !== (currentWorkspace.value?.path || '')
+  applyState(state, { forceGitStatusRefresh: true, restoreTodoProjectUIState })
+  await loadTodoProjectUIStateForCurrentWorkspace({ restoreTodoProjectUIState })
   errorMessage.value = ''
   await activateActiveTerminal()
 }
@@ -498,7 +507,7 @@ async function openRecentWorkspace(workspace) {
   recentWorkspacePicker.openingPath = workspace.path
   recentWorkspacePicker.error = ''
   try {
-    await applyWorkspaceProjectState(await OpenRecentWorkspace(workspace.path))
+    await applyWorkspaceProjectState(await OpenRecentWorkspace(workspace.path), { restoreTodoProjectUIState: true })
     closeRecentWorkspacePicker()
   } catch (error) {
     recentWorkspacePicker.error = errorMessageFrom(error)
@@ -521,19 +530,25 @@ function closeWorkspaceScopedPanels() {
   closeProjectPicker()
 }
 
-async function loadTodoProjectUIStateForCurrentWorkspace() {
+async function loadTodoProjectUIStateForCurrentWorkspace(options = {}) {
   if (!hasWorkspace.value) {
     todoProjectUIStates.value = {}
-    applyTodoProjectUIState('')
+    if (options.restoreTodoProjectUIState === true) {
+      applyTodoProjectUIState('')
+    }
     return
   }
   try {
     const state = await LoadTodoProjectUIState()
     todoProjectUIStates.value = state?.todoProjects || {}
-    applyTodoProjectUIState(activeTodoProjectId.value)
+    if (options.restoreTodoProjectUIState === true) {
+      applyTodoProjectUIState(activeTodoProjectId.value)
+    }
   } catch (error) {
     todoProjectUIStates.value = {}
-    applyTodoProjectUIState(activeTodoProjectId.value)
+    if (options.restoreTodoProjectUIState === true) {
+      applyTodoProjectUIState(activeTodoProjectId.value)
+    }
     showError(error)
   }
 }
@@ -754,7 +769,11 @@ function removeTodoFormProject(projectId) {
 
 async function selectTodoProject(todoProjectId) {
   try {
-    applyState(await SelectTodoProject(todoProjectId), { dedupeGitStatus: true, forceGitStatusRefresh: true })
+    applyState(await SelectTodoProject(todoProjectId), {
+      dedupeGitStatus: true,
+      forceGitStatusRefresh: true,
+      restoreTodoProjectUIState: true
+    })
     await activateActiveTerminal()
   } catch (error) {
     showError(error)
