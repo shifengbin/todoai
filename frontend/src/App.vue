@@ -39,6 +39,7 @@ import {
   SaveTerminalLaunchProfiles,
   SaveTerminalShell,
   SaveTerminalTheme,
+  SaveTodoSidebarWidth,
   SaveTodoProjectUIState,
   SendTerminalInput,
   StartShell,
@@ -86,7 +87,12 @@ const sidebarMinWidth = 220
 const sidebarMaxWidth = 520
 const currentTodoView = ref('not-started')
 const todoProjectUIStates = ref({})
+const todoSidebarWidthState = ref(0)
 const todoProjectUIStateSaveQueues = new Map()
+const todoSidebarWidthSaveQueue = {
+  saving: false,
+  pending: null
+}
 const defaultTerminalLaunchProfiles = [
   { name: 'codex', command: 'codex --dangerously-bypass-hook-trust --dangerously-bypass-approvals-and-sandbox', enabled: true },
   { name: 'claude', command: 'claude --dangerously-skip-permissions', enabled: true }
@@ -395,7 +401,7 @@ onMounted(async () => {
 
   try {
     applyState(await ListProjects())
-    await loadTodoProjectUIStateForCurrentWorkspace()
+    await loadTodoProjectUIStateForCurrentWorkspace({ restoreTodoProjectUIState: true })
     await loadTerminalSettingsForCurrentWorkspace()
     await activateActiveTerminal()
   } catch (error) {
@@ -462,7 +468,9 @@ function applyState(state, options = {}) {
   if (!hasWorkspace.value) {
     closeWorkspaceScopedPanels()
   }
-  applyTodoProjectUIState(activeTodoProjectId.value)
+  if (options.restoreTodoProjectUIState === true) {
+    applyTodoProjectUIState(activeTodoProjectId.value)
+  }
   closeTerminalMenu()
   syncGitStatusForActiveProject(previousActiveProjectId, {
     refresh: options.refreshGitStatus !== false,
@@ -471,9 +479,12 @@ function applyState(state, options = {}) {
   })
 }
 
-async function applyWorkspaceProjectState(state) {
-  applyState(state, { forceGitStatusRefresh: true })
-  await loadTodoProjectUIStateForCurrentWorkspace()
+async function applyWorkspaceProjectState(state, options = {}) {
+  const restoreTodoProjectUIState =
+    options.restoreTodoProjectUIState === true ||
+    (state?.currentWorkspace?.path || '') !== (currentWorkspace.value?.path || '')
+  applyState(state, { forceGitStatusRefresh: true, restoreTodoProjectUIState })
+  await loadTodoProjectUIStateForCurrentWorkspace({ restoreTodoProjectUIState })
   errorMessage.value = ''
   await activateActiveTerminal()
 }
@@ -498,7 +509,7 @@ async function openRecentWorkspace(workspace) {
   recentWorkspacePicker.openingPath = workspace.path
   recentWorkspacePicker.error = ''
   try {
-    await applyWorkspaceProjectState(await OpenRecentWorkspace(workspace.path))
+    await applyWorkspaceProjectState(await OpenRecentWorkspace(workspace.path), { restoreTodoProjectUIState: true })
     closeRecentWorkspacePicker()
   } catch (error) {
     recentWorkspacePicker.error = errorMessageFrom(error)
@@ -521,19 +532,28 @@ function closeWorkspaceScopedPanels() {
   closeProjectPicker()
 }
 
-async function loadTodoProjectUIStateForCurrentWorkspace() {
+async function loadTodoProjectUIStateForCurrentWorkspace(options = {}) {
   if (!hasWorkspace.value) {
     todoProjectUIStates.value = {}
-    applyTodoProjectUIState('')
+    todoSidebarWidthState.value = 0
+    if (options.restoreTodoProjectUIState === true) {
+      applyTodoWorkspaceUIState('')
+    }
     return
   }
   try {
     const state = await LoadTodoProjectUIState()
     todoProjectUIStates.value = state?.todoProjects || {}
-    applyTodoProjectUIState(activeTodoProjectId.value)
+    todoSidebarWidthState.value = Number(state?.sidebarWidth) || 0
+    if (options.restoreTodoProjectUIState === true) {
+      applyTodoWorkspaceUIState(activeTodoProjectId.value)
+    }
   } catch (error) {
     todoProjectUIStates.value = {}
-    applyTodoProjectUIState(activeTodoProjectId.value)
+    todoSidebarWidthState.value = 0
+    if (options.restoreTodoProjectUIState === true) {
+      applyTodoWorkspaceUIState(activeTodoProjectId.value)
+    }
     showError(error)
   }
 }
@@ -754,7 +774,11 @@ function removeTodoFormProject(projectId) {
 
 async function selectTodoProject(todoProjectId) {
   try {
-    applyState(await SelectTodoProject(todoProjectId), { dedupeGitStatus: true, forceGitStatusRefresh: true })
+    applyState(await SelectTodoProject(todoProjectId), {
+      dedupeGitStatus: true,
+      forceGitStatusRefresh: true,
+      restoreTodoProjectUIState: true
+    })
     await activateActiveTerminal()
   } catch (error) {
     showError(error)
@@ -1352,7 +1376,7 @@ function stopSidebarResize() {
   sidebarResize.active = false
   window.removeEventListener('mousemove', resizeSidebar)
   window.removeEventListener('mouseup', stopSidebarResize)
-  persistActiveTodoProjectUIState()
+  persistTodoSidebarWidth()
   scheduleFitActiveTerminal()
 }
 
@@ -1364,7 +1388,11 @@ function handleTodoViewChange(view) {
 function applyTodoProjectUIState(todoProjectId) {
   const state = todoProjectId ? todoProjectUIStates.value[todoProjectId] : null
   currentTodoView.value = normalizeTodoView(state?.todoView)
-  sidebarWidth.value = clampNumber(state?.sidebarWidth || defaultSidebarWidth, sidebarMinWidth, sidebarMaxWidth)
+}
+
+function applyTodoWorkspaceUIState(todoProjectId) {
+  applyTodoProjectUIState(todoProjectId)
+  sidebarWidth.value = clampNumber(todoSidebarWidthState.value || defaultSidebarWidth, sidebarMinWidth, sidebarMaxWidth)
   scheduleFitActiveTerminal()
 }
 
@@ -1374,14 +1402,22 @@ function persistActiveTodoProjectUIState() {
     return
   }
   const state = {
-    todoView: normalizeTodoView(currentTodoView.value),
-    sidebarWidth: clampNumber(sidebarWidth.value, sidebarMinWidth, sidebarMaxWidth)
+    todoView: normalizeTodoView(currentTodoView.value)
   }
   todoProjectUIStates.value = {
     ...todoProjectUIStates.value,
     [todoProjectId]: state
   }
   queueTodoProjectUIStateSave(todoProjectId, state)
+}
+
+function persistTodoSidebarWidth() {
+  if (!hasWorkspace.value) {
+    return
+  }
+  const width = clampNumber(sidebarWidth.value, sidebarMinWidth, sidebarMaxWidth)
+  todoSidebarWidthState.value = width
+  queueTodoSidebarWidthSave(width)
 }
 
 function queueTodoProjectUIStateSave(todoProjectId, state) {
@@ -1411,6 +1447,27 @@ async function drainTodoProjectUIStateSaveQueue(todoProjectId, queue) {
   if (!queue.pending) {
     todoProjectUIStateSaveQueues.delete(todoProjectId)
   }
+}
+
+function queueTodoSidebarWidthSave(sidebarWidth) {
+  todoSidebarWidthSaveQueue.pending = sidebarWidth
+  if (!todoSidebarWidthSaveQueue.saving) {
+    drainTodoSidebarWidthSaveQueue()
+  }
+}
+
+async function drainTodoSidebarWidthSaveQueue() {
+  todoSidebarWidthSaveQueue.saving = true
+  while (todoSidebarWidthSaveQueue.pending !== null) {
+    const nextSidebarWidth = todoSidebarWidthSaveQueue.pending
+    todoSidebarWidthSaveQueue.pending = null
+    try {
+      await SaveTodoSidebarWidth(nextSidebarWidth)
+    } catch (error) {
+      showError(error)
+    }
+  }
+  todoSidebarWidthSaveQueue.saving = false
 }
 
 function normalizeTodoView(view) {

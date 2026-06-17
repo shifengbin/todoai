@@ -142,6 +142,10 @@ export function SaveTodoProjectUIState(arg1, arg2) {
   return window['go']['main']['App']['SaveTodoProjectUIState'](arg1, arg2);
 }
 
+export function SaveTodoSidebarWidth(arg1) {
+  return window['go']['main']['App']['SaveTodoSidebarWidth'](arg1);
+}
+
 export function SelectProject(arg1) {
   return window['go']['main']['App']['SelectProject'](arg1);
 }

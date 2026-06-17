@@ -72,6 +72,8 @@ export function SaveTerminalTheme(arg1:string):Promise<main.TerminalSettingsStat
 
 export function SaveTodoProjectUIState(arg1:string,arg2:main.TodoProjectUIState):Promise<void>;
 
+export function SaveTodoSidebarWidth(arg1:number):Promise<void>;
+
 export function SelectProject(arg1:string):Promise<main.ProjectState>;
 
 export function SelectTerminal(arg1:string):Promise<main.ProjectState>;

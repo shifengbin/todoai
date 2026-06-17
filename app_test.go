@@ -909,8 +909,11 @@ func TestAppTodoProjectUIStatePersistsUnderWorkspaceData(t *testing.T) {
 	}
 	_, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", state.Projects[0].ID)
 
-	if err := app.SaveTodoProjectUIState(todoProjectID, TodoProjectUIState{TodoView: "completed", SidebarWidth: 360}); err != nil {
+	if err := app.SaveTodoProjectUIState(todoProjectID, TodoProjectUIState{TodoView: "completed"}); err != nil {
 		t.Fatalf("SaveTodoProjectUIState() error = %v", err)
+	}
+	if err := app.SaveTodoSidebarWidth(360); err != nil {
+		t.Fatalf("SaveTodoSidebarWidth() error = %v", err)
 	}
 	loaded, err := app.LoadTodoProjectUIState()
 	if err != nil {
@@ -920,8 +923,8 @@ func TestAppTodoProjectUIStatePersistsUnderWorkspaceData(t *testing.T) {
 	if loaded.TodoProjects[todoProjectID].TodoView != "completed" {
 		t.Fatalf("TodoView = %q, want completed", loaded.TodoProjects[todoProjectID].TodoView)
 	}
-	if loaded.TodoProjects[todoProjectID].SidebarWidth != 360 {
-		t.Fatalf("SidebarWidth = %d, want 360", loaded.TodoProjects[todoProjectID].SidebarWidth)
+	if loaded.SidebarWidth != 360 {
+		t.Fatalf("SidebarWidth = %d, want 360", loaded.SidebarWidth)
 	}
 	if _, err := os.Stat(filepath.Join(dataPath, "todo-project-ui-state.json")); err != nil {
 		t.Fatalf("todo project ui state file missing under .data: %v", err)
@@ -948,8 +951,11 @@ func TestAppStartupRestoresTodoProjectUIStateFromWorkspaceData(t *testing.T) {
 		t.Fatalf("AddProjectFromPath() error = %v", err)
 	}
 	_, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", state.Projects[0].ID)
-	if err := app.SaveTodoProjectUIState(todoProjectID, TodoProjectUIState{TodoView: "in-progress", SidebarWidth: 420}); err != nil {
+	if err := app.SaveTodoProjectUIState(todoProjectID, TodoProjectUIState{TodoView: "in-progress"}); err != nil {
 		t.Fatalf("SaveTodoProjectUIState() error = %v", err)
+	}
+	if err := app.SaveTodoSidebarWidth(420); err != nil {
+		t.Fatalf("SaveTodoSidebarWidth() error = %v", err)
 	}
 
 	restarted := NewAppWithConfigAndShellStarter(
@@ -969,8 +975,8 @@ func TestAppStartupRestoresTodoProjectUIStateFromWorkspaceData(t *testing.T) {
 	if loaded.TodoProjects[todoProjectID].TodoView != "in-progress" {
 		t.Fatalf("TodoView = %q, want in-progress", loaded.TodoProjects[todoProjectID].TodoView)
 	}
-	if loaded.TodoProjects[todoProjectID].SidebarWidth != 420 {
-		t.Fatalf("SidebarWidth = %d, want 420", loaded.TodoProjects[todoProjectID].SidebarWidth)
+	if loaded.SidebarWidth != 420 {
+		t.Fatalf("SidebarWidth = %d, want 420", loaded.SidebarWidth)
 	}
 }
 
@@ -984,8 +990,11 @@ func TestAppTodoProjectUIStateRequiresWorkspace(t *testing.T) {
 	if _, err := app.LoadTodoProjectUIState(); !errors.Is(err, ErrWorkspaceRequired) {
 		t.Fatalf("LoadTodoProjectUIState() error = %v, want ErrWorkspaceRequired", err)
 	}
-	if err := app.SaveTodoProjectUIState("todo-project-a", TodoProjectUIState{TodoView: "completed", SidebarWidth: 360}); !errors.Is(err, ErrWorkspaceRequired) {
+	if err := app.SaveTodoProjectUIState("todo-project-a", TodoProjectUIState{TodoView: "completed"}); !errors.Is(err, ErrWorkspaceRequired) {
 		t.Fatalf("SaveTodoProjectUIState() error = %v, want ErrWorkspaceRequired", err)
+	}
+	if err := app.SaveTodoSidebarWidth(360); !errors.Is(err, ErrWorkspaceRequired) {
+		t.Fatalf("SaveTodoSidebarWidth() error = %v, want ErrWorkspaceRequired", err)
 	}
 	if err := app.DeleteTodoProjectUIState([]string{"todo-project-a"}); !errors.Is(err, ErrWorkspaceRequired) {
 		t.Fatalf("DeleteTodoProjectUIState() error = %v, want ErrWorkspaceRequired", err)
@@ -1005,11 +1014,14 @@ func TestAppRemoveTodoProjectDeletesTodoProjectUIState(t *testing.T) {
 	projectID := state.Projects[0].ID
 	_, todoProjectAID := createTodoProjectForApp(t, app, "修复登录问题", projectID)
 	_, todoProjectBID := createTodoProjectForApp(t, app, "升级依赖", projectID)
-	if err := app.SaveTodoProjectUIState(todoProjectAID, TodoProjectUIState{TodoView: "completed", SidebarWidth: 360}); err != nil {
+	if err := app.SaveTodoProjectUIState(todoProjectAID, TodoProjectUIState{TodoView: "completed"}); err != nil {
 		t.Fatalf("SaveTodoProjectUIState(A) error = %v", err)
 	}
-	if err := app.SaveTodoProjectUIState(todoProjectBID, TodoProjectUIState{TodoView: "in-progress", SidebarWidth: 420}); err != nil {
+	if err := app.SaveTodoProjectUIState(todoProjectBID, TodoProjectUIState{TodoView: "in-progress"}); err != nil {
 		t.Fatalf("SaveTodoProjectUIState(B) error = %v", err)
+	}
+	if err := app.SaveTodoSidebarWidth(420); err != nil {
+		t.Fatalf("SaveTodoSidebarWidth() error = %v", err)
 	}
 
 	if _, err := app.RemoveTodoProject(todoProjectAID); err != nil {
@@ -1023,8 +1035,11 @@ func TestAppRemoveTodoProjectDeletesTodoProjectUIState(t *testing.T) {
 	if _, ok := loaded.TodoProjects[todoProjectAID]; ok {
 		t.Fatalf("removed todo-project UI state still exists: %#v", loaded.TodoProjects)
 	}
-	if loaded.TodoProjects[todoProjectBID].SidebarWidth != 420 {
+	if loaded.TodoProjects[todoProjectBID].TodoView != "in-progress" {
 		t.Fatalf("remaining todo-project UI state = %#v, want B preserved", loaded.TodoProjects[todoProjectBID])
+	}
+	if loaded.SidebarWidth != 420 {
+		t.Fatalf("SidebarWidth = %d, want 420", loaded.SidebarWidth)
 	}
 }
 
@@ -1041,11 +1056,14 @@ func TestAppDeleteTodoDeletesTodoProjectUIState(t *testing.T) {
 	projectID := state.Projects[0].ID
 	todoAID, todoProjectAID := createTodoProjectForApp(t, app, "修复登录问题", projectID)
 	_, todoProjectBID := createTodoProjectForApp(t, app, "升级依赖", projectID)
-	if err := app.SaveTodoProjectUIState(todoProjectAID, TodoProjectUIState{TodoView: "completed", SidebarWidth: 360}); err != nil {
+	if err := app.SaveTodoProjectUIState(todoProjectAID, TodoProjectUIState{TodoView: "completed"}); err != nil {
 		t.Fatalf("SaveTodoProjectUIState(A) error = %v", err)
 	}
-	if err := app.SaveTodoProjectUIState(todoProjectBID, TodoProjectUIState{TodoView: "in-progress", SidebarWidth: 420}); err != nil {
+	if err := app.SaveTodoProjectUIState(todoProjectBID, TodoProjectUIState{TodoView: "in-progress"}); err != nil {
 		t.Fatalf("SaveTodoProjectUIState(B) error = %v", err)
+	}
+	if err := app.SaveTodoSidebarWidth(420); err != nil {
+		t.Fatalf("SaveTodoSidebarWidth() error = %v", err)
 	}
 
 	if _, err := app.DeleteTodo(todoAID); err != nil {
@@ -1059,8 +1077,11 @@ func TestAppDeleteTodoDeletesTodoProjectUIState(t *testing.T) {
 	if _, ok := loaded.TodoProjects[todoProjectAID]; ok {
 		t.Fatalf("deleted TODO project UI state still exists: %#v", loaded.TodoProjects)
 	}
-	if loaded.TodoProjects[todoProjectBID].SidebarWidth != 420 {
+	if loaded.TodoProjects[todoProjectBID].TodoView != "in-progress" {
 		t.Fatalf("remaining todo-project UI state = %#v, want B preserved", loaded.TodoProjects[todoProjectBID])
+	}
+	if loaded.SidebarWidth != 420 {
+		t.Fatalf("SidebarWidth = %d, want 420", loaded.SidebarWidth)
 	}
 }
 
