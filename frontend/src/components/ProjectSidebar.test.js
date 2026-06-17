@@ -628,6 +628,33 @@ describe('ProjectSidebar', () => {
     expect(terminalRow.attributes('aria-label')).toContain('Needs input')
   })
 
+  it('shows terminal confirmation state in the TODO tree', () => {
+    const wrapper = mountSidebar({
+      props: {
+        terminals: [
+          {
+            id: 'terminal-a',
+            projectId: 'project-a',
+            todoId: 'todo-a',
+            todoProjectId: 'todo-project-a',
+            shellName: 'zsh',
+            currentCommand: 'codex',
+            attentionState: 'needs-ack',
+            state: 'running'
+          }
+        ]
+      }
+    })
+
+    const terminalRow = wrapper.find('[data-testid="terminal-terminal-a"]')
+    const activity = wrapper.find('[data-testid="terminal-activity-terminal-a"]')
+    expect(terminalRow.classes()).toContain('activity-needs-ack')
+    expect(terminalRow.attributes('data-activity-state')).toBe('needs-ack')
+    expect(terminalRow.attributes('aria-label')).toContain('Review needed')
+    expect(activity.classes()).toContain('needs-ack')
+    expect(activity.find('svg').exists()).toBe(true)
+  })
+
   it('shows hidden terminal activity as row state on a collapsed TODO', async () => {
     const wrapper = mountSidebar({
       props: {
@@ -685,6 +712,66 @@ describe('ProjectSidebar', () => {
     expect(wrapper.find('[data-testid="todo-activity-todo-a"]').exists()).toBe(false)
   })
 
+  it('shows hidden confirmation state as urgent collapsed TODO row state', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        terminals: [
+          {
+            id: 'terminal-a',
+            projectId: 'project-a',
+            todoId: 'todo-a',
+            todoProjectId: 'todo-project-a',
+            shellName: 'zsh',
+            attentionState: 'needs-ack',
+            state: 'running'
+          }
+        ]
+      }
+    })
+
+    await wrapper.find('[data-testid="toggle-todo-todo-a"]').trigger('click')
+
+    const todoHeader = todoHeaderFor(wrapper, 'todo-a')
+    expect(wrapper.find('[data-testid="todo-todo-a"]').attributes('data-activity-state')).toBe('needs-ack')
+    expect(wrapper.find('[data-testid="todo-todo-a"]').attributes('title')).toBe('Review needed')
+    expect(todoHeader.attributes('data-activity-state')).toBe('needs-ack')
+    expect(todoHeader.classes()).toContain('todo-activity-needs-ack')
+    expect(wrapper.find('[data-testid="todo-activity-todo-a"]').exists()).toBe(false)
+  })
+
+  it('prioritizes confirmation over busy for a collapsed TODO', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        terminals: [
+          {
+            id: 'terminal-busy',
+            projectId: 'project-a',
+            todoId: 'todo-a',
+            todoProjectId: 'todo-project-a',
+            shellName: 'zsh',
+            activityState: 'busy',
+            state: 'running'
+          },
+          {
+            id: 'terminal-needs-ack',
+            projectId: 'project-a',
+            todoId: 'todo-a',
+            todoProjectId: 'todo-project-a',
+            shellName: 'zsh',
+            attentionState: 'needs-ack',
+            state: 'running'
+          }
+        ]
+      }
+    })
+
+    await wrapper.find('[data-testid="toggle-todo-todo-a"]').trigger('click')
+
+    expect(wrapper.find('[data-testid="todo-todo-a"]').attributes('data-activity-state')).toBe('needs-ack')
+    expect(todoHeaderFor(wrapper, 'todo-a').classes()).toContain('todo-activity-needs-ack')
+    expect(todoHeaderFor(wrapper, 'todo-a').classes()).not.toContain('todo-activity-busy')
+  })
+
   it('prioritizes needs input over busy for a collapsed TODO', async () => {
     const wrapper = mountSidebar({
       props: {
@@ -717,6 +804,39 @@ describe('ProjectSidebar', () => {
     expect(todoHeaderFor(wrapper, 'todo-a').attributes('data-activity-state')).toBe('needs-input')
     expect(todoHeaderFor(wrapper, 'todo-a').classes()).toContain('todo-activity-needs-input')
     expect(wrapper.find('[data-testid="todo-activity-todo-a"]').exists()).toBe(false)
+  })
+
+  it('prioritizes needs input over confirmation for a collapsed TODO', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        terminals: [
+          {
+            id: 'terminal-needs-ack',
+            projectId: 'project-a',
+            todoId: 'todo-a',
+            todoProjectId: 'todo-project-a',
+            shellName: 'zsh',
+            attentionState: 'needs-ack',
+            state: 'running'
+          },
+          {
+            id: 'terminal-needs-input',
+            projectId: 'project-a',
+            todoId: 'todo-a',
+            todoProjectId: 'todo-project-a',
+            shellName: 'zsh',
+            activityState: 'needs-input',
+            state: 'running'
+          }
+        ]
+      }
+    })
+
+    await wrapper.find('[data-testid="toggle-todo-todo-a"]').trigger('click')
+
+    expect(wrapper.find('[data-testid="todo-todo-a"]').attributes('data-activity-state')).toBe('needs-input')
+    expect(todoHeaderFor(wrapper, 'todo-a').classes()).toContain('todo-activity-needs-input')
+    expect(todoHeaderFor(wrapper, 'todo-a').classes()).not.toContain('todo-activity-needs-ack')
   })
 
   it('does not keep done failed or exited agent statuses busy in collapsed TODO summaries', async () => {
@@ -780,6 +900,27 @@ describe('ProjectSidebar', () => {
     expect(wrapper.find('[data-testid="todo-activity-todo-a"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="todo-todo-a"]').attributes('data-activity-state')).toBeUndefined()
     expect(wrapper.find('[data-testid="terminal-terminal-a"]').attributes('data-activity-state')).toBe('busy')
+  })
+
+  it('shows confirmation on terminal rows instead of the parent TODO while expanded', () => {
+    const wrapper = mountSidebar({
+      props: {
+        terminals: [
+          {
+            id: 'terminal-a',
+            projectId: 'project-a',
+            todoId: 'todo-a',
+            todoProjectId: 'todo-project-a',
+            shellName: 'zsh',
+            attentionState: 'needs-ack',
+            state: 'running'
+          }
+        ]
+      }
+    })
+
+    expect(wrapper.find('[data-testid="todo-todo-a"]').attributes('data-activity-state')).toBeUndefined()
+    expect(wrapper.find('[data-testid="terminal-terminal-a"]').attributes('data-activity-state')).toBe('needs-ack')
   })
 
   it('does not label a collapsed TODO without terminals as idle', async () => {
@@ -1458,6 +1599,25 @@ describe('ProjectSidebar', () => {
     expect(reducedMotionRule).toContain('animation: none;')
     expect(reducedMotionRule).toContain('.todo-header-row.todo-activity-busy')
     expect(reducedMotionRule).toContain('.todo-header-row.todo-activity-needs-input')
+  })
+
+  it('defines terminal and collapsed TODO confirmation styles', () => {
+    const styles = readFileSync('src/style.css', 'utf8')
+    const ackRule = styles.slice(styles.indexOf('.todo-header-row.todo-activity-needs-ack {'), styles.indexOf('@keyframes todo-activity-busy-breathe'))
+    const reducedMotionRule = styles.slice(styles.indexOf('@media (prefers-reduced-motion: reduce)'), styles.indexOf('.todo-title-line {'))
+
+    expect(styles).toContain('.terminal-row.activity-needs-ack')
+    expect(styles).toContain('.terminal-activity.needs-ack')
+    expect(styles).toContain('.todo-header-row.todo-activity-needs-ack')
+    expect(ackRule).toContain('animation: todo-activity-needs-ack-breathe')
+    expect(ackRule).toContain('0.9s')
+    expect(ackRule).toContain('rgba(124, 58, 237')
+    expect(ackRule).not.toContain('rgba(15, 118, 110')
+    expect(ackRule).not.toContain('background:')
+    expect(ackRule).not.toMatch(/(^|\n)\s*color:/)
+    expect(styles).toContain('@keyframes todo-activity-needs-ack-breathe')
+    expect(reducedMotionRule).toContain('.todo-header-row.todo-activity-needs-ack')
+    expect(reducedMotionRule).toContain('animation: none;')
   })
 
   it('defines a wide TODO description tooltip style', () => {

@@ -17,6 +17,7 @@ import {
   Play,
   Plus,
   TerminalSquare,
+  TriangleAlert,
   Trash2
 } from '@lucide/vue'
 
@@ -816,8 +817,11 @@ function compareTodoCreatedAt(left, right) {
 }
 
 function terminalActivityState(terminal) {
+  if (terminal.attentionState === 'needs-ack') {
+    return 'needs-ack'
+  }
   const state = terminal.activityState || terminal.agentStatus?.phase || 'idle'
-  return ['busy', 'needs-input'].includes(state) ? state : 'idle'
+  return ['busy', 'needs-input', 'needs-ack'].includes(state) ? state : 'idle'
 }
 
 function activityStateLabel(state) {
@@ -826,6 +830,9 @@ function activityStateLabel(state) {
   }
   if (state === 'needs-input') {
     return 'Needs input'
+  }
+  if (state === 'needs-ack') {
+    return 'Review needed'
   }
   return 'Idle'
 }
@@ -841,6 +848,7 @@ function terminalRowLabel(terminal) {
 }
 
 function todoActivityState(todo) {
+  let hasAckTerminal = false
   let hasBusyTerminal = false
   let hasTerminal = false
   for (const terminal of props.terminals) {
@@ -852,12 +860,18 @@ function todoActivityState(todo) {
     if (state === 'needs-input') {
       return 'needs-input'
     }
+    if (state === 'needs-ack') {
+      hasAckTerminal = true
+    }
     if (state === 'busy') {
       hasBusyTerminal = true
     }
   }
   if (!hasTerminal) {
     return ''
+  }
+  if (hasAckTerminal) {
+    return 'needs-ack'
   }
   return hasBusyTerminal ? 'busy' : 'idle'
 }
@@ -868,7 +882,7 @@ function collapsedTodoActivityState(todo) {
 
 function collapsedTodoFeedbackState(todo) {
   const state = collapsedTodoActivityState(todo)
-  return ['busy', 'needs-input'].includes(state) ? state : ''
+  return ['busy', 'needs-input', 'needs-ack'].includes(state) ? state : ''
 }
 
 function collapsedTodoActivityClass(todo) {
@@ -1521,8 +1535,9 @@ watch(
                     :class="{
                       active: terminal.id === activeTerminalId,
                       exited: terminal.state === 'exited',
-                      'activity-busy': terminal.activityState === 'busy',
-                      'activity-needs-input': terminal.activityState === 'needs-input'
+                      'activity-busy': terminalActivityState(terminal) === 'busy',
+                      'activity-needs-input': terminalActivityState(terminal) === 'needs-input',
+                      'activity-needs-ack': terminalActivityState(terminal) === 'needs-ack'
                     }"
                     :aria-label="terminalRowLabel(terminal)"
                     :title="terminalRowLabel(terminal)"
@@ -1539,6 +1554,7 @@ watch(
                     >
                       <LoaderCircle v-if="terminalActivityState(terminal) === 'busy'" :size="13" aria-hidden="true" />
                       <CircleAlert v-else-if="terminalActivityState(terminal) === 'needs-input'" :size="13" aria-hidden="true" />
+                      <TriangleAlert v-else-if="terminalActivityState(terminal) === 'needs-ack'" :size="13" aria-hidden="true" />
                     </span>
                     <TerminalSquare class="terminal-icon" :size="15" />
                     <span class="terminal-name">{{ terminalDisplayName(terminal) }}</span>
