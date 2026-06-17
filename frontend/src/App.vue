@@ -1691,7 +1691,10 @@ function showError(error) {
           </div>
 
           <div class="settings-field">
-            <span class="settings-label">Projects</span>
+            <span class="settings-label">
+              Projects
+              <span class="field-optional" data-testid="todo-projects-optional">Optional</span>
+            </span>
             <div class="candidate-management-toolbar" data-testid="todo-project-candidate-tools">
               <button
                 type="button"
@@ -1772,7 +1775,7 @@ function showError(error) {
                 <span class="project-name">{{ project.name }}</span>
                 <span class="project-path">{{ project.path }}</span>
               </button>
-              <span v-if="todoFormProjectOptions.length === 0" class="sidebar-empty">No matching projects</span>
+              <span v-if="todoFormProjectOptions.length === 0" class="sidebar-empty">No projects selected</span>
             </div>
           </div>
         </div>

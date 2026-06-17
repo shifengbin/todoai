@@ -785,6 +785,51 @@ describe('App project terminal tree', () => {
     })
   })
 
+  it('creates a TODO without selecting optional projects', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        projects: [],
+        todos: [],
+        todoProjects: [],
+        activeProjectId: '',
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        terminals: [],
+        activeTerminalId: ''
+      })
+    )
+    appApiMock.CreateTodo.mockResolvedValue(
+      projectState({
+        projects: [],
+        todos: [todo({ id: 'todo-no-project', title: 'Write docs' })],
+        todoProjects: [],
+        activeProjectId: '',
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        terminals: [],
+        activeTerminalId: ''
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="new-todo"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="todo-projects-optional"]').text()).toBe('Optional')
+    expect(wrapper.find('[data-testid="todo-project-options"]').text()).not.toContain('No matching projects')
+
+    await wrapper.find('[data-testid="todo-name-input"]').setValue('Write docs')
+    await wrapper.find('[data-testid="todo-create-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(CreateTodo).toHaveBeenCalledWith({
+      title: 'Write docs',
+      description: '',
+      priority: 'medium',
+      projectIds: []
+    })
+  })
+
   it('does not create a TODO with a blank name', async () => {
     const wrapper = await mountReadyApp()
 

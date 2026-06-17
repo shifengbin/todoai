@@ -311,6 +311,63 @@ func TestRestoreTerminals_ValidRecords(t *testing.T) {
 	}
 }
 
+func TestRestoreTerminals_UsesTodoProjectCopyWhenGlobalCandidateIsMissing(t *testing.T) {
+	dir := t.TempDir()
+	store := NewTerminalHistoryStore(dir)
+	store.Save(TerminalHistoryFile{
+		Version: 1,
+		Records: []TerminalHistoryRecord{
+			{
+				TerminalID:     "term-1",
+				ProjectID:      "proj-1",
+				TodoID:         "todo-1",
+				TodoProjectID:  "tp-1",
+				ShellName:      "bash",
+				State:          ShellStateExited,
+				CreatedAt:      "2026-06-12T00:00:00Z",
+				LastSelectedAt: "2026-06-12T00:00:00Z",
+				Output:         "restored output",
+			},
+		},
+	})
+
+	manager := NewShellSessionManager(nil, ShellSessionCallbacks{},
+		WithTerminalHistoryStore(store),
+		WithShellPathResolver(func() string { return "/bin/bash" }),
+	)
+
+	state := ProjectState{
+		Projects: []Project{},
+		Todos:    []Todo{{ID: "todo-1", Title: "Test TODO", Status: TodoStatusInProgress}},
+		TodoProjects: []TodoProject{{
+			ID:              "tp-1",
+			TodoID:          "todo-1",
+			ProjectID:       "proj-1",
+			SourceProjectID: "proj-1",
+			Name:            "frontend-app",
+			Path:            "/repo/frontend-app",
+			Available:       true,
+		}},
+	}
+
+	records := manager.RestoreTerminals(state)
+	if len(records) != 1 {
+		t.Fatalf("expected 1 restored record, got %d", len(records))
+	}
+
+	terminals := manager.Terminals()
+	if len(terminals) != 1 {
+		t.Fatalf("expected 1 terminal, got %d", len(terminals))
+	}
+	terminal := terminals[0]
+	if terminal.ID != "term-1" {
+		t.Fatalf("terminal ID = %q, want term-1", terminal.ID)
+	}
+	if terminal.Output != "restored output" {
+		t.Fatalf("terminal output = %q, want restored output", terminal.Output)
+	}
+}
+
 func TestRestoreTerminals_DropsOrphanedRecords(t *testing.T) {
 	dir := t.TempDir()
 	store := NewTerminalHistoryStore(dir)

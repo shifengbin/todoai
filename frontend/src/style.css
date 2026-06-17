@@ -1989,6 +1989,14 @@ button {
     text-transform: uppercase;
 }
 
+.field-optional {
+    margin-left: 6px;
+    color: var(--muted-text);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: none;
+}
+
 .settings-field strong,
 .settings-option strong {
     display: block;
