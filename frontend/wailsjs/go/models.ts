@@ -405,7 +405,6 @@ export namespace main {
 	
 	export class TodoProjectUIState {
 	    todoView: string;
-	    sidebarWidth: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new TodoProjectUIState(source);
@@ -414,11 +413,11 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.todoView = source["todoView"];
-	        this.sidebarWidth = source["sidebarWidth"];
 	    }
 	}
 	export class TodoProjectUIStateFile {
 	    version: number;
+	    sidebarWidth?: number;
 	    todoProjects: Record<string, TodoProjectUIState>;
 	
 	    static createFrom(source: any = {}) {
@@ -428,6 +427,7 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.version = source["version"];
+	        this.sidebarWidth = source["sidebarWidth"];
 	        this.todoProjects = this.convertValues(source["todoProjects"], TodoProjectUIState, true);
 	    }
 	

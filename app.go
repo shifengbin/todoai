@@ -617,6 +617,18 @@ func (a *App) SaveTodoProjectUIState(todoProjectID string, state TodoProjectUISt
 	return err
 }
 
+func (a *App) SaveTodoSidebarWidth(sidebarWidth int) error {
+	if !a.hasWorkspace() {
+		return ErrWorkspaceRequired
+	}
+	current, err := a.todoProjectUIState.Load()
+	if err != nil {
+		return err
+	}
+	_, err = a.todoProjectUIState.UpsertSidebarWidth(current, sidebarWidth)
+	return err
+}
+
 func (a *App) DeleteTodoProjectUIState(todoProjectIDs []string) error {
 	if !a.hasWorkspace() {
 		return ErrWorkspaceRequired

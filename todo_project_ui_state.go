@@ -5,16 +5,28 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 )
 
 type TodoProjectUIState struct {
-	TodoView     string `json:"todoView"`
-	SidebarWidth int    `json:"sidebarWidth"`
+	TodoView string `json:"todoView"`
 }
 
 type TodoProjectUIStateFile struct {
 	Version      int                           `json:"version"`
+	SidebarWidth int                           `json:"sidebarWidth,omitempty"`
 	TodoProjects map[string]TodoProjectUIState `json:"todoProjects"`
+}
+
+type legacyTodoProjectUIState struct {
+	TodoView     string `json:"todoView"`
+	SidebarWidth int    `json:"sidebarWidth"`
+}
+
+type legacyTodoProjectUIStateFile struct {
+	Version      int                                 `json:"version"`
+	SidebarWidth int                                 `json:"sidebarWidth"`
+	TodoProjects map[string]legacyTodoProjectUIState `json:"todoProjects"`
 }
 
 type TodoProjectUIStateStore struct {
@@ -36,11 +48,11 @@ func (store *TodoProjectUIStateStore) Load() (TodoProjectUIStateFile, error) {
 		return TodoProjectUIStateFile{}, err
 	}
 
-	var state TodoProjectUIStateFile
-	if err := json.Unmarshal(data, &state); err != nil {
+	var legacyState legacyTodoProjectUIStateFile
+	if err := json.Unmarshal(data, &legacyState); err != nil {
 		return emptyTodoProjectUIStateFile(), nil
 	}
-	return normalizeTodoProjectUIStateFile(state), nil
+	return normalizeTodoProjectUIStateFile(todoProjectUIStateFileFromLegacy(legacyState)), nil
 }
 
 func (store *TodoProjectUIStateStore) Save(state TodoProjectUIStateFile) error {
@@ -68,6 +80,12 @@ func (store *TodoProjectUIStateStore) UpsertTodoProject(state TodoProjectUIState
 	return state, store.Save(state)
 }
 
+func (store *TodoProjectUIStateStore) UpsertSidebarWidth(state TodoProjectUIStateFile, sidebarWidth int) (TodoProjectUIStateFile, error) {
+	state = normalizeTodoProjectUIStateFile(state)
+	state.SidebarWidth = sidebarWidth
+	return state, store.Save(state)
+}
+
 func (store *TodoProjectUIStateStore) DeleteTodoProjects(state TodoProjectUIStateFile, todoProjectIDs []string) (TodoProjectUIStateFile, error) {
 	state = normalizeTodoProjectUIStateFile(state)
 	for _, todoProjectID := range todoProjectIDs {
@@ -89,6 +107,30 @@ func normalizeTodoProjectUIStateFile(state TodoProjectUIStateFile) TodoProjectUI
 	}
 	if state.TodoProjects == nil {
 		state.TodoProjects = map[string]TodoProjectUIState{}
+	}
+	return state
+}
+
+func todoProjectUIStateFileFromLegacy(legacyState legacyTodoProjectUIStateFile) TodoProjectUIStateFile {
+	state := TodoProjectUIStateFile{
+		Version:      legacyState.Version,
+		SidebarWidth: legacyState.SidebarWidth,
+		TodoProjects: map[string]TodoProjectUIState{},
+	}
+	if len(legacyState.TodoProjects) == 0 {
+		return state
+	}
+	ids := make([]string, 0, len(legacyState.TodoProjects))
+	for todoProjectID := range legacyState.TodoProjects {
+		ids = append(ids, todoProjectID)
+	}
+	sort.Strings(ids)
+	for _, todoProjectID := range ids {
+		legacyTodoProjectState := legacyState.TodoProjects[todoProjectID]
+		state.TodoProjects[todoProjectID] = TodoProjectUIState{TodoView: legacyTodoProjectState.TodoView}
+		if state.SidebarWidth == 0 && legacyTodoProjectState.SidebarWidth > 0 {
+			state.SidebarWidth = legacyTodoProjectState.SidebarWidth
+		}
 	}
 	return state
 }

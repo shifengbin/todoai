@@ -39,6 +39,7 @@ import {
   SaveTerminalLaunchProfiles,
   SaveTerminalShell,
   SaveTerminalTheme,
+  SaveTodoSidebarWidth,
   SaveTodoProjectUIState,
   SendTerminalInput,
   StartShell,
@@ -86,7 +87,12 @@ const sidebarMinWidth = 220
 const sidebarMaxWidth = 520
 const currentTodoView = ref('not-started')
 const todoProjectUIStates = ref({})
+const todoSidebarWidthState = ref(0)
 const todoProjectUIStateSaveQueues = new Map()
+const todoSidebarWidthSaveQueue = {
+  saving: false,
+  pending: null
+}
 const defaultTerminalLaunchProfiles = [
   { name: 'codex', command: 'codex --dangerously-bypass-hook-trust --dangerously-bypass-approvals-and-sandbox', enabled: true },
   { name: 'claude', command: 'claude --dangerously-skip-permissions', enabled: true }
@@ -420,7 +426,6 @@ onBeforeUnmount(() => {
 
 function applyState(state, options = {}) {
   const previousActiveProjectId = activeProjectId.value
-  const previousActiveTodoProjectId = activeTodoProjectId.value
   const previousTerminals = new Map(terminals.value.map((terminal) => [terminal.id, terminal]))
   currentWorkspace.value = state?.currentWorkspace || null
   recentWorkspaces.value = state?.recentWorkspaces || []
@@ -463,10 +468,7 @@ function applyState(state, options = {}) {
   if (!hasWorkspace.value) {
     closeWorkspaceScopedPanels()
   }
-  if (
-    options.restoreTodoProjectUIState === true ||
-    (activeTodoProjectId.value && activeTodoProjectId.value !== previousActiveTodoProjectId)
-  ) {
+  if (options.restoreTodoProjectUIState === true) {
     applyTodoProjectUIState(activeTodoProjectId.value)
   }
   closeTerminalMenu()
@@ -533,21 +535,24 @@ function closeWorkspaceScopedPanels() {
 async function loadTodoProjectUIStateForCurrentWorkspace(options = {}) {
   if (!hasWorkspace.value) {
     todoProjectUIStates.value = {}
+    todoSidebarWidthState.value = 0
     if (options.restoreTodoProjectUIState === true) {
-      applyTodoProjectUIState('')
+      applyTodoWorkspaceUIState('')
     }
     return
   }
   try {
     const state = await LoadTodoProjectUIState()
     todoProjectUIStates.value = state?.todoProjects || {}
+    todoSidebarWidthState.value = Number(state?.sidebarWidth) || 0
     if (options.restoreTodoProjectUIState === true) {
-      applyTodoProjectUIState(activeTodoProjectId.value)
+      applyTodoWorkspaceUIState(activeTodoProjectId.value)
     }
   } catch (error) {
     todoProjectUIStates.value = {}
+    todoSidebarWidthState.value = 0
     if (options.restoreTodoProjectUIState === true) {
-      applyTodoProjectUIState(activeTodoProjectId.value)
+      applyTodoWorkspaceUIState(activeTodoProjectId.value)
     }
     showError(error)
   }
@@ -1371,7 +1376,7 @@ function stopSidebarResize() {
   sidebarResize.active = false
   window.removeEventListener('mousemove', resizeSidebar)
   window.removeEventListener('mouseup', stopSidebarResize)
-  persistActiveTodoProjectUIState()
+  persistTodoSidebarWidth()
   scheduleFitActiveTerminal()
 }
 
@@ -1383,7 +1388,11 @@ function handleTodoViewChange(view) {
 function applyTodoProjectUIState(todoProjectId) {
   const state = todoProjectId ? todoProjectUIStates.value[todoProjectId] : null
   currentTodoView.value = normalizeTodoView(state?.todoView)
-  sidebarWidth.value = clampNumber(state?.sidebarWidth || defaultSidebarWidth, sidebarMinWidth, sidebarMaxWidth)
+}
+
+function applyTodoWorkspaceUIState(todoProjectId) {
+  applyTodoProjectUIState(todoProjectId)
+  sidebarWidth.value = clampNumber(todoSidebarWidthState.value || defaultSidebarWidth, sidebarMinWidth, sidebarMaxWidth)
   scheduleFitActiveTerminal()
 }
 
@@ -1393,14 +1402,22 @@ function persistActiveTodoProjectUIState() {
     return
   }
   const state = {
-    todoView: normalizeTodoView(currentTodoView.value),
-    sidebarWidth: clampNumber(sidebarWidth.value, sidebarMinWidth, sidebarMaxWidth)
+    todoView: normalizeTodoView(currentTodoView.value)
   }
   todoProjectUIStates.value = {
     ...todoProjectUIStates.value,
     [todoProjectId]: state
   }
   queueTodoProjectUIStateSave(todoProjectId, state)
+}
+
+function persistTodoSidebarWidth() {
+  if (!hasWorkspace.value) {
+    return
+  }
+  const width = clampNumber(sidebarWidth.value, sidebarMinWidth, sidebarMaxWidth)
+  todoSidebarWidthState.value = width
+  queueTodoSidebarWidthSave(width)
 }
 
 function queueTodoProjectUIStateSave(todoProjectId, state) {
@@ -1430,6 +1447,27 @@ async function drainTodoProjectUIStateSaveQueue(todoProjectId, queue) {
   if (!queue.pending) {
     todoProjectUIStateSaveQueues.delete(todoProjectId)
   }
+}
+
+function queueTodoSidebarWidthSave(sidebarWidth) {
+  todoSidebarWidthSaveQueue.pending = sidebarWidth
+  if (!todoSidebarWidthSaveQueue.saving) {
+    drainTodoSidebarWidthSaveQueue()
+  }
+}
+
+async function drainTodoSidebarWidthSaveQueue() {
+  todoSidebarWidthSaveQueue.saving = true
+  while (todoSidebarWidthSaveQueue.pending !== null) {
+    const nextSidebarWidth = todoSidebarWidthSaveQueue.pending
+    todoSidebarWidthSaveQueue.pending = null
+    try {
+      await SaveTodoSidebarWidth(nextSidebarWidth)
+    } catch (error) {
+      showError(error)
+    }
+  }
+  todoSidebarWidthSaveQueue.saving = false
 }
 
 function normalizeTodoView(view) {

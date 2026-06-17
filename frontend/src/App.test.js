@@ -30,6 +30,7 @@ import {
   SaveTerminalLaunchProfiles,
   SaveTerminalShell,
   SaveTerminalTheme,
+  SaveTodoSidebarWidth,
   SaveTodoProjectUIState,
   SelectTerminal,
   SendTerminalInput,
@@ -72,6 +73,7 @@ const appApiMock = vi.hoisted(() => ({
   SaveTerminalLaunchProfiles: vi.fn(),
   SaveTerminalShell: vi.fn(),
   SaveTerminalTheme: vi.fn(),
+  SaveTodoSidebarWidth: vi.fn(),
   SaveTodoProjectUIState: vi.fn(),
   SendTerminalInput: vi.fn(),
   StartShell: vi.fn(),
@@ -151,6 +153,7 @@ describe('App project terminal tree', () => {
     )
     appApiMock.SaveTerminalLaunchProfiles.mockResolvedValue(settingsState())
     appApiMock.SaveTerminalTheme.mockResolvedValue(settingsState())
+    appApiMock.SaveTodoSidebarWidth.mockResolvedValue()
     appApiMock.SelectProject.mockResolvedValue(projectState())
     appApiMock.SelectTodoProject.mockResolvedValue(projectState())
     appApiMock.SelectTerminal.mockResolvedValue(projectState())
@@ -436,6 +439,40 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="terminal-terminal-b"]').classes()).toContain('active')
   })
 
+  it('preserves current TODO view and sidebar width when creating a terminal', async () => {
+    appApiMock.LoadTodoProjectUIState.mockResolvedValue(
+      todoProjectUIStateFile({
+        sidebarWidth: 380,
+        todoProjects: {
+          'todo-project-a': { todoView: 'not-started' }
+        }
+      })
+    )
+    appApiMock.ListProjects.mockResolvedValue(inProgressProjectState())
+    appApiMock.CreateTodoTerminal.mockResolvedValue(
+      inProgressProjectState({
+        activeTodoProjectId: 'todo-project-a',
+        terminals: [
+          terminal({ id: 'terminal-a' }),
+          terminal({ id: 'terminal-b', shellName: 'bash', state: 'running' })
+        ],
+        activeTerminalId: 'terminal-b'
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+    expect(wrapper.find('.app-shell').attributes('style')).toContain('--sidebar-width: 380px')
+
+    await wrapper.find('[data-testid="add-terminal-todo-project-a"]').trigger('click')
+    await wrapper.find('[data-testid="terminal-launch-option-todo-project-a-0"]').trigger('click')
+    await flushPromises()
+
+    expect(CreateTodoTerminal).toHaveBeenCalledWith('todo-project-a', 100, 32)
+    expect(wrapper.find('[data-testid="todo-view-in-progress"]').classes()).toContain('active')
+    expect(wrapper.find('.app-shell').attributes('style')).toContain('--sidebar-width: 380px')
+  })
+
   it('shows unsupported embedded terminal state without restarting the shell', async () => {
     appApiMock.CreateTodoTerminal.mockResolvedValue(
       inProgressProjectState({
@@ -548,6 +585,40 @@ describe('App project terminal tree', () => {
     expect(xtermMock.sessions.has('terminal-b')).toBe(true)
     expect(wrapper.find('[data-testid="terminal-pane-terminal-b"]').classes()).toContain('active')
     expect(xtermMock.sessions.get('terminal-b').terminal.focus).toHaveBeenCalled()
+  })
+
+  it('preserves current TODO view and sidebar width when selecting a terminal', async () => {
+    appApiMock.LoadTodoProjectUIState.mockResolvedValue(
+      todoProjectUIStateFile({
+        sidebarWidth: 380,
+        todoProjects: {
+          'todo-project-a': { todoView: 'not-started' }
+        }
+      })
+    )
+    const twoTerminalState = inProgressProjectState({
+      terminals: [terminal({ id: 'terminal-a' }), terminal({ id: 'terminal-b', shellName: 'bash' })],
+      activeTerminalId: 'terminal-a'
+    })
+    appApiMock.ListProjects.mockResolvedValue(twoTerminalState)
+    appApiMock.SelectTerminal.mockResolvedValue(
+      inProgressProjectState({
+        terminals: [terminal({ id: 'terminal-a' }), terminal({ id: 'terminal-b', shellName: 'bash' })],
+        activeTerminalId: 'terminal-b',
+        activeTodoProjectId: 'todo-project-a'
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+    expect(wrapper.find('.app-shell').attributes('style')).toContain('--sidebar-width: 380px')
+
+    await wrapper.find('[data-testid="terminal-terminal-b"]').trigger('click')
+    await flushPromises()
+
+    expect(SelectTerminal).toHaveBeenCalledWith('terminal-b')
+    expect(wrapper.find('[data-testid="todo-view-in-progress"]').classes()).toContain('active')
+    expect(wrapper.find('.app-shell').attributes('style')).toContain('--sidebar-width: 380px')
   })
 
   it('does not focus a terminal when selecting it fails', async () => {
@@ -983,12 +1054,13 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="todo-project-todo-project-c"]').exists()).toBe(true)
   })
 
-  it('restores sidebar width for the active TODO project after adding projects to a TODO', async () => {
+  it('preserves workspace sidebar width after adding projects to a TODO', async () => {
     appApiMock.LoadTodoProjectUIState.mockResolvedValue(
       todoProjectUIStateFile({
+        sidebarWidth: 360,
         todoProjects: {
-          'todo-project-a': { todoView: 'not-started', sidebarWidth: 360 },
-          'todo-project-b': { todoView: 'not-started', sidebarWidth: 420 }
+          'todo-project-a': { todoView: 'not-started' },
+          'todo-project-b': { todoView: 'not-started' }
         }
       })
     )
@@ -1035,7 +1107,7 @@ describe('App project terminal tree', () => {
     await flushPromises()
 
     expect(AddProjectsToTodo).toHaveBeenCalledWith('todo-a', ['project-b'])
-    expect(wrapper.find('.app-shell').attributes('style')).toContain('--sidebar-width: 420px')
+    expect(wrapper.find('.app-shell').attributes('style')).toContain('--sidebar-width: 360px')
   })
 
   it('removes selected project tags before adding projects to a TODO', async () => {
@@ -1243,9 +1315,10 @@ describe('App project terminal tree', () => {
   it('restores and saves TODO project UI state for the active TODO project', async () => {
     appApiMock.LoadTodoProjectUIState.mockResolvedValue(
       todoProjectUIStateFile({
+        sidebarWidth: 360,
         todoProjects: {
-          'todo-project-a': { todoView: 'completed', sidebarWidth: 360 },
-          'todo-project-b': { todoView: 'in-progress', sidebarWidth: 420 }
+          'todo-project-a': { todoView: 'completed' },
+          'todo-project-b': { todoView: 'in-progress' }
         }
       })
     )
@@ -1285,24 +1358,25 @@ describe('App project terminal tree', () => {
     runtimeMock.handlers['workspace-state'](todoProjectBState)
     await flushPromises()
 
-    expect(wrapper.find('[data-testid="todo-view-in-progress"]').classes()).toContain('active')
-    expect(wrapper.find('.app-shell').attributes('style')).toContain('--sidebar-width: 420px')
+    expect(wrapper.find('[data-testid="todo-view-completed"]').classes()).toContain('active')
+    expect(wrapper.find('.app-shell').attributes('style')).toContain('--sidebar-width: 360px')
 
     await wrapper.find('[data-testid="todo-view-not-started"]').trigger('click')
     await flushPromises()
 
     expect(SaveTodoProjectUIState).toHaveBeenLastCalledWith('todo-project-b', {
-      todoView: 'not-started',
-      sidebarWidth: 420
+      todoView: 'not-started'
     })
+    expect(SaveTodoSidebarWidth).not.toHaveBeenCalled()
   })
 
-  it('restores saved TODO project UI state when the user selects a TODO project', async () => {
+  it('restores saved TODO project view but keeps workspace sidebar width when the user selects a TODO project', async () => {
     appApiMock.LoadTodoProjectUIState.mockResolvedValue(
       todoProjectUIStateFile({
+        sidebarWidth: 360,
         todoProjects: {
-          'todo-project-a': { todoView: 'not-started', sidebarWidth: 360 },
-          'todo-project-b': { todoView: 'in-progress', sidebarWidth: 420 }
+          'todo-project-a': { todoView: 'not-started' },
+          'todo-project-b': { todoView: 'in-progress' }
         }
       })
     )
@@ -1343,15 +1417,16 @@ describe('App project terminal tree', () => {
 
     expect(appApiMock.SelectTodoProject).toHaveBeenCalledWith('todo-project-b')
     expect(wrapper.find('[data-testid="todo-view-in-progress"]').classes()).toContain('active')
-    expect(wrapper.find('.app-shell').attributes('style')).toContain('--sidebar-width: 420px')
+    expect(wrapper.find('.app-shell').attributes('style')).toContain('--sidebar-width: 360px')
   })
 
-  it('restores sidebar width per project under the same TODO item', async () => {
+  it('keeps sidebar width shared across projects under the same TODO item', async () => {
     appApiMock.LoadTodoProjectUIState.mockResolvedValue(
       todoProjectUIStateFile({
+        sidebarWidth: 360,
         todoProjects: {
-          'todo-project-a': { todoView: 'not-started', sidebarWidth: 360 },
-          'todo-project-b': { todoView: 'not-started', sidebarWidth: 420 }
+          'todo-project-a': { todoView: 'not-started' },
+          'todo-project-b': { todoView: 'not-started' }
         }
       })
     )
@@ -1385,7 +1460,7 @@ describe('App project terminal tree', () => {
     await flushPromises()
 
     expect(appApiMock.SelectTodoProject).toHaveBeenCalledWith('todo-project-b')
-    expect(wrapper.find('.app-shell').attributes('style')).toContain('--sidebar-width: 420px')
+    expect(wrapper.find('.app-shell').attributes('style')).toContain('--sidebar-width: 360px')
 
     await wrapper.find('[data-testid="todo-project-todo-project-a"]').trigger('click')
     await flushPromises()
@@ -1394,22 +1469,20 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('.app-shell').attributes('style')).toContain('--sidebar-width: 360px')
   })
 
-  it('saves sidebar width after divider dragging ends for the active TODO project', async () => {
+  it('saves sidebar width after divider dragging ends for the workspace', async () => {
     const wrapper = await mountReadyApp()
 
     await wrapper.find('[data-testid="sidebar-resize-handle"]').trigger('mousedown', { clientX: 280 })
     window.dispatchEvent(new MouseEvent('mousemove', { clientX: 360 }))
-    expect(SaveTodoProjectUIState).not.toHaveBeenCalled()
+    expect(SaveTodoSidebarWidth).not.toHaveBeenCalled()
     window.dispatchEvent(new MouseEvent('mouseup', { clientX: 360 }))
     await flushPromises()
 
-    expect(SaveTodoProjectUIState).toHaveBeenLastCalledWith('todo-project-a', {
-      todoView: 'not-started',
-      sidebarWidth: 360
-    })
+    expect(SaveTodoSidebarWidth).toHaveBeenLastCalledWith(360)
+    expect(SaveTodoProjectUIState).not.toHaveBeenCalled()
   })
 
-  it('serializes TODO project UI state saves so a slower earlier save cannot overwrite newer width', async () => {
+  it('serializes TODO project view and workspace sidebar width saves independently', async () => {
     let resolveFirstSave
     const firstSave = new Promise((resolve) => {
       resolveFirstSave = resolve
@@ -1423,8 +1496,7 @@ describe('App project terminal tree', () => {
     await flushPromises()
     expect(SaveTodoProjectUIState).toHaveBeenCalledTimes(1)
     expect(SaveTodoProjectUIState).toHaveBeenLastCalledWith('todo-project-a', {
-      todoView: 'in-progress',
-      sidebarWidth: 280
+      todoView: 'in-progress'
     })
 
     await wrapper.find('[data-testid="sidebar-resize-handle"]').trigger('mousedown', { clientX: 280 })
@@ -1433,15 +1505,13 @@ describe('App project terminal tree', () => {
     await flushPromises()
 
     expect(SaveTodoProjectUIState).toHaveBeenCalledTimes(1)
+    expect(SaveTodoSidebarWidth).toHaveBeenCalledTimes(1)
+    expect(SaveTodoSidebarWidth).toHaveBeenLastCalledWith(360)
 
     resolveFirstSave()
     await flushPromises()
 
-    expect(SaveTodoProjectUIState).toHaveBeenCalledTimes(2)
-    expect(SaveTodoProjectUIState).toHaveBeenLastCalledWith('todo-project-a', {
-      todoView: 'in-progress',
-      sidebarWidth: 360
-    })
+    expect(SaveTodoProjectUIState).toHaveBeenCalledTimes(1)
   })
 
   it('completes a TODO and shows its completed snapshot', async () => {
@@ -2999,6 +3069,7 @@ function settingsState(overrides = {}) {
 function todoProjectUIStateFile(overrides = {}) {
   return {
     version: 1,
+    sidebarWidth: 280,
     todoProjects: {},
     ...overrides
   }
