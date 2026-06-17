@@ -1662,6 +1662,80 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="terminal-terminal-a"]').attributes('data-activity-state')).toBe('busy')
   })
 
+  it('marks a background title fallback terminal needs-ack when it returns idle', async () => {
+    vi.useFakeTimers()
+    try {
+      const twoTerminalState = projectState({
+        terminals: [terminal({ id: 'terminal-a' }), terminal({ id: 'terminal-b', shellName: 'bash' })],
+        activeTerminalId: 'terminal-a'
+      })
+      appApiMock.ListProjects.mockResolvedValue(twoTerminalState)
+      appApiMock.SelectTerminal
+        .mockResolvedValueOnce(
+          projectState({
+            terminals: [terminal({ id: 'terminal-a' }), terminal({ id: 'terminal-b', shellName: 'bash' })],
+            activeTerminalId: 'terminal-b'
+          })
+        )
+        .mockResolvedValueOnce(twoTerminalState)
+      const wrapper = await mountReadyApp()
+
+      await wrapper.find('[data-testid="terminal-terminal-b"]').trigger('click')
+      await flushPromises()
+      await wrapper.find('[data-testid="terminal-terminal-a"]').trigger('click')
+      await flushPromises()
+
+      xtermMock.sessions.get('terminal-b').onTitleChange('codex working')
+      await nextTick()
+
+      expect(wrapper.find('[data-testid="terminal-terminal-b"]').attributes('data-activity-state')).toBe('busy')
+
+      vi.advanceTimersByTime(1000)
+      await nextTick()
+
+      expect(wrapper.find('[data-testid="terminal-terminal-b"]').attributes('data-activity-state')).toBe('needs-ack')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps a collapsed TODO collapsed and marks it needs-ack when a hidden background terminal returns idle', async () => {
+    vi.useFakeTimers()
+    try {
+      const twoTerminalState = projectState({
+        terminals: [terminal({ id: 'terminal-a' }), terminal({ id: 'terminal-b', shellName: 'bash' })],
+        activeTerminalId: 'terminal-a'
+      })
+      appApiMock.ListProjects.mockResolvedValue(twoTerminalState)
+      appApiMock.SelectTerminal
+        .mockResolvedValueOnce(
+          projectState({
+            terminals: [terminal({ id: 'terminal-a' }), terminal({ id: 'terminal-b', shellName: 'bash' })],
+            activeTerminalId: 'terminal-b'
+          })
+        )
+        .mockResolvedValueOnce(twoTerminalState)
+      const wrapper = await mountReadyApp()
+
+      await wrapper.find('[data-testid="terminal-terminal-b"]').trigger('click')
+      await flushPromises()
+      await wrapper.find('[data-testid="terminal-terminal-a"]').trigger('click')
+      await flushPromises()
+      await wrapper.find('[data-testid="toggle-todo-todo-a"]').trigger('click')
+      await nextTick()
+
+      xtermMock.sessions.get('terminal-b').onTitleChange('codex working')
+      await nextTick()
+      vi.advanceTimersByTime(1000)
+      await nextTick()
+
+      expect(wrapper.find('[data-testid="todo-project-list-todo-a"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="todo-todo-a"]').attributes('data-activity-state')).toBe('needs-ack')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it.each([
     ['idle', { phase: 'idle', source: 'codex-jsonl', reason: 'turn-idle' }],
     ['done', { phase: 'done', source: 'codex-jsonl', reason: 'turn-completed' }],

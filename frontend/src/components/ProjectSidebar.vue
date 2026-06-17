@@ -961,8 +961,8 @@ watch(
 )
 
 watch(
-  [() => props.activeTerminalId, () => props.terminals],
-  ([terminalId]) => {
+  () => props.activeTerminalId,
+  (terminalId) => {
     if (!terminalId) {
       return
     }
