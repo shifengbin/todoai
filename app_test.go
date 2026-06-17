@@ -83,14 +83,14 @@ func TestAppWorkspaceOpenScopesProjectsTodosAndHistoryButKeepsSettingsGlobal(t *
 	if err != nil {
 		t.Fatalf("OpenWorkspaceFromPath(B) error = %v", err)
 	}
-	if len(state.Projects) != 0 || len(state.Todos) != 0 {
-		t.Fatalf("workspace B initial state = projects %#v todos %#v, want empty", state.Projects, state.Todos)
+	if len(state.Projects) != 1 || state.Projects[0].Path != mustAbs(t, projectA) || len(state.Todos) != 0 {
+		t.Fatalf("workspace B initial state = projects %#v todos %#v, want shared project A and empty todos", state.Projects, state.Todos)
 	}
 	state, err = app.AddProjectFromPath(projectB)
 	if err != nil {
 		t.Fatalf("AddProjectFromPath(B) error = %v", err)
 	}
-	if _, err := app.CreateTodo(CreateTodoRequest{Title: "升级依赖", ProjectIDs: []string{state.Projects[0].ID}}); err != nil {
+	if _, err := app.CreateTodo(CreateTodoRequest{Title: "升级依赖", ProjectIDs: []string{state.ActiveProjectID}}); err != nil {
 		t.Fatalf("CreateTodo(B) error = %v", err)
 	}
 
@@ -98,8 +98,8 @@ func TestAppWorkspaceOpenScopesProjectsTodosAndHistoryButKeepsSettingsGlobal(t *
 	if err != nil {
 		t.Fatalf("OpenWorkspaceFromPath(A again) error = %v", err)
 	}
-	if len(state.Projects) != 1 || state.Projects[0].Path != mustAbs(t, projectA) {
-		t.Fatalf("workspace A projects = %#v, want project A only", state.Projects)
+	if len(state.Projects) != 2 || !containsProjectPath(state.Projects, mustAbs(t, projectA)) || !containsProjectPath(state.Projects, mustAbs(t, projectB)) {
+		t.Fatalf("workspace A projects = %#v, want shared project candidates", state.Projects)
 	}
 	if len(state.Todos) != 1 || state.Todos[0].Title != "修复登录问题" {
 		t.Fatalf("workspace A todos = %#v, want A todo only", state.Todos)
@@ -116,8 +116,8 @@ func TestAppWorkspaceOpenScopesProjectsTodosAndHistoryButKeepsSettingsGlobal(t *
 	if err != nil {
 		t.Fatalf("OpenWorkspaceFromPath(B again) error = %v", err)
 	}
-	if len(state.Projects) != 1 || state.Projects[0].Path != mustAbs(t, projectB) {
-		t.Fatalf("workspace B projects = %#v, want project B only", state.Projects)
+	if len(state.Projects) != 2 || !containsProjectPath(state.Projects, mustAbs(t, projectA)) || !containsProjectPath(state.Projects, mustAbs(t, projectB)) {
+		t.Fatalf("workspace B projects = %#v, want shared project candidates", state.Projects)
 	}
 	if len(state.Todos) != 1 || state.Todos[0].Title != "升级依赖" {
 		t.Fatalf("workspace B todos = %#v, want B todo only", state.Todos)
@@ -128,6 +128,42 @@ func TestAppWorkspaceOpenScopesProjectsTodosAndHistoryButKeepsSettingsGlobal(t *
 	}
 	if settings.Selected.Path != shellPath {
 		t.Fatalf("workspace B shell = %q, want global %q", settings.Selected.Path, shellPath)
+	}
+}
+
+func TestAppSharesGlobalProjectCandidatesAcrossWorkspacesButScopesTodos(t *testing.T) {
+	appConfigDir := t.TempDir()
+	workspaceA := t.TempDir()
+	workspaceB := t.TempDir()
+	projectA := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(appConfigDir, "projects.json"),
+		newFakeShellStarter().Start,
+	)
+
+	state, err := app.OpenWorkspaceFromPath(workspaceA)
+	if err != nil {
+		t.Fatalf("OpenWorkspaceFromPath(A) error = %v", err)
+	}
+	state, err = app.AddProjectFromPath(projectA)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath(A) error = %v", err)
+	}
+	projectID := state.Projects[0].ID
+	if _, err := app.CreateTodo(CreateTodoRequest{Title: "修复登录问题", ProjectIDs: []string{projectID}}); err != nil {
+		t.Fatalf("CreateTodo(A) error = %v", err)
+	}
+
+	state, err = app.OpenWorkspaceFromPath(workspaceB)
+	if err != nil {
+		t.Fatalf("OpenWorkspaceFromPath(B) error = %v", err)
+	}
+
+	if len(state.Projects) != 1 || state.Projects[0].Path != mustAbs(t, projectA) {
+		t.Fatalf("workspace B candidates = %#v, want shared project A candidate", state.Projects)
+	}
+	if len(state.Todos) != 0 || len(state.TodoProjects) != 0 {
+		t.Fatalf("workspace B TODO state = todos %#v todoProjects %#v, want isolated empty", state.Todos, state.TodoProjects)
 	}
 }
 
@@ -211,7 +247,7 @@ func TestAppStartupRestoresMostRecentWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddProjectFromPath(B) error = %v", err)
 	}
-	projectBID := state.Projects[0].ID
+	projectBID := state.ActiveProjectID
 
 	restarted := NewAppWithConfigAndShellStarter(
 		filepath.Join(appConfigDir, "projects.json"),
@@ -230,8 +266,8 @@ func TestAppStartupRestoresMostRecentWorkspace(t *testing.T) {
 	if state.CurrentWorkspace == nil || state.CurrentWorkspace.Path != mustAbs(t, workspaceB) {
 		t.Fatalf("CurrentWorkspace = %#v, want most recent workspace B", state.CurrentWorkspace)
 	}
-	if len(state.Projects) != 1 || state.Projects[0].ID != projectBID || state.Projects[0].Path != mustAbs(t, projectB) {
-		t.Fatalf("restored projects = %#v, want workspace B project", state.Projects)
+	if len(state.Projects) != 2 || !containsProjectPath(state.Projects, mustAbs(t, projectA)) || !containsProjectPath(state.Projects, mustAbs(t, projectB)) {
+		t.Fatalf("restored projects = %#v, want shared candidates", state.Projects)
 	}
 	if projectAID == projectBID {
 		t.Fatal("test setup produced identical project IDs")
@@ -280,8 +316,8 @@ func TestAppStartupKeepsNoWorkspaceWhenMostRecentWorkspaceUnavailable(t *testing
 	if state.CurrentWorkspace != nil {
 		t.Fatalf("CurrentWorkspace = %#v, want nil when most recent workspace is unavailable", state.CurrentWorkspace)
 	}
-	if len(state.Projects) != 0 {
-		t.Fatalf("Projects = %#v, want no fallback workspace project loaded", state.Projects)
+	if len(state.Projects) != 1 || state.Projects[0].Path != mustAbs(t, projectA) {
+		t.Fatalf("Projects = %#v, want global candidates without fallback workspace", state.Projects)
 	}
 	if len(state.RecentWorkspaces) != 2 {
 		t.Fatalf("RecentWorkspaces = %#v, want both recent workspaces retained", state.RecentWorkspaces)
@@ -353,8 +389,8 @@ func TestAppCloseWorkspaceClearsRuntimeStateAndPreservesData(t *testing.T) {
 	if state.CurrentWorkspace != nil {
 		t.Fatalf("CurrentWorkspace = %#v, want nil", state.CurrentWorkspace)
 	}
-	if len(state.Projects) != 0 || len(state.Todos) != 0 || len(state.Terminals) != 0 || state.ActiveTerminalID != "" {
-		t.Fatalf("closed workspace state = %#v, want empty project/todo/terminal state", state)
+	if len(state.Projects) != 1 || state.Projects[0].Path != mustAbs(t, projectDir) || len(state.Todos) != 0 || len(state.Terminals) != 0 || state.ActiveTerminalID != "" {
+		t.Fatalf("closed workspace state = %#v, want global candidates and empty todo/terminal state", state)
 	}
 	if !starter.processes[0].closed {
 		t.Fatal("workspace terminal process was not closed")
@@ -1063,7 +1099,7 @@ func TestAppFallsBackWhenSavedTerminalShellIsUnavailable(t *testing.T) {
 	}
 }
 
-func TestAppDeletesProjectAndOwnedTerminals(t *testing.T) {
+func TestAppDeletesProjectCandidateWithoutClosingTodoProjectTerminals(t *testing.T) {
 	projectDirA := t.TempDir()
 	projectDirB := t.TempDir()
 	starter := newFakeShellStarter()
@@ -1089,7 +1125,7 @@ func TestAppDeletesProjectAndOwnedTerminals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddProjectFromPath(B) error = %v", err)
 	}
-	projectBID := state.ActiveProjectID
+	projectBID := findProjectByPathForApp(t, state.Projects, projectDirB).ID
 	_, todoProjectBID := createTodoProjectForApp(t, app, "升级依赖", projectBID)
 	if _, err := app.CreateTodoTerminal(todoProjectBID, 80, 24); err != nil {
 		t.Fatalf("CreateTodoTerminal(B) error = %v", err)
@@ -1107,20 +1143,20 @@ func TestAppDeletesProjectAndOwnedTerminals(t *testing.T) {
 		t.Fatalf("ActiveProjectID = %q, want %q", state.ActiveProjectID, projectBID)
 	}
 	if state.ActiveTerminalID != "terminal-b1" {
-		t.Fatalf("ActiveTerminalID = %q, want terminal-b1", state.ActiveTerminalID)
+		t.Fatalf("ActiveTerminalID = %q, want current todo project terminal preserved", state.ActiveTerminalID)
 	}
-	if len(state.Terminals) != 1 || state.Terminals[0].ID != "terminal-b1" {
-		t.Fatalf("Terminals = %#v, want only terminal-b1", state.Terminals)
+	if len(state.Terminals) != 3 {
+		t.Fatalf("Terminals = %#v, want all TODO project terminals preserved", state.Terminals)
 	}
-	if !starter.processes[0].closed || !starter.processes[1].closed {
-		t.Fatal("deleted project terminal processes were not closed")
+	if starter.processes[0].closed || starter.processes[1].closed {
+		t.Fatal("deleted candidate closed TODO project terminal processes")
 	}
 	if starter.processes[2].closed {
 		t.Fatal("remaining project terminal process was closed")
 	}
 }
 
-func TestAppDeletesProjectsAndOwnedTerminals(t *testing.T) {
+func TestAppDeletesProjectCandidatesWithoutClosingTodoProjectTerminals(t *testing.T) {
 	projectDirA := t.TempDir()
 	projectDirB := t.TempDir()
 	projectDirC := t.TempDir()
@@ -1145,7 +1181,7 @@ func TestAppDeletesProjectsAndOwnedTerminals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddProjectFromPath(B) error = %v", err)
 	}
-	projectBID := state.ActiveProjectID
+	projectBID := findProjectByPathForApp(t, state.Projects, projectDirB).ID
 	_, todoProjectBID := createTodoProjectForApp(t, app, "升级依赖", projectBID)
 	if _, err := app.CreateTodoTerminal(todoProjectBID, 80, 24); err != nil {
 		t.Fatalf("CreateTodoTerminal(B) error = %v", err)
@@ -1155,7 +1191,7 @@ func TestAppDeletesProjectsAndOwnedTerminals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddProjectFromPath(C) error = %v", err)
 	}
-	projectCID := state.ActiveProjectID
+	projectCID := findProjectByPathForApp(t, state.Projects, projectDirC).ID
 	_, todoProjectCID := createTodoProjectForApp(t, app, "整理项目", projectCID)
 	if _, err := app.CreateTodoTerminal(todoProjectCID, 80, 24); err != nil {
 		t.Fatalf("CreateTodoTerminal(C) error = %v", err)
@@ -1182,11 +1218,11 @@ func TestAppDeletesProjectsAndOwnedTerminals(t *testing.T) {
 	if state.ActiveTerminalID != "terminal-b1" {
 		t.Fatalf("ActiveTerminalID = %q, want terminal-b1", state.ActiveTerminalID)
 	}
-	if len(state.Terminals) != 1 || state.Terminals[0].ID != "terminal-b1" {
-		t.Fatalf("Terminals = %#v, want only terminal-b1", state.Terminals)
+	if len(state.Terminals) != 3 {
+		t.Fatalf("Terminals = %#v, want all TODO project terminals preserved", state.Terminals)
 	}
-	if !starter.processes[0].closed || !starter.processes[2].closed {
-		t.Fatal("deleted project terminal processes were not closed")
+	if starter.processes[0].closed || starter.processes[2].closed {
+		t.Fatal("deleted candidates closed TODO project terminal processes")
 	}
 	if starter.processes[1].closed {
 		t.Fatal("remaining project terminal process was closed")
@@ -1284,6 +1320,43 @@ func TestAppGetsProjectGitStatusForAvailableProject(t *testing.T) {
 	}
 	if status.ChangedCount != 3 {
 		t.Fatalf("ChangedCount = %d, want 3", status.ChangedCount)
+	}
+}
+
+func TestAppGetsProjectGitStatusFromTodoProjectCopyAfterCandidateRemoval(t *testing.T) {
+	projectDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	projectID := state.Projects[0].ID
+	if _, err := app.CreateTodo(CreateTodoRequest{Title: "修复登录问题", ProjectIDs: []string{projectID}}); err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	if _, err := app.DeleteProject(projectID); err != nil {
+		t.Fatalf("DeleteProject() error = %v", err)
+	}
+	app.gitStatus = func(path string) (GitStatus, error) {
+		if path != projectDir {
+			t.Fatalf("git status path = %q, want %q", path, projectDir)
+		}
+		return GitStatus{IsRepo: true, Branch: "main"}, nil
+	}
+
+	status, err := app.GetProjectGitStatus(projectID)
+	if err != nil {
+		t.Fatalf("GetProjectGitStatus() error = %v", err)
+	}
+
+	if status.ProjectID != projectID {
+		t.Fatalf("ProjectID = %q, want %q", status.ProjectID, projectID)
+	}
+	if status.Branch != "main" {
+		t.Fatalf("Branch = %q, want main", status.Branch)
 	}
 }
 
@@ -1472,4 +1545,16 @@ func createTodoProjectForApp(t *testing.T, app *App, title string, projectID str
 		t.Fatalf("ChangeTodoStatus(%q) error = %v", todoID, err)
 	}
 	return todoID, state.ActiveTodoProjectID
+}
+
+func findProjectByPathForApp(t *testing.T, projects []Project, path string) Project {
+	t.Helper()
+	absolutePath := mustAbs(t, path)
+	for _, project := range projects {
+		if project.Path == absolutePath {
+			return project
+		}
+	}
+	t.Fatalf("project path %q not found in %#v", absolutePath, projects)
+	return Project{}
 }

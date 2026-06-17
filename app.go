@@ -27,6 +27,8 @@ type App struct {
 	ctx                           context.Context
 	workspace                     *WorkspaceManager
 	projects                      *ProjectManager
+	projectConfigPath             string
+	globalProjectCandidatesPath   string
 	shells                        *ShellSessionManager
 	settings                      *SettingsManager
 	history                       *TerminalHistoryStore
@@ -62,8 +64,13 @@ func NewAppWithConfigAndShellStarter(configPath string, starter ShellStarter, op
 	workspaceManager := NewWorkspaceManager(configDir)
 	historyStore := NewTerminalHistoryStore(configDir)
 	app := &App{
-		workspace:       workspaceManager,
-		projects:        NewProjectManager(configPath),
+		workspace:                   workspaceManager,
+		projectConfigPath:           configPath,
+		globalProjectCandidatesPath: defaultGlobalProjectCandidatesPath(configPath),
+		projects: NewProjectManager(
+			configPath,
+			WithGlobalProjectCandidatesPath(defaultGlobalProjectCandidatesPath(configPath)),
+		),
 		settings:        NewSettingsManager(defaultSettingsConfigPath(configPath)),
 		history:         historyStore,
 		starter:         starter,
@@ -489,7 +496,6 @@ func (a *App) DeleteProject(projectID string) (ProjectState, error) {
 	if err != nil {
 		return ProjectState{}, err
 	}
-	a.shells.DeleteProjectTerminals(projectID)
 	return a.withShellState(state), nil
 }
 
@@ -500,9 +506,6 @@ func (a *App) DeleteProjects(projectIDs []string) (ProjectState, error) {
 	state, err := a.projects.DeleteProjects(projectIDs)
 	if err != nil {
 		return ProjectState{}, err
-	}
-	for _, projectID := range normalizeProjectIDs(projectIDs) {
-		a.shells.DeleteProjectTerminals(projectID)
 	}
 	return a.withShellState(state), nil
 }
@@ -729,6 +732,10 @@ func defaultSettingsConfigPath(projectConfigPath string) string {
 	return filepath.Join(filepath.Dir(projectConfigPath), "settings.json")
 }
 
+func defaultGlobalProjectCandidatesPath(projectConfigPath string) string {
+	return filepath.Join(filepath.Dir(projectConfigPath), "global-project-candidates.json")
+}
+
 func resolveAppConfigDir(legacyDir string, appConfigDir string, migrate func(string, string) error) string {
 	if legacyDir == appConfigDir {
 		return appConfigDir
@@ -822,13 +829,19 @@ func (a *App) hasWorkspace() bool {
 }
 
 func (a *App) bindWorkspace(workspace Workspace) {
-	a.projects = NewProjectManager(filepath.Join(workspace.DataPath, "projects.json"))
+	a.projects = NewProjectManager(
+		filepath.Join(workspace.DataPath, "projects.json"),
+		WithGlobalProjectCandidatesPath(a.globalProjectCandidatesPath),
+	)
 	a.history = NewTerminalHistoryStore(workspace.DataPath)
 	a.rebuildShellSessionManager()
 }
 
 func (a *App) bindNoWorkspace() {
-	a.projects = NewProjectManager(filepath.Join(os.TempDir(), applicationID, "closed-workspace", "projects.json"))
+	a.projects = NewProjectManager(
+		filepath.Join(os.TempDir(), applicationID, "closed-workspace", "projects.json"),
+		WithGlobalProjectCandidatesPath(a.globalProjectCandidatesPath),
+	)
 	a.history = NewTerminalHistoryStore(filepath.Join(os.TempDir(), applicationID, "closed-workspace"))
 	a.rebuildShellSessionManager()
 }
@@ -859,11 +872,17 @@ func (a *App) currentProjectStateWithError(err error) (ProjectState, error) {
 }
 
 func (a *App) emptyProjectState(workspaceState WorkspaceState) ProjectState {
+	projects := []Project{}
+	if a.projects != nil {
+		if state, err := a.projects.Load(); err == nil {
+			projects = state.Projects
+		}
+	}
 	return ProjectState{
 		Version:          projectConfigVersion,
 		CurrentWorkspace: workspaceState.CurrentWorkspace,
 		RecentWorkspaces: workspaceState.RecentWorkspaces,
-		Projects:         []Project{},
+		Projects:         projects,
 		Todos:            []Todo{},
 		TodoProjects:     []TodoProject{},
 		Terminals:        []ProjectTerminal{},

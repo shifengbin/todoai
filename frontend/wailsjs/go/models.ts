@@ -144,6 +144,10 @@ export namespace main {
 	    id: string;
 	    todoId: string;
 	    projectId: string;
+	    sourceProjectId?: string;
+	    name?: string;
+	    path?: string;
+	    available: boolean;
 	    createdAt: string;
 	    lastSelectedAt: string;
 	
@@ -156,6 +160,10 @@ export namespace main {
 	        this.id = source["id"];
 	        this.todoId = source["todoId"];
 	        this.projectId = source["projectId"];
+	        this.sourceProjectId = source["sourceProjectId"];
+	        this.name = source["name"];
+	        this.path = source["path"];
+	        this.available = source["available"];
 	        this.createdAt = source["createdAt"];
 	        this.lastSelectedAt = source["lastSelectedAt"];
 	    }

@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { ChevronDown, ChevronUp, GitBranch, Plus, RotateCcw, Settings, Trash2, X } from '@lucide/vue'
+import { ChevronDown, ChevronUp, FolderInput, FolderPlus, GitBranch, Plus, RotateCcw, Settings, Trash2, X } from '@lucide/vue'
 import ProjectSidebar from './components/ProjectSidebar.vue'
 import {
   AGENT_CONFIDENCE,
@@ -159,7 +159,8 @@ const terminalManager = new TerminalSessionManager({
 })
 
 const activeProject = computed(() => {
-  return projects.value.find((project) => project.id === activeProjectId.value) || null
+  const todoProject = todoProjects.value.find((candidate) => candidate.id === activeTodoProjectId.value)
+  return todoProjectDisplayProject(todoProject) || projects.value.find((project) => project.id === activeProjectId.value) || null
 })
 
 const hasWorkspace = computed(() => Boolean(currentWorkspace.value?.path))
@@ -177,7 +178,7 @@ const activeTodoProjectProject = computed(() => {
   if (!todoProject) {
     return null
   }
-  return projects.value.find((project) => project.id === todoProject.projectId) || null
+  return todoProjectDisplayProject(todoProject)
 })
 
 const activeTerminal = computed(() => {
@@ -287,7 +288,24 @@ const selectedTodoDetailProjects = computed(() => {
     return []
   }
   const selectedProjectIds = new Set(todoDetail.projectIds)
-  return projects.value.filter((project) => selectedProjectIds.has(project.id))
+  const selected = []
+  const seenProjectIds = new Set()
+  for (const project of projects.value) {
+    if (selectedProjectIds.has(project.id)) {
+      selected.push(project)
+      seenProjectIds.add(project.id)
+    }
+  }
+  for (const todoProject of todoProjectsForTodo(todoDetail.todoId)) {
+    if (selectedProjectIds.has(todoProject.projectId) && !seenProjectIds.has(todoProject.projectId)) {
+      const project = todoProjectDisplayProject(todoProject)
+      if (project) {
+        selected.push(project)
+        seenProjectIds.add(project.id)
+      }
+    }
+  }
+  return selected
 })
 
 const todoDetailProjectOptions = computed(() => {
@@ -313,13 +331,22 @@ const removedTodoDetailProjectsWithTerminals = computed(() => {
 })
 
 const projectPickerOptions = computed(() => {
-  const linkedProjectIds = new Set(
+  const linkedProjectPaths = new Set(
     todoProjects.value
       .filter((todoProject) => todoProject.todoId === projectPicker.todoId)
+      .map((todoProject) => normalizeProjectPath(todoProject.path))
+      .filter(Boolean)
+  )
+  const linkedProjectIds = new Set(
+    todoProjects.value
+      .filter((todoProject) => todoProject.todoId === projectPicker.todoId && !todoProject.path)
       .map((todoProject) => todoProject.projectId)
   )
   return filteredProjects(
-    projects.value.filter((project) => !linkedProjectIds.has(project.id)),
+    projects.value.filter((project) => {
+      const path = normalizeProjectPath(project.path)
+      return path ? !linkedProjectPaths.has(path) : !linkedProjectIds.has(project.id)
+    }),
     projectPicker.query
   )
 })
@@ -484,6 +511,14 @@ async function createProject() {
   }
 }
 
+async function importSingleProjectCandidate() {
+  try {
+    applyState(await CreateProjectFromDialog(), { refreshGitStatus: false })
+  } catch (error) {
+    showError(error)
+  }
+}
+
 async function importProjectsFromParentDirectory() {
   try {
     applyState(await ImportProjectsFromParentDirectoryDialog(), { refreshGitStatus: false })
@@ -632,10 +667,6 @@ async function addProjectToTodo(todoId) {
   projectPicker.query = ''
   projectPicker.projectIds = []
   projectPicker.saving = false
-  if (projectPickerOptions.value.length === 0) {
-    showError('No available projects to add')
-    return
-  }
   projectPicker.visible = true
   errorMessage.value = ''
 }
@@ -825,6 +856,21 @@ async function deleteProjects(projectIds) {
   try {
     applyState(await DeleteProjects(projectIds))
     await activateActiveTerminal()
+  } catch (error) {
+    showError(error)
+  }
+}
+
+async function clearGlobalProjectCandidates() {
+  const projectIds = projects.value.map((project) => project.id).filter(Boolean)
+  if (projectIds.length === 0) {
+    return
+  }
+  if (!window.confirm('Clear global project candidates?')) {
+    return
+  }
+  try {
+    applyState(await DeleteProjects(projectIds), { refreshGitStatus: false })
   } catch (error) {
     showError(error)
   }
@@ -1111,12 +1157,12 @@ async function refreshProjectGitStatus(options = {}) {
   gitStatusError.value = ''
   try {
     const status = await GetProjectGitStatus(projectId)
-    if (requestId !== gitStatusRequestId || activeProjectId.value !== projectId) {
+    if (requestId !== gitStatusRequestId || activeProject.value?.id !== projectId) {
       return
     }
     gitStatus.value = status
   } catch (error) {
-    if (requestId !== gitStatusRequestId || activeProjectId.value !== projectId) {
+    if (requestId !== gitStatusRequestId || activeProject.value?.id !== projectId) {
       return
     }
     gitStatus.value = null
@@ -1167,13 +1213,13 @@ async function initializeActiveProjectGitRepository() {
   errorMessage.value = ''
   try {
     await InitializeProjectGitRepository(projectId)
-    if (activeProjectId.value === projectId) {
+    if (activeProject.value?.id === projectId) {
       await refreshProjectGitStatus()
     }
   } catch (error) {
     showError(error)
   } finally {
-    if (activeProjectId.value === projectId) {
+    if (activeProject.value?.id === projectId) {
       gitInitLoading.value = false
     }
   }
@@ -1191,6 +1237,32 @@ function filteredProjects(projectList, query) {
   return projectList.filter((project) => {
     return [project.name, project.path].some((value) => normalizeSearch(value).includes(normalizedQuery))
   })
+}
+
+function todoProjectsForTodo(todoId) {
+  if (!todoId) {
+    return []
+  }
+  return todoProjects.value.filter((todoProject) => todoProject.todoId === todoId)
+}
+
+function todoProjectDisplayProject(todoProject) {
+  if (!todoProject) {
+    return null
+  }
+  if (todoProject.name || todoProject.path) {
+    return {
+      id: todoProject.projectId,
+      name: todoProject.name || 'Missing project',
+      path: todoProject.path || todoProject.projectId,
+      available: todoProject.available !== false
+    }
+  }
+  return projects.value.find((project) => project.id === todoProject.projectId) || null
+}
+
+function normalizeProjectPath(path) {
+  return (path || '').trim()
 }
 
 function normalizeSearch(value) {
@@ -1566,7 +1638,13 @@ function showError(error) {
             <h2>New TODO</h2>
             <p>Task context</p>
           </div>
-          <button type="button" class="icon-button" title="Close TODO form" @click="closeTodoForm">
+          <button
+            type="button"
+            class="icon-button"
+            data-testid="todo-create-close"
+            title="Close TODO form"
+            @click="closeTodoForm"
+          >
             <X :size="16" />
           </button>
         </header>
@@ -1614,6 +1692,42 @@ function showError(error) {
 
           <div class="settings-field">
             <span class="settings-label">Projects</span>
+            <div class="candidate-management-toolbar" data-testid="todo-project-candidate-tools">
+              <button
+                type="button"
+                class="toolbar-button compact"
+                data-testid="import-single-project-candidate"
+                :disabled="todoForm.saving"
+                @click="importSingleProjectCandidate"
+              >
+                <FolderPlus :size="14" />
+                <span>Import project</span>
+              </button>
+              <button
+                type="button"
+                class="toolbar-button compact"
+                data-testid="import-global-project-candidates"
+                :disabled="todoForm.saving"
+                @click="importProjectsFromParentDirectory"
+              >
+                <FolderInput :size="14" />
+                <span>Import parent</span>
+              </button>
+              <button
+                type="button"
+                class="toolbar-button compact danger"
+                data-testid="clear-global-project-candidates"
+                :disabled="todoForm.saving || projects.length === 0"
+                @click="clearGlobalProjectCandidates"
+              >
+                <Trash2 :size="14" />
+                <span>Clear candidates</span>
+              </button>
+            </div>
+            <div v-if="importSummary" class="import-summary" data-testid="import-summary">
+              <span>{{ importSummary.addedCount || 0 }} imported</span>
+              <span>{{ importSummary.skippedCount || 0 }} skipped</span>
+            </div>
             <div
               v-if="selectedTodoFormProjects.length"
               class="todo-selected-project-tags"
@@ -1685,7 +1799,13 @@ function showError(error) {
             <h2>TODO Detail</h2>
             <p>Task context</p>
           </div>
-          <button type="button" class="icon-button" title="Close TODO detail" @click="closeTodoDetail">
+          <button
+            type="button"
+            class="icon-button"
+            data-testid="todo-detail-close"
+            title="Close TODO detail"
+            @click="closeTodoDetail"
+          >
             <X :size="16" />
           </button>
         </header>
@@ -1759,7 +1879,47 @@ function showError(error) {
               No completed project snapshots
             </span>
             <div
-              v-else-if="selectedTodoDetailProjects.length"
+              v-if="!todoDetail.readOnly"
+              class="candidate-management-toolbar"
+              data-testid="todo-detail-project-candidate-tools"
+            >
+              <button
+                type="button"
+                class="toolbar-button compact"
+                data-testid="import-single-project-candidate"
+                :disabled="todoDetail.saving"
+                @click="importSingleProjectCandidate"
+              >
+                <FolderPlus :size="14" />
+                <span>Import project</span>
+              </button>
+              <button
+                type="button"
+                class="toolbar-button compact"
+                data-testid="import-global-project-candidates"
+                :disabled="todoDetail.saving"
+                @click="importProjectsFromParentDirectory"
+              >
+                <FolderInput :size="14" />
+                <span>Import parent</span>
+              </button>
+              <button
+                type="button"
+                class="toolbar-button compact danger"
+                data-testid="clear-global-project-candidates"
+                :disabled="todoDetail.saving || projects.length === 0"
+                @click="clearGlobalProjectCandidates"
+              >
+                <Trash2 :size="14" />
+                <span>Clear candidates</span>
+              </button>
+            </div>
+            <div v-if="!todoDetail.readOnly && importSummary" class="import-summary" data-testid="import-summary">
+              <span>{{ importSummary.addedCount || 0 }} imported</span>
+              <span>{{ importSummary.skippedCount || 0 }} skipped</span>
+            </div>
+            <div
+              v-if="!todoDetail.readOnly && selectedTodoDetailProjects.length"
               class="todo-selected-project-tags"
               data-testid="todo-detail-selected-projects"
             >
@@ -1833,12 +1993,54 @@ function showError(error) {
             <h2>Add Project</h2>
             <p>TODO context</p>
           </div>
-          <button type="button" class="icon-button" title="Close project picker" @click="closeProjectPicker">
+          <button
+            type="button"
+            class="icon-button"
+            data-testid="todo-project-picker-close"
+            title="Close project picker"
+            @click="closeProjectPicker"
+          >
             <X :size="16" />
           </button>
         </header>
 
         <div class="settings-body todo-form-body">
+          <div class="candidate-management-toolbar" data-testid="todo-project-picker-candidate-tools">
+            <button
+              type="button"
+              class="toolbar-button compact"
+              data-testid="import-single-project-candidate"
+              :disabled="projectPicker.saving"
+              @click="importSingleProjectCandidate"
+            >
+              <FolderPlus :size="14" />
+              <span>Import project</span>
+            </button>
+            <button
+              type="button"
+              class="toolbar-button compact"
+              data-testid="import-global-project-candidates"
+              :disabled="projectPicker.saving"
+              @click="importProjectsFromParentDirectory"
+            >
+              <FolderInput :size="14" />
+              <span>Import parent</span>
+            </button>
+            <button
+              type="button"
+              class="toolbar-button compact danger"
+              data-testid="clear-global-project-candidates"
+              :disabled="projectPicker.saving || projects.length === 0"
+              @click="clearGlobalProjectCandidates"
+            >
+              <Trash2 :size="14" />
+              <span>Clear candidates</span>
+            </button>
+          </div>
+          <div v-if="importSummary" class="import-summary" data-testid="import-summary">
+            <span>{{ importSummary.addedCount || 0 }} imported</span>
+            <span>{{ importSummary.skippedCount || 0 }} skipped</span>
+          </div>
           <div
             v-if="selectedProjectPickerProjects.length"
             class="todo-selected-project-tags"

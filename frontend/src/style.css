@@ -255,21 +255,6 @@ button {
     gap: 6px;
 }
 
-.sidebar-tabs {
-    display: flex;
-    flex-shrink: 0;
-    align-items: flex-end;
-    gap: 18px;
-    min-height: 42px;
-    padding: 0 16px;
-    border-bottom: 1px solid var(--border-soft);
-}
-
-.sidebar-tabs.tab-strip {
-    background: var(--surface-bg);
-}
-
-.sidebar-tab,
 .todo-view-tab {
     display: inline-flex;
     align-items: center;
@@ -285,15 +270,6 @@ button {
     font-weight: 800;
 }
 
-.sidebar-tab {
-    position: relative;
-    height: 42px;
-    padding: 0 1px;
-    border: 0;
-    border-bottom: 2px solid transparent;
-    background: transparent;
-}
-
 .todo-view-tab {
     overflow: hidden;
     padding: 0 8px;
@@ -301,25 +277,14 @@ button {
     white-space: nowrap;
 }
 
-.sidebar-tab:hover,
 .todo-view-tab:hover {
     color: var(--accent);
 }
 
-.sidebar-tab:hover {
-    border-bottom-color: var(--control-border);
-}
-
-.sidebar-tab.active,
 .todo-view-tab.active {
     border-color: var(--accent);
     background: var(--active-bg);
     color: var(--accent-strong);
-}
-
-.sidebar-tab.active {
-    background: transparent;
-    border-bottom-color: var(--accent);
 }
 
 .icon-button,
@@ -343,6 +308,17 @@ button {
     padding: 0 10px;
 }
 
+.toolbar-button.compact {
+    height: 28px;
+    gap: 5px;
+    padding: 0 8px;
+    font-size: 12px;
+}
+
+.toolbar-button.danger {
+    color: var(--delete-text);
+}
+
 .icon-button:hover,
 .toolbar-button:hover {
     border-color: var(--accent);
@@ -350,15 +326,13 @@ button {
 }
 
 .icon-button:disabled,
-.toolbar-button:disabled,
-.library-action-button:disabled {
+.toolbar-button:disabled {
     opacity: 0.45;
     cursor: not-allowed;
 }
 
 .icon-button:disabled:hover,
-.toolbar-button:disabled:hover,
-.library-action-button:disabled:hover {
+.toolbar-button:disabled:hover {
     border-color: var(--control-border);
     color: var(--text-secondary);
 }
@@ -844,58 +818,6 @@ button {
     background: var(--tree-guide-active);
 }
 
-.project-library-actions {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 6px;
-    margin-bottom: 8px;
-}
-
-.library-action-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 7px;
-    min-width: 0;
-    width: 100%;
-    height: 32px;
-    border: 1px solid var(--control-border);
-    background: var(--surface-bg);
-    color: var(--text-secondary);
-    cursor: pointer;
-    font-size: 12px;
-    font-weight: 800;
-}
-
-.library-action-button:hover {
-    border-color: var(--accent);
-    color: var(--accent);
-}
-
-.library-action-button-delete {
-    color: var(--delete-text);
-}
-
-.library-action-button-delete:hover {
-    border-color: var(--delete-text);
-    color: var(--delete-hover-text);
-}
-
-.library-action-button-delete:disabled {
-    opacity: 0.55;
-    cursor: not-allowed;
-}
-
-.library-action-button-delete:disabled:hover {
-    border-color: var(--control-border);
-    color: var(--delete-text);
-}
-
-.bulk-project-delete-control {
-    position: relative;
-    min-width: 0;
-}
-
 .import-summary {
     display: flex;
     align-items: center;
@@ -908,6 +830,13 @@ button {
     color: var(--muted-text);
     font-size: 12px;
     font-weight: 700;
+}
+
+.candidate-management-toolbar {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    gap: 8px;
 }
 
 .sidebar-empty {
@@ -1058,10 +987,6 @@ button {
     gap: 4px;
 }
 
-.library-project-header-row {
-    grid-template-columns: 26px minmax(0, 1fr) 30px;
-}
-
 .todo-project-header-row {
     grid-template-columns: minmax(0, 1fr) 30px 30px;
     border: 1px solid transparent;
@@ -1144,26 +1069,14 @@ button {
 .add-terminal-button,
 .delete-project-button,
 .add-terminal-placeholder,
-.todo-project-remove-control,
-.project-delete-control {
+.todo-project-remove-control {
     width: 30px;
 }
 
 .terminal-launch-control,
-.todo-project-remove-control,
-.project-delete-control {
+.todo-project-remove-control {
     position: relative;
     min-height: 52px;
-}
-
-.project-select-checkbox {
-    align-self: center;
-    justify-self: center;
-    width: 16px;
-    height: 16px;
-    margin: 0;
-    accent-color: var(--accent);
-    cursor: pointer;
 }
 
 .add-terminal-button,
@@ -1232,8 +1145,6 @@ button {
 }
 
 .todo-project-remove-popover,
-.project-delete-popover,
-.bulk-project-delete-popover,
 .bulk-completed-todo-delete-popover {
     position: absolute;
     z-index: 22;
@@ -1248,29 +1159,24 @@ button {
     box-shadow: 0 12px 28px var(--shadow);
 }
 
-.bulk-project-delete-popover,
 .bulk-completed-todo-delete-popover {
     top: 36px;
 }
 
-.todo-project-remove-copy,
-.project-delete-copy {
+.todo-project-remove-copy {
     color: var(--text-secondary);
     font-size: 12px;
     font-weight: 700;
 }
 
-.todo-project-remove-actions,
-.project-delete-actions {
+.todo-project-remove-actions {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 6px;
 }
 
 .todo-project-remove-cancel,
-.todo-project-remove-confirm,
-.project-delete-cancel,
-.project-delete-confirm {
+.todo-project-remove-confirm {
     min-height: 28px;
     border: 1px solid var(--control-border);
     background: var(--surface-bg);
@@ -1280,20 +1186,17 @@ button {
     font-weight: 800;
 }
 
-.todo-project-remove-cancel:hover,
-.project-delete-cancel:hover {
+.todo-project-remove-cancel:hover {
     border-color: var(--accent);
     color: var(--accent);
 }
 
-.todo-project-remove-confirm,
-.project-delete-confirm {
+.todo-project-remove-confirm {
     border-color: var(--delete-text);
     color: var(--delete-text);
 }
 
-.todo-project-remove-confirm:hover,
-.project-delete-confirm:hover {
+.todo-project-remove-confirm:hover {
     background: var(--delete-hover-bg);
     color: var(--delete-hover-text);
 }
@@ -1323,8 +1226,7 @@ button {
     white-space: nowrap;
 }
 
-.todo-project-node .project-name,
-.library-project-node .project-name {
+.todo-project-node .project-name {
     font-weight: 800;
 }
 
