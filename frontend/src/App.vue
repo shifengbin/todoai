@@ -776,8 +776,7 @@ async function selectTodoProject(todoProjectId) {
   try {
     applyState(await SelectTodoProject(todoProjectId), {
       dedupeGitStatus: true,
-      forceGitStatusRefresh: true,
-      restoreTodoProjectUIState: true
+      forceGitStatusRefresh: true
     })
     await activateActiveTerminal()
   } catch (error) {
