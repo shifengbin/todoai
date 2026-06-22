@@ -906,6 +906,34 @@ function completedAtLabel(todo) {
   return todo.completedAt || todo.archivedAt || 'No completion time'
 }
 
+function completedDurationLabel(todo) {
+  const startedAt = Date.parse(todo?.startedAt || '')
+  const completedAt = Date.parse(todo?.completedAt || '')
+  if (Number.isNaN(startedAt) || Number.isNaN(completedAt) || completedAt < startedAt) {
+    return ''
+  }
+  return `Duration ${formatDuration(completedAt - startedAt)}`
+}
+
+function formatDuration(durationMs) {
+  const totalSeconds = Math.floor(durationMs / 1000)
+  const days = Math.floor(totalSeconds / 86400)
+  const hours = Math.floor((totalSeconds % 86400) / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+
+  if (days > 0) {
+    return `${days}d ${hours}h`
+  }
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`
+  }
+  return `${seconds}s`
+}
+
 onMounted(() => {
   window.addEventListener('click', closeFloatingMenus)
 })
@@ -1669,6 +1697,7 @@ watch(
           <div class="archived-todo-meta">
             <span>completed</span>
             <span>{{ completedAtLabel(todo) }}</span>
+            <span v-if="completedDurationLabel(todo)">{{ completedDurationLabel(todo) }}</span>
           </div>
           <div v-if="todo.projectSnapshots?.length" class="archived-projects">
             <div

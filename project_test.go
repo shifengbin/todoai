@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -374,11 +375,17 @@ func TestProjectManagerCreatesNotStartedTodoWithoutChangingActiveContext(t *test
 
 func TestProjectManagerChangesTodoWorkflowStatusManually(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "projects.json")
-	manager := NewProjectManager(configPath, WithProjectIDGenerator(sequenceIDs("todo-a")))
+	now := time.Date(2026, 6, 22, 9, 30, 0, 0, time.UTC)
+	manager := NewProjectManager(
+		configPath,
+		WithProjectIDGenerator(sequenceIDs("todo-a")),
+		WithProjectClock(func() time.Time { return now }),
+	)
 	if _, err := manager.CreateTodo(CreateTodoRequest{Title: "修复登录问题"}); err != nil {
 		t.Fatalf("CreateTodo() error = %v", err)
 	}
 
+	now = now.Add(2 * time.Hour)
 	state, err := manager.ChangeTodoStatus("todo-a", "in-progress")
 	if err != nil {
 		t.Fatalf("ChangeTodoStatus(in-progress) error = %v", err)
@@ -386,7 +393,11 @@ func TestProjectManagerChangesTodoWorkflowStatusManually(t *testing.T) {
 	if state.Todos[0].Status != "in-progress" {
 		t.Fatalf("Status = %q, want in-progress", state.Todos[0].Status)
 	}
+	if startedAt := todoJSONField(t, state.Todos[0], "startedAt"); startedAt != "2026-06-22T11:30:00Z" {
+		t.Fatalf("StartedAt = %q, want start transition timestamp", startedAt)
+	}
 
+	now = now.Add(30 * time.Minute)
 	if _, err := manager.ChangeTodoStatus("todo-a", "not-started"); err == nil {
 		t.Fatal("ChangeTodoStatus(not-started) error = nil, want invalid status transition error")
 	}
@@ -396,6 +407,9 @@ func TestProjectManagerChangesTodoWorkflowStatusManually(t *testing.T) {
 	}
 	if state.Todos[0].Status != "in-progress" {
 		t.Fatalf("Status after rejected transition = %q, want in-progress", state.Todos[0].Status)
+	}
+	if startedAt := todoJSONField(t, state.Todos[0], "startedAt"); startedAt != "2026-06-22T11:30:00Z" {
+		t.Fatalf("StartedAt after rejected transition = %q, want original start timestamp", startedAt)
 	}
 
 	if _, err := manager.ChangeTodoStatus("todo-a", "completed"); err == nil {
@@ -745,6 +759,9 @@ func TestProjectManagerArchivesTodoWithProjectSnapshots(t *testing.T) {
 	}
 	if todo.CompletedAt == "" || todo.ArchivedAt == "" {
 		t.Fatalf("CompletedAt/ArchivedAt = %q/%q, want timestamps", todo.CompletedAt, todo.ArchivedAt)
+	}
+	if startedAt := todoJSONField(t, todo, "startedAt"); startedAt != "2026-06-10T09:00:00Z" {
+		t.Fatalf("StartedAt = %q, want start timestamp preserved after completion", startedAt)
 	}
 	if len(todo.ProjectSnapshots) != 1 {
 		t.Fatalf("ProjectSnapshots length = %d, want 1", len(todo.ProjectSnapshots))
@@ -1415,4 +1432,21 @@ func findTodo(todos []Todo, todoID string) *Todo {
 		}
 	}
 	return nil
+}
+
+func todoJSONField(t *testing.T, todo Todo, field string) string {
+	t.Helper()
+	data, err := json.Marshal(todo)
+	if err != nil {
+		t.Fatalf("Marshal(todo) error = %v", err)
+	}
+	var values map[string]any
+	if err := json.Unmarshal(data, &values); err != nil {
+		t.Fatalf("Unmarshal(todo) error = %v", err)
+	}
+	value, ok := values[field].(string)
+	if !ok {
+		return ""
+	}
+	return value
 }
