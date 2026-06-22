@@ -1345,6 +1345,82 @@ describe('ProjectSidebar', () => {
     expect(completedTodoTitles(wrapper)).toEqual(['有时间任务', '缺失时间任务', '无效时间任务'])
   })
 
+  it('shows completed TODO duration from startedAt to completedAt', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        todos: [
+          {
+            id: 'todo-completed-duration',
+            title: '修复登录问题',
+            status: 'completed',
+            startedAt: '2026-06-22T01:00:00Z',
+            completedAt: '2026-06-22T02:15:30Z'
+          }
+        ],
+        todoProjects: [],
+        terminals: [],
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      }
+    })
+
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
+
+    expect(completedTodoMeta(wrapper, 'todo-completed-duration')).toContain('Duration 1h 15m')
+  })
+
+  it('does not infer completed TODO duration from createdAt when startedAt is missing', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        todos: [
+          {
+            id: 'todo-completed-history',
+            title: '历史任务',
+            status: 'completed',
+            createdAt: '2026-06-01T01:00:00Z',
+            completedAt: '2026-06-22T02:15:30Z'
+          }
+        ],
+        todoProjects: [],
+        terminals: [],
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      }
+    })
+
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
+
+    expect(completedTodoMeta(wrapper, 'todo-completed-history')).not.toContain('Duration')
+  })
+
+  it('does not show negative completed TODO duration', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        todos: [
+          {
+            id: 'todo-completed-invalid-duration',
+            title: '异常任务',
+            status: 'completed',
+            startedAt: '2026-06-22T03:00:00Z',
+            completedAt: '2026-06-22T02:15:30Z'
+          }
+        ],
+        todoProjects: [],
+        terminals: [],
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      }
+    })
+
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
+
+    expect(completedTodoMeta(wrapper, 'todo-completed-invalid-duration')).not.toContain('Duration')
+    expect(completedTodoMeta(wrapper, 'todo-completed-invalid-duration')).not.toContain('Duration -')
+  })
+
   it('opens TODO action confirmation popovers before emitting', async () => {
     const wrapper = mountInProgressSidebar()
 
@@ -1771,6 +1847,10 @@ function completedTodoTitles(wrapper) {
     .find('[data-testid="completed-todos"]')
     .findAll('.completed-todo-title span')
     .map((node) => node.text())
+}
+
+function completedTodoMeta(wrapper, todoId) {
+  return wrapper.find(`[data-testid="completed-todo-${todoId}"] .archived-todo-meta`).text()
 }
 
 async function openTodoContextMenu(wrapper, todoId) {

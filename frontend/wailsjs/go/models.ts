@@ -193,6 +193,7 @@ export namespace main {
 	    archivedReason?: string;
 	    projectSnapshots?: TodoProjectSnapshot[];
 	    createdAt: string;
+	    startedAt?: string;
 	    completedAt?: string;
 	    archivedAt?: string;
 	
@@ -210,6 +211,7 @@ export namespace main {
 	        this.archivedReason = source["archivedReason"];
 	        this.projectSnapshots = this.convertValues(source["projectSnapshots"], TodoProjectSnapshot);
 	        this.createdAt = source["createdAt"];
+	        this.startedAt = source["startedAt"];
 	        this.completedAt = source["completedAt"];
 	        this.archivedAt = source["archivedAt"];
 	    }
