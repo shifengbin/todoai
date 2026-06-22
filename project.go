@@ -48,6 +48,7 @@ type Todo struct {
 	ArchivedReason   string                `json:"archivedReason,omitempty"`
 	ProjectSnapshots []TodoProjectSnapshot `json:"projectSnapshots,omitempty"`
 	CreatedAt        string                `json:"createdAt"`
+	StartedAt        string                `json:"startedAt,omitempty"`
 	CompletedAt      string                `json:"completedAt,omitempty"`
 	ArchivedAt       string                `json:"archivedAt,omitempty"`
 }
@@ -654,6 +655,7 @@ func (manager *ProjectManager) ChangeTodoStatus(todoID string, status string) (P
 				return ProjectState{}, errors.New("invalid todo status transition")
 			}
 			state.Todos[index].Status = status
+			state.Todos[index].StartedAt = manager.now().UTC().Format(time.RFC3339)
 			if err := manager.saveLocked(state); err != nil {
 				return ProjectState{}, err
 			}
