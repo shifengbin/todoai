@@ -591,6 +591,14 @@ describe('App project terminal tree', () => {
     xtermMock.sessions.get('terminal-b').onCommandState({ type: 'command-end' })
     await nextTick()
 
+    expect(wrapper.find('[data-testid="terminal-terminal-b"]').text()).toContain('codex --model gpt-5')
+    expect(wrapper.find('[data-testid="terminal-terminal-b"]').text()).not.toContain('bash')
+
+    xtermMock.sessions.get('terminal-b').onCommandState({ type: 'command-start', command: 'codex --model gpt-5' })
+    await nextTick()
+    xtermMock.sessions.get('terminal-b').onCommandState({ type: 'command-end' })
+    await nextTick()
+
     expect(wrapper.find('[data-testid="terminal-terminal-b"]').text()).toContain('bash')
     expect(wrapper.find('[data-testid="terminal-terminal-b"]').text()).not.toContain('codex --model gpt-5')
   })

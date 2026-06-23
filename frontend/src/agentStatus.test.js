@@ -138,6 +138,36 @@ describe('agent status reducer', () => {
     expect(terminal.activityState).toBe('idle')
   })
 
+  it('keeps launch profile label across an unpaired command end', () => {
+    const labeled = applyAgentStatusEvent(baseTerminal({ shellName: 'zsh' }), {
+      type: 'launch-profile-label',
+      command: 'codex',
+      at: 10
+    })
+    const idleEnd = applyAgentStatusEvent(labeled, {
+      type: 'command-state',
+      commandType: 'command-end',
+      at: 11
+    })
+
+    expect(idleEnd.currentCommand).toBe('codex')
+    expect(idleEnd.pendingLaunchProfileCommand).toBe('')
+
+    const started = applyAgentStatusEvent(idleEnd, {
+      type: 'command-state',
+      commandType: 'command-start',
+      command: 'codex',
+      at: 12
+    })
+    const realEnd = applyAgentStatusEvent(started, {
+      type: 'command-state',
+      commandType: 'command-end',
+      at: 13
+    })
+
+    expect(realEnd.currentCommand).toBe('')
+  })
+
   it('keeps Claude launch profile stable titles idle', () => {
     const started = applyAgentStatusEvent(baseTerminal(), {
       type: 'command-state',

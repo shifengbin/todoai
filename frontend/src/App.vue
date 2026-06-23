@@ -479,6 +479,7 @@ function applyState(state, options = {}) {
     return {
       ...terminal,
       currentCommand: running ? terminal.currentCommand || previous?.currentCommand || '' : '',
+      pendingLaunchProfileCommand: running ? previous?.pendingLaunchProfileCommand || '' : '',
       runtimeTitle: running ? previous?.runtimeTitle || '' : '',
       agentStatus: running ? previous?.agentStatus || createAgentStatus() : exitedAgentStatus(),
       activityState: running ? previous?.activityState || 'idle' : 'idle'

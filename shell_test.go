@@ -4,6 +4,8 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -672,6 +674,54 @@ func TestBashIntegrationSkipsPromptCommandWhileIdle(t *testing.T) {
 
 	if !strings.Contains(script, "__tui_helper_in_prompt") {
 		t.Fatal("bash integration should guard DEBUG trap while PROMPT_COMMAND runs")
+	}
+}
+
+func TestZshIntegrationSkipsCommandEndWhileIdle(t *testing.T) {
+	script := zshIntegrationScript()
+
+	for _, want := range []string{
+		"__tui_helper_command_started=0",
+		"__tui_helper_command_started=1",
+		`if [ "$__tui_helper_command_started" = "1" ]; then`,
+		"__tui_helper_command_started=0",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("zsh integration script missing %q:\n%s", want, script)
+		}
+	}
+}
+
+func TestZshIntegrationEmitsCommandEndOnlyAfterCommandStart(t *testing.T) {
+	zshPath, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not found")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".zshrc"), []byte(zshIntegrationScript()), 0o600); err != nil {
+		t.Fatalf("WriteFile(.zshrc) error = %v", err)
+	}
+
+	cmd := exec.Command(zshPath, "-di")
+	cmd.Env = envWithOverrides(os.Environ(), map[string]string{
+		"ZDOTDIR": dir,
+	})
+	cmd.Stdin = strings.NewReader("echo zsh-hook-test\nexit\n")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("zsh integration command error = %v\n%s", err, output)
+	}
+	text := string(output)
+	startIndex := strings.Index(text, "777;todoai;command-start;ZWNobyB6c2gtaG9vay10ZXN0")
+	if startIndex == -1 {
+		t.Fatalf("zsh output missing command-start for echo:\n%s", text)
+	}
+	endIndex := strings.Index(text[startIndex:], "777;todoai;command-end")
+	if endIndex == -1 {
+		t.Fatalf("zsh output missing command-end after command-start:\n%s", text)
+	}
+	if idleEndIndex := strings.Index(text[:startIndex], "777;todoai;command-end"); idleEndIndex != -1 {
+		t.Fatalf("zsh output emitted command-end before command-start:\n%s", text)
 	}
 }
 

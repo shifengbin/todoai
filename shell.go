@@ -1193,8 +1193,10 @@ if [ -n "$TUI_HELPER_ORIGINAL_ZDOTDIR" ] && [ -f "$TUI_HELPER_ORIGINAL_ZDOTDIR/.
 fi
 
 autoload -Uz add-zsh-hook
+__tui_helper_command_started=0
 __tui_helper_emit_command_start() {
   printf '\033]777;todoai;command-start;%s\a' "$(printf '%s' "$1" | base64 | tr -d '\n')"
+  __tui_helper_command_started=1
 }
 __tui_helper_emit_command_end() {
   printf '\033]777;todoai;command-end\a'
@@ -1203,7 +1205,10 @@ __tui_helper_preexec() {
   __tui_helper_emit_command_start "$1"
 }
 __tui_helper_precmd() {
-  __tui_helper_emit_command_end
+  if [ "$__tui_helper_command_started" = "1" ]; then
+    __tui_helper_emit_command_end
+    __tui_helper_command_started=0
+  fi
 }
 add-zsh-hook preexec __tui_helper_preexec
 add-zsh-hook precmd __tui_helper_precmd

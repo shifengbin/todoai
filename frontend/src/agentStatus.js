@@ -59,6 +59,7 @@ export function applyAgentStatusEvent(terminal, event) {
 
   if (event.type === 'launch-profile-label') {
     next.currentCommand = sanitizeCommandLabel(event.command)
+    next.pendingLaunchProfileCommand = next.currentCommand
     ensureAgentStatus(next, event.at)
     return withActivityState(next)
   }
@@ -220,6 +221,7 @@ function applyShellStatus(terminal, event) {
     return
   }
   terminal.currentCommand = ''
+  terminal.pendingLaunchProfileCommand = ''
   resetTitleFallback(terminal)
   applyStatus(terminal, createAgentStatus({
     phase: AGENT_PHASE.EXITED,
@@ -233,6 +235,7 @@ function applyShellStatus(terminal, event) {
 function applyCommandState(terminal, event) {
   if (event.commandType === 'command-start' || event.commandType === 'command-started') {
     terminal.currentCommand = sanitizeCommandLabel(event.command)
+    terminal.pendingLaunchProfileCommand = ''
     resetTitleFallback(terminal)
     applyStatus(terminal, createAgentStatus({
       phase: AGENT_PHASE.IDLE,
@@ -246,6 +249,10 @@ function applyCommandState(terminal, event) {
   }
 
   if (event.commandType === 'command-end' || event.commandType === 'command-ended') {
+    if (terminal.pendingLaunchProfileCommand) {
+      terminal.pendingLaunchProfileCommand = ''
+      return
+    }
     terminal.currentCommand = ''
     resetTitleFallback(terminal)
     applyStatus(terminal, createAgentStatus({
