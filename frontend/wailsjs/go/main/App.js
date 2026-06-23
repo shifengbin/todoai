@@ -46,6 +46,10 @@ export function CreateTodoTerminal(arg1, arg2, arg3) {
   return window['go']['main']['App']['CreateTodoTerminal'](arg1, arg2, arg3);
 }
 
+export function CreateWorkspaceTerminal(arg1, arg2) {
+  return window['go']['main']['App']['CreateWorkspaceTerminal'](arg1, arg2);
+}
+
 export function DeleteCompletedTodos(arg1) {
   return window['go']['main']['App']['DeleteCompletedTodos'](arg1);
 }

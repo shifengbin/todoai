@@ -42,6 +42,7 @@ type App struct {
 	claudeStatusStop              chan struct{}
 	claudeStatusStopOnce          sync.Once
 	terminalAgentStatusEmitter    func(TerminalAgentStatusEvent)
+	activeTerminalID              string
 	initialWorkspaceClosed        bool
 	restoreLastWorkspaceOnStartup bool
 }
@@ -314,22 +315,32 @@ func (a *App) CreateProjectFromDialog() (ProjectState, error) {
 	if path == "" {
 		return a.ListProjects()
 	}
-	_, _, err = a.projects.AddProjectPath(path)
+	project, added, err := a.projects.AddProjectPath(path)
 	if err != nil {
 		return ProjectState{}, err
 	}
-	return a.ListProjects()
+	state, err := a.ListProjects()
+	if err != nil {
+		return ProjectState{}, err
+	}
+	state.ImportSummary = singleProjectImportSummary(project, added)
+	return state, nil
 }
 
 func (a *App) AddProjectFromPath(path string) (ProjectState, error) {
 	if !a.hasWorkspace() {
 		return a.currentProjectStateWithError(ErrWorkspaceRequired)
 	}
-	_, _, err := a.projects.AddProjectPath(path)
+	project, added, err := a.projects.AddProjectPath(path)
 	if err != nil {
 		return ProjectState{}, err
 	}
-	return a.ListProjects()
+	state, err := a.ListProjects()
+	if err != nil {
+		return ProjectState{}, err
+	}
+	state.ImportSummary = singleProjectImportSummary(project, added)
+	return state, nil
 }
 
 func (a *App) ImportProjectsFromParentDirectory(parentPath string) (ProjectState, error) {
@@ -367,6 +378,7 @@ func (a *App) SelectProject(projectID string) (ProjectState, error) {
 	if err != nil {
 		return ProjectState{}, err
 	}
+	a.activeTerminalID = ""
 	return a.withShellState(state), nil
 }
 
@@ -442,6 +454,7 @@ func (a *App) SelectTodoProject(todoProjectID string) (ProjectState, error) {
 	if err != nil {
 		return ProjectState{}, err
 	}
+	a.activeTerminalID = ""
 	return a.withShellState(state), nil
 }
 
@@ -460,6 +473,7 @@ func (a *App) CreateTerminal(projectID string, cols int, rows int) (ProjectState
 	if _, err := a.shells.CreateTerminal(project, normalizeTerminalSize(cols, rows)); err != nil {
 		return ProjectState{}, err
 	}
+	a.activeTerminalID = ""
 	return a.withShellState(state), nil
 }
 
@@ -490,7 +504,28 @@ func (a *App) CreateTodoTerminal(todoProjectID string, cols int, rows int) (Proj
 	if _, err := a.shells.CreateTodoProjectTerminal(todoProject, project, normalizeTerminalSize(cols, rows)); err != nil {
 		return ProjectState{}, err
 	}
+	a.activeTerminalID = ""
 	return a.withShellState(state), nil
+}
+
+func (a *App) CreateWorkspaceTerminal(cols int, rows int) (ProjectState, error) {
+	if !a.hasWorkspace() {
+		return a.currentProjectStateWithError(ErrWorkspaceRequired)
+	}
+	workspace := a.workspace.CurrentWorkspace()
+	if workspace == nil {
+		return a.currentProjectStateWithError(ErrWorkspaceRequired)
+	}
+	state, err := a.projects.Load()
+	if err != nil {
+		return ProjectState{}, err
+	}
+	terminal, err := a.shells.CreateWorkspaceTerminal(workspace.Path, normalizeTerminalSize(cols, rows))
+	if err != nil {
+		return ProjectState{}, err
+	}
+	a.activeTerminalID = terminal.ID
+	return a.withShellStateForActiveTerminal(state, terminal.ID), nil
 }
 
 func (a *App) DeleteProject(projectID string) (ProjectState, error) {
@@ -528,12 +563,22 @@ func (a *App) SelectTerminal(terminalID string) (ProjectState, error) {
 		if err != nil {
 			return ProjectState{}, err
 		}
+		a.activeTerminalID = terminal.ID
 		return a.withShellState(state), nil
+	}
+	if terminal.WorkspaceTerminal {
+		state, err := a.projects.Load()
+		if err != nil {
+			return ProjectState{}, err
+		}
+		a.activeTerminalID = terminal.ID
+		return a.withShellStateForActiveTerminal(state, terminal.ID), nil
 	}
 	state, err := a.projects.SelectProject(terminal.ProjectID)
 	if err != nil {
 		return ProjectState{}, err
 	}
+	a.activeTerminalID = terminal.ID
 	return a.withShellState(state), nil
 }
 
@@ -543,6 +588,9 @@ func (a *App) DeleteTerminal(terminalID string) (ProjectState, error) {
 	}
 	if err := a.shells.DeleteTerminal(terminalID); err != nil {
 		return ProjectState{}, err
+	}
+	if a.activeTerminalID == terminalID {
+		a.activeTerminalID = ""
 	}
 	state, err := a.projects.Load()
 	if err != nil {
@@ -871,12 +919,51 @@ func (a *App) withShellState(state ProjectState) ProjectState {
 		state.RecentWorkspaces = workspaceState.RecentWorkspaces
 	}
 	state.Terminals = a.shells.Terminals()
+	if a.activeTerminalID != "" && terminalExists(state.Terminals, a.activeTerminalID) {
+		state.ActiveTerminalID = a.activeTerminalID
+		return state
+	}
+	state.ActiveTerminalID = activeTerminalIDForProjectState(a.shells, state)
+	a.activeTerminalID = state.ActiveTerminalID
+	return state
+}
+
+func (a *App) withShellStateForActiveTerminal(state ProjectState, terminalID string) ProjectState {
+	a.activeTerminalID = terminalID
+	state = a.withShellState(state)
+	state.ActiveTerminalID = terminalID
+	return state
+}
+
+func terminalExists(terminals []ProjectTerminal, terminalID string) bool {
+	for _, terminal := range terminals {
+		if terminal.ID == terminalID {
+			return true
+		}
+	}
+	return false
+}
+
+func activeTerminalIDForProjectState(shells *ShellSessionManager, state ProjectState) string {
 	activeContextID := state.ActiveTodoProjectID
 	if activeContextID == "" {
 		activeContextID = state.ActiveProjectID
 	}
-	state.ActiveTerminalID = a.shells.ActiveTerminalID(activeContextID)
-	return state
+	return shells.ActiveTerminalID(activeContextID)
+}
+
+func singleProjectImportSummary(project Project, added bool) *ProjectImportSummary {
+	summary := &ProjectImportSummary{
+		ParentPath: filepath.Dir(project.Path),
+	}
+	if added {
+		summary.AddedCount = 1
+		summary.Added = []Project{project}
+	} else {
+		summary.SkippedCount = 1
+		summary.SkippedPaths = []string{project.Path}
+	}
+	return summary
 }
 
 func (a *App) hasWorkspace() bool {
@@ -941,6 +1028,7 @@ func todoProjectIDsForTodos(todoProjects []TodoProject, todoIDs []string) []stri
 }
 
 func (a *App) resetRuntimeForWorkspaceChange() {
+	a.activeTerminalID = ""
 	if a.shells != nil {
 		a.shells.Reset()
 	}

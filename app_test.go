@@ -488,6 +488,175 @@ func TestAppCreatesAndSelectsTodoProjectTerminals(t *testing.T) {
 	}
 }
 
+func TestAppCreatesWorkspaceGlobalTerminalsWithoutChangingTodoProjectContext(t *testing.T) {
+	workspaceDir := t.TempDir()
+	projectDir := t.TempDir()
+	starter := newFakeShellStarter()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		starter.Start,
+		WithShellTerminalIDGenerator(sequenceIDs("todo-terminal", "global-a", "global-b")),
+	)
+
+	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	projectID := state.Projects[0].ID
+	todoID, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", projectID)
+	state, err = app.CreateTodoTerminal(todoProjectID, 80, 24)
+	if err != nil {
+		t.Fatalf("CreateTodoTerminal() error = %v", err)
+	}
+	if state.ActiveTodoProjectID != todoProjectID || state.ActiveProjectID != projectID {
+		t.Fatalf("active context before global terminal = %q/%q, want %q/%q", state.ActiveTodoProjectID, state.ActiveProjectID, todoProjectID, projectID)
+	}
+
+	state, err = app.CreateWorkspaceTerminal(100, 32)
+	if err != nil {
+		t.Fatalf("CreateWorkspaceTerminal(A) error = %v", err)
+	}
+	if state.ActiveTerminalID != "global-a" {
+		t.Fatalf("ActiveTerminalID after global A = %q, want global-a", state.ActiveTerminalID)
+	}
+	if state.ActiveTodoID != todoID || state.ActiveTodoProjectID != todoProjectID || state.ActiveProjectID != projectID {
+		t.Fatalf("active context after global A = todo %q todoProject %q project %q, want unchanged", state.ActiveTodoID, state.ActiveTodoProjectID, state.ActiveProjectID)
+	}
+	if len(state.Terminals) != 2 || !findTerminalByID(state.Terminals, "global-a").WorkspaceTerminal {
+		t.Fatalf("Terminals after global A = %#v, want global-a workspace terminal", state.Terminals)
+	}
+
+	state, err = app.CreateWorkspaceTerminal(120, 40)
+	if err != nil {
+		t.Fatalf("CreateWorkspaceTerminal(B) error = %v", err)
+	}
+	if state.ActiveTerminalID != "global-b" {
+		t.Fatalf("ActiveTerminalID after global B = %q, want global-b", state.ActiveTerminalID)
+	}
+	if state.ActiveTodoProjectID != todoProjectID || state.ActiveProjectID != projectID {
+		t.Fatalf("active context after global B = %q/%q, want unchanged", state.ActiveTodoProjectID, state.ActiveProjectID)
+	}
+	if len(starter.requests) != 3 {
+		t.Fatalf("shell start count = %d, want 3", len(starter.requests))
+	}
+	if !starter.requests[1].WorkspaceTerminal || starter.requests[1].WorkingDir != mustAbs(t, workspaceDir) {
+		t.Fatalf("global A request = %#v, want workspace terminal in workspace dir", starter.requests[1])
+	}
+	if !starter.requests[2].WorkspaceTerminal || starter.requests[2].WorkingDir != mustAbs(t, workspaceDir) {
+		t.Fatalf("global B request = %#v, want workspace terminal in workspace dir", starter.requests[2])
+	}
+
+	state, err = app.SelectTerminal("global-a")
+	if err != nil {
+		t.Fatalf("SelectTerminal(global-a) error = %v", err)
+	}
+	if state.ActiveTerminalID != "global-a" || state.ActiveTodoProjectID != todoProjectID || state.ActiveProjectID != projectID {
+		t.Fatalf("state after selecting global A = activeTerminal %q todoProject %q project %q, want global active and context unchanged", state.ActiveTerminalID, state.ActiveTodoProjectID, state.ActiveProjectID)
+	}
+
+	state, err = app.AddProjectFromPath(t.TempDir())
+	if err != nil {
+		t.Fatalf("AddProjectFromPath(after global select) error = %v", err)
+	}
+	if state.ActiveTerminalID != "global-a" {
+		t.Fatalf("ActiveTerminalID after project import while global selected = %q, want global-a", state.ActiveTerminalID)
+	}
+	if state.ImportSummary == nil || state.ImportSummary.AddedCount != 1 || len(state.ImportSummary.Added) != 1 {
+		t.Fatalf("single project import summary = %#v, want one added project", state.ImportSummary)
+	}
+
+	state, err = app.SelectTodoProject(todoProjectID)
+	if err != nil {
+		t.Fatalf("SelectTodoProject(after global select) error = %v", err)
+	}
+	if state.ActiveTerminalID != "todo-terminal" {
+		t.Fatalf("ActiveTerminalID after selecting todo project = %q, want todo-terminal", state.ActiveTerminalID)
+	}
+}
+
+func TestAppKeepsWorkspaceGlobalTerminalsWhenDeletingTodoAndProjectCandidate(t *testing.T) {
+	workspaceDir := t.TempDir()
+	projectDir := t.TempDir()
+	starter := newFakeShellStarter()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		starter.Start,
+		WithShellTerminalIDGenerator(sequenceIDs("global-terminal", "todo-terminal")),
+	)
+	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	projectID := state.Projects[0].ID
+	state, err = app.CreateWorkspaceTerminal(80, 24)
+	if err != nil {
+		t.Fatalf("CreateWorkspaceTerminal() error = %v", err)
+	}
+	todoID, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", projectID)
+	if _, err := app.CreateTodoTerminal(todoProjectID, 80, 24); err != nil {
+		t.Fatalf("CreateTodoTerminal() error = %v", err)
+	}
+
+	state, err = app.DeleteTodo(todoID)
+	if err != nil {
+		t.Fatalf("DeleteTodo() error = %v", err)
+	}
+	if len(state.Terminals) != 1 || !state.Terminals[0].WorkspaceTerminal || state.Terminals[0].ID != "global-terminal" {
+		t.Fatalf("Terminals after todo delete = %#v, want only global terminal", state.Terminals)
+	}
+	if starter.processes[0].closed {
+		t.Fatal("global terminal process was closed by todo delete")
+	}
+	if !starter.processes[1].closed {
+		t.Fatal("todo terminal process was not closed by todo delete")
+	}
+
+	state, err = app.DeleteProject(projectID)
+	if err != nil {
+		t.Fatalf("DeleteProject() error = %v", err)
+	}
+	if len(state.Terminals) != 1 || !state.Terminals[0].WorkspaceTerminal {
+		t.Fatalf("Terminals after project delete = %#v, want global terminal preserved", state.Terminals)
+	}
+	if starter.processes[0].closed {
+		t.Fatal("global terminal process was closed by project delete")
+	}
+}
+
+func TestAppCloseWorkspaceClosesWorkspaceGlobalTerminals(t *testing.T) {
+	workspaceDir := t.TempDir()
+	starter := newFakeShellStarter()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		starter.Start,
+		WithShellTerminalIDGenerator(sequenceIDs("global-terminal")),
+	)
+	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	if _, err := app.CreateWorkspaceTerminal(80, 24); err != nil {
+		t.Fatalf("CreateWorkspaceTerminal() error = %v", err)
+	}
+
+	state, err := app.CloseWorkspace()
+	if err != nil {
+		t.Fatalf("CloseWorkspace() error = %v", err)
+	}
+
+	if len(state.Terminals) != 0 || state.ActiveTerminalID != "" {
+		t.Fatalf("closed workspace terminals = %#v active %q, want none", state.Terminals, state.ActiveTerminalID)
+	}
+	if !starter.processes[0].closed {
+		t.Fatal("global terminal process was not closed by workspace close")
+	}
+}
+
 func TestAppPollsClaudeStatusFilesAndEmitsAgentStatus(t *testing.T) {
 	projectDir := t.TempDir()
 	statusDir := t.TempDir()
@@ -1752,4 +1921,13 @@ func findProjectByPathForApp(t *testing.T, projects []Project, path string) Proj
 	}
 	t.Fatalf("project path %q not found in %#v", absolutePath, projects)
 	return Project{}
+}
+
+func findTerminalByID(terminals []ProjectTerminal, terminalID string) ProjectTerminal {
+	for _, terminal := range terminals {
+		if terminal.ID == terminalID {
+			return terminal
+		}
+	}
+	return ProjectTerminal{}
 }

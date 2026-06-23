@@ -115,6 +115,7 @@ export namespace main {
 	    projectId: string;
 	    todoId?: string;
 	    todoProjectId?: string;
+	    workspaceTerminal?: boolean;
 	    shellName: string;
 	    currentCommand: string;
 	    state: string;
@@ -132,6 +133,7 @@ export namespace main {
 	        this.projectId = source["projectId"];
 	        this.todoId = source["todoId"];
 	        this.todoProjectId = source["todoProjectId"];
+	        this.workspaceTerminal = source["workspaceTerminal"];
 	        this.shellName = source["shellName"];
 	        this.currentCommand = source["currentCommand"];
 	        this.state = source["state"];
@@ -311,6 +313,7 @@ export namespace main {
 	    projectId: string;
 	    todoId?: string;
 	    todoProjectId?: string;
+	    workspaceTerminal?: boolean;
 	    terminalId: string;
 	    state: string;
 	
@@ -323,6 +326,7 @@ export namespace main {
 	        this.projectId = source["projectId"];
 	        this.todoId = source["todoId"];
 	        this.todoProjectId = source["todoProjectId"];
+	        this.workspaceTerminal = source["workspaceTerminal"];
 	        this.terminalId = source["terminalId"];
 	        this.state = source["state"];
 	    }

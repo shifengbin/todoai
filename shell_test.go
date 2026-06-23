@@ -101,6 +101,95 @@ func TestShellSessionManagerCreatesMultipleTerminalsForSameProject(t *testing.T)
 	}
 }
 
+func TestShellSessionManagerCreatesWorkspaceTerminalsInWorkspaceDirectory(t *testing.T) {
+	starter := newFakeShellStarter()
+	manager := NewShellSessionManager(
+		starter.Start,
+		ShellSessionCallbacks{},
+		WithShellPathResolver(func() string { return "/bin/zsh" }),
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-a", "terminal-b")),
+	)
+	workspaceDir := t.TempDir()
+
+	terminalA, err := manager.CreateWorkspaceTerminal(workspaceDir, TerminalSize{Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatalf("CreateWorkspaceTerminal(A) error = %v", err)
+	}
+	terminalB, err := manager.CreateWorkspaceTerminal(workspaceDir, TerminalSize{Cols: 100, Rows: 32})
+	if err != nil {
+		t.Fatalf("CreateWorkspaceTerminal(B) error = %v", err)
+	}
+
+	if !terminalA.WorkspaceTerminal || !terminalB.WorkspaceTerminal {
+		t.Fatalf("WorkspaceTerminal flags = %v/%v, want both true", terminalA.WorkspaceTerminal, terminalB.WorkspaceTerminal)
+	}
+	if terminalA.ProjectID != "" || terminalA.TodoID != "" || terminalA.TodoProjectID != "" {
+		t.Fatalf("terminal A context = project %q todo %q todoProject %q, want workspace-only", terminalA.ProjectID, terminalA.TodoID, terminalA.TodoProjectID)
+	}
+	if terminalB.ProjectID != "" || terminalB.TodoID != "" || terminalB.TodoProjectID != "" {
+		t.Fatalf("terminal B context = project %q todo %q todoProject %q, want workspace-only", terminalB.ProjectID, terminalB.TodoID, terminalB.TodoProjectID)
+	}
+	if terminalA.ID == terminalB.ID {
+		t.Fatalf("workspace terminals should be distinct, both were %q", terminalA.ID)
+	}
+	if len(starter.requests) != 2 {
+		t.Fatalf("start count = %d, want 2", len(starter.requests))
+	}
+	for index, request := range starter.requests {
+		if !request.WorkspaceTerminal {
+			t.Fatalf("request %d WorkspaceTerminal = false, want true", index)
+		}
+		if request.WorkingDir != workspaceDir {
+			t.Fatalf("request %d WorkingDir = %q, want %q", index, request.WorkingDir, workspaceDir)
+		}
+		if request.ProjectID != "" || request.TodoID != "" || request.TodoProjectID != "" {
+			t.Fatalf("request %d context = project %q todo %q todoProject %q, want workspace-only", index, request.ProjectID, request.TodoID, request.TodoProjectID)
+		}
+	}
+	if manager.ActiveTerminalID(WorkspaceTerminalContextID) != terminalB.ID {
+		t.Fatalf("ActiveTerminalID(workspace) = %q, want %q", manager.ActiveTerminalID(WorkspaceTerminalContextID), terminalB.ID)
+	}
+}
+
+func TestShellSessionManagerPreservesWorkspaceTerminalsWhenDeletingProjectAndTodoContexts(t *testing.T) {
+	starter := newFakeShellStarter()
+	manager := NewShellSessionManager(
+		starter.Start,
+		ShellSessionCallbacks{},
+		WithShellTerminalIDGenerator(sequenceIDs("workspace-terminal", "todo-terminal")),
+	)
+	workspaceTerminal, err := manager.CreateWorkspaceTerminal(t.TempDir(), TerminalSize{Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatalf("CreateWorkspaceTerminal() error = %v", err)
+	}
+	project := Project{ID: "project-a", Path: t.TempDir(), Available: true}
+	todoProject := TodoProject{ID: "todo-project-a", TodoID: "todo-a", ProjectID: project.ID}
+	todoTerminal, err := manager.CreateTodoProjectTerminal(todoProject, project, TerminalSize{Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatalf("CreateTodoProjectTerminal() error = %v", err)
+	}
+
+	manager.DeleteProjectTerminals(project.ID)
+
+	if remaining, err := manager.Terminal(workspaceTerminal.ID); err != nil || !remaining.WorkspaceTerminal {
+		t.Fatalf("workspace terminal after project delete = %#v, %v; want preserved workspace terminal", remaining, err)
+	}
+	if _, err := manager.Terminal(todoTerminal.ID); err == nil {
+		t.Fatal("todo terminal after project delete error = nil, want deleted terminal")
+	}
+	if starter.processes[0].closed {
+		t.Fatal("workspace terminal process was closed by project delete")
+	}
+	if !starter.processes[1].closed {
+		t.Fatal("todo terminal process was not closed by project delete")
+	}
+
+	manager.DeleteTodoTerminals(todoProject.TodoID)
+	if remaining, err := manager.Terminal(workspaceTerminal.ID); err != nil || !remaining.WorkspaceTerminal {
+		t.Fatalf("workspace terminal after todo delete = %#v, %v; want preserved workspace terminal", remaining, err)
+	}
+}
+
 func TestShellSessionManagerIsolatesTerminalsByTodoProjectContext(t *testing.T) {
 	starter := newFakeShellStarter()
 	manager := NewShellSessionManager(

@@ -26,12 +26,13 @@ var commandStatePrefixCandidates = []commandStatePrefixCandidate{
 }
 
 type TerminalCommandStateEvent struct {
-	ProjectID     string `json:"projectId"`
-	TodoID        string `json:"todoId,omitempty"`
-	TodoProjectID string `json:"todoProjectId,omitempty"`
-	TerminalID    string `json:"terminalId"`
-	Type          string `json:"type"`
-	Command       string `json:"command,omitempty"`
+	ProjectID         string `json:"projectId"`
+	TodoID            string `json:"todoId,omitempty"`
+	TodoProjectID     string `json:"todoProjectId,omitempty"`
+	WorkspaceTerminal bool   `json:"workspaceTerminal,omitempty"`
+	TerminalID        string `json:"terminalId"`
+	Type              string `json:"type"`
+	Command           string `json:"command,omitempty"`
 }
 
 type commandStateOutputFilter struct {
