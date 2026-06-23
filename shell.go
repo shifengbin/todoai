@@ -17,6 +17,8 @@ const (
 	ShellStateRunning     = "running"
 	ShellStateExited      = "exited"
 	ShellStateUnsupported = "unsupported"
+
+	WorkspaceTerminalContextID = "__workspace__"
 )
 
 var ErrEmbeddedShellUnsupported = errors.New("embedded terminal is not supported on this platform")
@@ -27,58 +29,63 @@ type TerminalSize struct {
 }
 
 type ShellStartRequest struct {
-	TerminalID    string
-	ProjectID     string
-	TodoID        string
-	TodoProjectID string
-	WorkingDir    string
-	ShellPath     string
-	ShellArgs     []string
-	ShellName     string
-	Size          TerminalSize
-	Env           []string
+	TerminalID        string
+	ProjectID         string
+	TodoID            string
+	TodoProjectID     string
+	WorkspaceTerminal bool
+	WorkingDir        string
+	ShellPath         string
+	ShellArgs         []string
+	ShellName         string
+	Size              TerminalSize
+	Env               []string
 }
 
 type ShellStatus struct {
-	ProjectID     string `json:"projectId"`
-	TodoID        string `json:"todoId,omitempty"`
-	TodoProjectID string `json:"todoProjectId,omitempty"`
-	TerminalID    string `json:"terminalId"`
-	State         string `json:"state"`
+	ProjectID         string `json:"projectId"`
+	TodoID            string `json:"todoId,omitempty"`
+	TodoProjectID     string `json:"todoProjectId,omitempty"`
+	WorkspaceTerminal bool   `json:"workspaceTerminal,omitempty"`
+	TerminalID        string `json:"terminalId"`
+	State             string `json:"state"`
 }
 
 type TerminalOutputEvent struct {
-	ProjectID     string `json:"projectId"`
-	TodoID        string `json:"todoId,omitempty"`
-	TodoProjectID string `json:"todoProjectId,omitempty"`
-	TerminalID    string `json:"terminalId"`
-	Data          string `json:"data"`
+	ProjectID         string `json:"projectId"`
+	TodoID            string `json:"todoId,omitempty"`
+	TodoProjectID     string `json:"todoProjectId,omitempty"`
+	WorkspaceTerminal bool   `json:"workspaceTerminal,omitempty"`
+	TerminalID        string `json:"terminalId"`
+	Data              string `json:"data"`
 }
 
 type TerminalAgentStatusEvent struct {
-	ProjectID     string `json:"projectId"`
-	TodoID        string `json:"todoId,omitempty"`
-	TodoProjectID string `json:"todoProjectId,omitempty"`
-	TerminalID    string `json:"terminalId"`
-	Phase         string `json:"phase"`
-	Source        string `json:"source"`
-	Confidence    string `json:"confidence"`
-	Reason        string `json:"reason"`
-	Label         string `json:"label,omitempty"`
-	UpdatedAt     int64  `json:"updatedAt"`
+	ProjectID         string `json:"projectId"`
+	TodoID            string `json:"todoId,omitempty"`
+	TodoProjectID     string `json:"todoProjectId,omitempty"`
+	WorkspaceTerminal bool   `json:"workspaceTerminal,omitempty"`
+	TerminalID        string `json:"terminalId"`
+	Phase             string `json:"phase"`
+	Source            string `json:"source"`
+	Confidence        string `json:"confidence"`
+	Reason            string `json:"reason"`
+	Label             string `json:"label,omitempty"`
+	UpdatedAt         int64  `json:"updatedAt"`
 }
 
 type ProjectTerminal struct {
-	ID             string `json:"id"`
-	ProjectID      string `json:"projectId"`
-	TodoID         string `json:"todoId,omitempty"`
-	TodoProjectID  string `json:"todoProjectId,omitempty"`
-	ShellName      string `json:"shellName"`
-	CurrentCommand string `json:"currentCommand"`
-	State          string `json:"state"`
-	CreatedAt      string `json:"createdAt"`
-	LastSelectedAt string `json:"lastSelectedAt"`
-	Output         string `json:"output,omitempty"`
+	ID                string `json:"id"`
+	ProjectID         string `json:"projectId"`
+	TodoID            string `json:"todoId,omitempty"`
+	TodoProjectID     string `json:"todoProjectId,omitempty"`
+	WorkspaceTerminal bool   `json:"workspaceTerminal,omitempty"`
+	ShellName         string `json:"shellName"`
+	CurrentCommand    string `json:"currentCommand"`
+	State             string `json:"state"`
+	CreatedAt         string `json:"createdAt"`
+	LastSelectedAt    string `json:"lastSelectedAt"`
+	Output            string `json:"output,omitempty"`
 
 	projectPath string
 	shellPath   string
@@ -116,16 +123,17 @@ type ShellSessionManager struct {
 }
 
 type ShellSession struct {
-	terminalID    string
-	projectID     string
-	todoID        string
-	todoProjectID string
-	process       PtyProcess
-	size          TerminalSize
-	state         string
-	cleanup       func()
-	cleanupOnce   sync.Once
-	outputFilter  *commandStateOutputFilter
+	terminalID        string
+	projectID         string
+	todoID            string
+	todoProjectID     string
+	workspaceTerminal bool
+	process           PtyProcess
+	size              TerminalSize
+	state             string
+	cleanup           func()
+	cleanupOnce       sync.Once
+	outputFilter      *commandStateOutputFilter
 }
 
 func NewShellSessionManager(starter ShellStarter, callbacks ShellSessionCallbacks, opts ...ShellSessionManagerOption) *ShellSessionManager {
@@ -268,6 +276,37 @@ func (manager *ShellSessionManager) CreateTodoProjectTerminal(todoProject TodoPr
 	return manager.createTerminal(todoProject, project, size)
 }
 
+func (manager *ShellSessionManager) CreateWorkspaceTerminal(workspacePath string, size TerminalSize) (ProjectTerminal, error) {
+	absoluteWorkspacePath, err := normalizeProjectPath(workspacePath)
+	if err != nil {
+		return ProjectTerminal{}, err
+	}
+	if !directoryAvailable(absoluteWorkspacePath) {
+		return ProjectTerminal{}, errors.New("workspace path is unavailable")
+	}
+
+	manager.mu.Lock()
+	terminal := manager.registerWorkspaceTerminalLocked(absoluteWorkspacePath)
+	manager.mu.Unlock()
+
+	manager.saveTerminalToHistory(terminal)
+
+	if _, err := manager.StartTerminal(terminal.ID, size); err != nil {
+		manager.mu.Lock()
+		delete(manager.terminals, terminal.ID)
+		delete(manager.activeByContext, WorkspaceTerminalContextID)
+		manager.mu.Unlock()
+		manager.deleteTerminalFromHistory(terminal.ID)
+		return ProjectTerminal{}, err
+	}
+	result, err := manager.Terminal(terminal.ID)
+	if err != nil {
+		return ProjectTerminal{}, err
+	}
+	manager.saveTerminalToHistory(result)
+	return result, nil
+}
+
 func (manager *ShellSessionManager) createTerminal(todoProject TodoProject, project Project, size TerminalSize) (ProjectTerminal, error) {
 	manager.mu.Lock()
 	terminal := manager.registerTerminalLocked(todoProject, project)
@@ -280,7 +319,7 @@ func (manager *ShellSessionManager) createTerminal(todoProject TodoProject, proj
 	if _, err := manager.StartTerminal(terminal.ID, size); err != nil {
 		manager.mu.Lock()
 		delete(manager.terminals, terminal.ID)
-		delete(manager.activeByContext, terminalContextKey(terminal.TodoProjectID, terminal.ProjectID))
+		delete(manager.activeByContext, terminalContextKeyForTerminal(terminal))
 		manager.mu.Unlock()
 		manager.deleteTerminalFromHistory(terminal.ID)
 		return ProjectTerminal{}, err
@@ -303,11 +342,12 @@ func (manager *ShellSessionManager) StartTerminal(terminalID string, size Termin
 	}
 	if session, ok := manager.sessions[terminalID]; ok && session.state == ShellStateRunning {
 		status := ShellStatus{
-			ProjectID:     terminal.ProjectID,
-			TodoID:        terminal.TodoID,
-			TodoProjectID: terminal.TodoProjectID,
-			TerminalID:    terminal.ID,
-			State:         session.state,
+			ProjectID:         terminal.ProjectID,
+			TodoID:            terminal.TodoID,
+			TodoProjectID:     terminal.TodoProjectID,
+			WorkspaceTerminal: terminal.WorkspaceTerminal,
+			TerminalID:        terminal.ID,
+			State:             session.state,
 		}
 		terminal.State = session.state
 		manager.touchTerminalLocked(terminal)
@@ -321,16 +361,17 @@ func (manager *ShellSessionManager) StartTerminal(terminalID string, size Termin
 	}
 
 	request := ShellStartRequest{
-		TerminalID:    terminal.ID,
-		ProjectID:     terminal.ProjectID,
-		TodoID:        terminal.TodoID,
-		TodoProjectID: terminal.TodoProjectID,
-		WorkingDir:    terminal.projectPath,
-		ShellPath:     launch.Path,
-		ShellArgs:     launch.Args,
-		ShellName:     launch.ShellName,
-		Size:          size,
-		Env:           terminalIdentityEnv(launch.Env, *terminal),
+		TerminalID:        terminal.ID,
+		ProjectID:         terminal.ProjectID,
+		TodoID:            terminal.TodoID,
+		TodoProjectID:     terminal.TodoProjectID,
+		WorkspaceTerminal: terminal.WorkspaceTerminal,
+		WorkingDir:        terminal.projectPath,
+		ShellPath:         launch.Path,
+		ShellArgs:         launch.Args,
+		ShellName:         launch.ShellName,
+		Size:              size,
+		Env:               terminalIdentityEnv(launch.Env, *terminal),
 	}
 	process, err := manager.starter(request)
 	if err != nil {
@@ -345,15 +386,16 @@ func (manager *ShellSessionManager) StartTerminal(terminalID string, size Termin
 	}
 
 	session := &ShellSession{
-		terminalID:    terminal.ID,
-		projectID:     terminal.ProjectID,
-		todoID:        terminal.TodoID,
-		todoProjectID: terminal.TodoProjectID,
-		process:       process,
-		size:          size,
-		state:         ShellStateRunning,
-		cleanup:       launch.Cleanup,
-		outputFilter:  newCommandStateOutputFilter(),
+		terminalID:        terminal.ID,
+		projectID:         terminal.ProjectID,
+		todoID:            terminal.TodoID,
+		todoProjectID:     terminal.TodoProjectID,
+		workspaceTerminal: terminal.WorkspaceTerminal,
+		process:           process,
+		size:              size,
+		state:             ShellStateRunning,
+		cleanup:           launch.Cleanup,
+		outputFilter:      newCommandStateOutputFilter(),
 	}
 
 	manager.sessions[terminal.ID] = session
@@ -363,11 +405,12 @@ func (manager *ShellSessionManager) StartTerminal(terminalID string, size Termin
 	go manager.waitForExit(session)
 
 	return ShellStatus{
-		ProjectID:     terminal.ProjectID,
-		TodoID:        terminal.TodoID,
-		TodoProjectID: terminal.TodoProjectID,
-		TerminalID:    terminal.ID,
-		State:         ShellStateRunning,
+		ProjectID:         terminal.ProjectID,
+		TodoID:            terminal.TodoID,
+		TodoProjectID:     terminal.TodoProjectID,
+		WorkspaceTerminal: terminal.WorkspaceTerminal,
+		TerminalID:        terminal.ID,
+		State:             ShellStateRunning,
 	}, nil
 }
 
@@ -393,7 +436,7 @@ func (manager *ShellSessionManager) DeleteTerminal(terminalID string) error {
 		return errors.New("terminal not found")
 	}
 
-	contextKey := terminalContextKey(terminal.TodoProjectID, terminal.ProjectID)
+	contextKey := terminalContextKeyForTerminal(*terminal)
 	session, hasSession := manager.sessions[terminalID]
 	shouldClose := hasSession && session.state == ShellStateRunning
 	delete(manager.terminals, terminalID)
@@ -439,7 +482,7 @@ func (manager *ShellSessionManager) DeleteProjectTerminals(projectID string) {
 			delete(manager.sessions, terminalID)
 		}
 		delete(manager.terminals, terminalID)
-		delete(manager.activeByContext, terminalContextKey(terminal.TodoProjectID, terminal.ProjectID))
+		delete(manager.activeByContext, terminalContextKeyForTerminal(*terminal))
 	}
 	manager.mu.Unlock()
 
@@ -474,7 +517,7 @@ func (manager *ShellSessionManager) DeleteTodoTerminals(todoID string) {
 			delete(manager.sessions, terminalID)
 		}
 		delete(manager.terminals, terminalID)
-		delete(manager.activeByContext, terminalContextKey(terminal.TodoProjectID, terminal.ProjectID))
+		delete(manager.activeByContext, terminalContextKeyForTerminal(*terminal))
 	}
 	manager.mu.Unlock()
 
@@ -509,7 +552,7 @@ func (manager *ShellSessionManager) DeleteTodoProjectTerminals(todoProjectID str
 			delete(manager.sessions, terminalID)
 		}
 		delete(manager.terminals, terminalID)
-		delete(manager.activeByContext, terminalContextKey(terminal.TodoProjectID, terminal.ProjectID))
+		delete(manager.activeByContext, terminalContextKeyForTerminal(*terminal))
 	}
 	manager.mu.Unlock()
 
@@ -608,35 +651,36 @@ func (manager *ShellSessionManager) RestoreTerminals(state ProjectState) []Termi
 	orphaned := false
 
 	for _, record := range history.Records {
-		if !restorableTerminalProject(record, projectIDs, todoProjectProjectIDs, todoProjectSourceProjectIDs) {
+		if !record.WorkspaceTerminal && !restorableTerminalProject(record, projectIDs, todoProjectProjectIDs, todoProjectSourceProjectIDs) {
 			orphaned = true
 			continue
 		}
-		if record.TodoID != "" && !todoIDs[record.TodoID] {
+		if !record.WorkspaceTerminal && record.TodoID != "" && !todoIDs[record.TodoID] {
 			orphaned = true
 			continue
 		}
-		if record.TodoProjectID != "" && !todoProjectIDs[record.TodoProjectID] {
+		if !record.WorkspaceTerminal && record.TodoProjectID != "" && !todoProjectIDs[record.TodoProjectID] {
 			orphaned = true
 			continue
 		}
 
 		// Register as a non-running terminal.
 		terminal := &ProjectTerminal{
-			ID:             record.TerminalID,
-			ProjectID:      record.ProjectID,
-			TodoID:         record.TodoID,
-			TodoProjectID:  record.TodoProjectID,
-			ShellName:      record.ShellName,
-			State:          ShellStateExited,
-			CreatedAt:      record.CreatedAt,
-			LastSelectedAt: record.LastSelectedAt,
-			projectPath:    "",
-			shellPath:      manager.shellPathResolver(),
+			ID:                record.TerminalID,
+			ProjectID:         record.ProjectID,
+			TodoID:            record.TodoID,
+			TodoProjectID:     record.TodoProjectID,
+			WorkspaceTerminal: record.WorkspaceTerminal,
+			ShellName:         record.ShellName,
+			State:             ShellStateExited,
+			CreatedAt:         record.CreatedAt,
+			LastSelectedAt:    record.LastSelectedAt,
+			projectPath:       "",
+			shellPath:         manager.shellPathResolver(),
 		}
 		manager.mu.Lock()
 		manager.terminals[terminal.ID] = terminal
-		contextKey := terminalContextKey(terminal.TodoProjectID, terminal.ProjectID)
+		contextKey := terminalContextKeyForTerminal(*terminal)
 		if _, exists := manager.activeByContext[contextKey]; !exists {
 			manager.activeByContext[contextKey] = terminal.ID
 		}
@@ -683,20 +727,38 @@ func (manager *ShellSessionManager) registerTerminalLocked(todoProject TodoProje
 		shellPath:      shellPath,
 	}
 	manager.terminals[terminal.ID] = terminal
-	manager.activeByContext[terminalContextKey(terminal.TodoProjectID, terminal.ProjectID)] = terminal.ID
+	manager.activeByContext[terminalContextKeyForTerminal(*terminal)] = terminal.ID
+	return *terminal
+}
+
+func (manager *ShellSessionManager) registerWorkspaceTerminalLocked(workspacePath string) ProjectTerminal {
+	shellPath := manager.shellPathResolver()
+	now := manager.now().UTC().Format(time.RFC3339)
+	terminal := &ProjectTerminal{
+		ID:                manager.newID(),
+		WorkspaceTerminal: true,
+		ShellName:         shellNameFromPath(shellPath),
+		State:             ShellStateExited,
+		CreatedAt:         now,
+		LastSelectedAt:    now,
+		projectPath:       workspacePath,
+		shellPath:         shellPath,
+	}
+	manager.terminals[terminal.ID] = terminal
+	manager.activeByContext[WorkspaceTerminalContextID] = terminal.ID
 	return *terminal
 }
 
 func (manager *ShellSessionManager) touchTerminalLocked(terminal *ProjectTerminal) {
 	terminal.LastSelectedAt = manager.now().UTC().Format(time.RFC3339)
-	manager.activeByContext[terminalContextKey(terminal.TodoProjectID, terminal.ProjectID)] = terminal.ID
+	manager.activeByContext[terminalContextKeyForTerminal(*terminal)] = terminal.ID
 }
 
 func (manager *ShellSessionManager) mostRecentlySelectedTerminalIDLocked(contextKey string) string {
 	selectedTerminalID := ""
 	selectedAt := ""
 	for _, terminal := range manager.terminals {
-		if terminalContextKey(terminal.TodoProjectID, terminal.ProjectID) != contextKey {
+		if terminalContextKeyForTerminal(*terminal) != contextKey {
 			continue
 		}
 		if selectedTerminalID == "" || terminal.LastSelectedAt > selectedAt ||
@@ -713,6 +775,13 @@ func terminalContextKey(todoProjectID string, projectID string) string {
 		return todoProjectID
 	}
 	return projectID
+}
+
+func terminalContextKeyForTerminal(terminal ProjectTerminal) string {
+	if terminal.WorkspaceTerminal {
+		return WorkspaceTerminalContextID
+	}
+	return terminalContextKey(terminal.TodoProjectID, terminal.ProjectID)
 }
 
 func validateTodoProjectTerminalContext(todoProject TodoProject, project Project) error {
@@ -758,11 +827,12 @@ func (manager *ShellSessionManager) Status(terminalID string) ShellStatus {
 
 	if session, ok := manager.sessions[terminalID]; ok {
 		return ShellStatus{
-			ProjectID:     session.projectID,
-			TodoID:        session.todoID,
-			TodoProjectID: session.todoProjectID,
-			TerminalID:    terminalID,
-			State:         session.state,
+			ProjectID:         session.projectID,
+			TodoID:            session.todoID,
+			TodoProjectID:     session.todoProjectID,
+			WorkspaceTerminal: session.workspaceTerminal,
+			TerminalID:        terminalID,
+			State:             session.state,
 		}
 	}
 	if terminal, ok := manager.terminals[terminalID]; ok {
@@ -824,11 +894,12 @@ func (manager *ShellSessionManager) readOutput(session *ShellSession) {
 			}
 			if result.Data != "" && manager.callbacks.OnOutput != nil {
 				manager.callbacks.OnOutput(TerminalOutputEvent{
-					ProjectID:     session.projectID,
-					TodoID:        session.todoID,
-					TodoProjectID: session.todoProjectID,
-					TerminalID:    session.terminalID,
-					Data:          result.Data,
+					ProjectID:         session.projectID,
+					TodoID:            session.todoID,
+					TodoProjectID:     session.todoProjectID,
+					WorkspaceTerminal: session.workspaceTerminal,
+					TerminalID:        session.terminalID,
+					Data:              result.Data,
 				})
 			}
 			if result.Data != "" {
@@ -848,6 +919,7 @@ func (manager *ShellSessionManager) emitCommandState(session *ShellSession, even
 	event.ProjectID = session.projectID
 	event.TodoID = session.todoID
 	event.TodoProjectID = session.todoProjectID
+	event.WorkspaceTerminal = session.workspaceTerminal
 	event.TerminalID = session.terminalID
 	manager.callbacks.OnCommandState(event)
 }
@@ -867,22 +939,24 @@ func (manager *ShellSessionManager) waitForExit(session *ShellSession) {
 
 	if manager.callbacks.OnStatus != nil {
 		manager.callbacks.OnStatus(ShellStatus{
-			ProjectID:     session.projectID,
-			TodoID:        session.todoID,
-			TodoProjectID: session.todoProjectID,
-			TerminalID:    session.terminalID,
-			State:         ShellStateExited,
+			ProjectID:         session.projectID,
+			TodoID:            session.todoID,
+			TodoProjectID:     session.todoProjectID,
+			WorkspaceTerminal: session.workspaceTerminal,
+			TerminalID:        session.terminalID,
+			State:             ShellStateExited,
 		})
 	}
 }
 
 func shellStatusFromTerminal(terminal ProjectTerminal) ShellStatus {
 	return ShellStatus{
-		ProjectID:     terminal.ProjectID,
-		TodoID:        terminal.TodoID,
-		TodoProjectID: terminal.TodoProjectID,
-		TerminalID:    terminal.ID,
-		State:         terminal.State,
+		ProjectID:         terminal.ProjectID,
+		TodoID:            terminal.TodoID,
+		TodoProjectID:     terminal.TodoProjectID,
+		WorkspaceTerminal: terminal.WorkspaceTerminal,
+		TerminalID:        terminal.ID,
+		State:             terminal.State,
 	}
 }
 
@@ -925,14 +999,15 @@ func (manager *ShellSessionManager) saveTerminalToHistory(terminal ProjectTermin
 	}
 
 	record := TerminalHistoryRecord{
-		TerminalID:     terminal.ID,
-		ProjectID:      terminal.ProjectID,
-		TodoID:         terminal.TodoID,
-		TodoProjectID:  terminal.TodoProjectID,
-		ShellName:      terminal.ShellName,
-		State:          terminal.State,
-		CreatedAt:      terminal.CreatedAt,
-		LastSelectedAt: terminal.LastSelectedAt,
+		TerminalID:        terminal.ID,
+		ProjectID:         terminal.ProjectID,
+		TodoID:            terminal.TodoID,
+		TodoProjectID:     terminal.TodoProjectID,
+		WorkspaceTerminal: terminal.WorkspaceTerminal,
+		ShellName:         terminal.ShellName,
+		State:             terminal.State,
+		CreatedAt:         terminal.CreatedAt,
+		LastSelectedAt:    terminal.LastSelectedAt,
 	}
 
 	// Preserve existing output when updating metadata.
@@ -1027,12 +1102,20 @@ func IntegratedShellLaunch(shellPath string, baseEnv []string) (ShellLaunch, err
 
 func terminalIdentityEnv(env []string, terminal ProjectTerminal) []string {
 	return envWithOverrides(env, map[string]string{
-		"TUI_HELPER_TERMINAL_ID":      terminal.ID,
-		"TUI_HELPER_PROJECT_ID":       terminal.ProjectID,
-		"TUI_HELPER_TODO_ID":          terminal.TodoID,
-		"TUI_HELPER_TODO_PROJECT_ID":  terminal.TodoProjectID,
-		"TUI_HELPER_TERMINAL_WORKDIR": terminal.projectPath,
+		"TUI_HELPER_TERMINAL_ID":        terminal.ID,
+		"TUI_HELPER_PROJECT_ID":         terminal.ProjectID,
+		"TUI_HELPER_TODO_ID":            terminal.TodoID,
+		"TUI_HELPER_TODO_PROJECT_ID":    terminal.TodoProjectID,
+		"TUI_HELPER_WORKSPACE_TERMINAL": workspaceTerminalEnvValue(terminal.WorkspaceTerminal),
+		"TUI_HELPER_TERMINAL_WORKDIR":   terminal.projectPath,
 	})
+}
+
+func workspaceTerminalEnvValue(workspaceTerminal bool) string {
+	if workspaceTerminal {
+		return "true"
+	}
+	return ""
 }
 
 func zshIntegratedLaunch(launch ShellLaunch) (ShellLaunch, error) {

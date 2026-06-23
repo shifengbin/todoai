@@ -18,6 +18,7 @@ import {
   CreateProjectFromDialog,
   CreateTodo,
   CreateTodoTerminal,
+  CreateWorkspaceTerminal,
   DeleteCompletedTodos,
   DeleteProject,
   DeleteProjects,
@@ -202,6 +203,44 @@ const activeTerminalState = computed(() => {
   return activeTerminal.value ? terminalState(activeTerminal.value.id) : ''
 })
 
+const canRestartActiveShell = computed(() => {
+  return activeTerminalState.value === 'exited' && terminalCanRestart(activeTerminal.value)
+})
+
+const terminalStateLayer = computed(() => {
+  if (!hasWorkspace.value) {
+    return { text: 'Open a project', testId: 'workspace-empty-state', warning: false }
+  }
+
+  const terminal = activeTerminal.value
+  if (terminal?.workspaceTerminal) {
+    if (activeTerminalState.value === 'unsupported') {
+      return { text: 'Embedded terminal is not supported on Windows', warning: true }
+    }
+    if (activeTerminalState.value === 'exited') {
+      return { text: 'Shell exited', warning: true }
+    }
+    return null
+  }
+
+  if (!activeTodoProject.value || !activeTodoProjectProject.value) {
+    return { text: 'Select a TODO project', warning: false }
+  }
+  if (!activeTodoProjectProject.value.available) {
+    return { text: 'Project path unavailable', warning: true }
+  }
+  if (!terminal) {
+    return { text: 'Select a terminal', warning: false }
+  }
+  if (activeTerminalState.value === 'unsupported') {
+    return { text: 'Embedded terminal is not supported on Windows', warning: true }
+  }
+  if (activeTerminalState.value === 'exited') {
+    return { text: 'Shell exited', warning: true }
+  }
+  return null
+})
+
 const selectedTerminalShell = computed(() => terminalSettings.value?.selected || null)
 const terminalLaunchProfiles = computed(() => {
   if (Array.isArray(terminalSettings.value?.launchProfiles)) {
@@ -369,11 +408,12 @@ const selectedProjectPickerProjects = computed(() => {
   return projects.value.filter((project) => selectedProjectIds.has(project.id))
 })
 
+const workspaceTerminals = computed(() =>
+  terminals.value.filter((terminal) => terminal.workspaceTerminal).map(terminalWithAttention)
+)
+
 const sidebarTerminals = computed(() =>
-  terminals.value.map((terminal) => ({
-    ...terminal,
-    attentionState: terminalAckIds.has(terminal.id) ? 'needs-ack' : ''
-  }))
+  terminals.value.filter((terminal) => !terminal.workspaceTerminal).map(terminalWithAttention)
 )
 
 onMounted(async () => {
@@ -567,8 +607,12 @@ async function createProject() {
 }
 
 async function importSingleProjectCandidate() {
+  const previousProjectIds = new Set(projects.value.map((project) => project.id).filter(Boolean))
   try {
-    applyState(await CreateProjectFromDialog(), { refreshGitStatus: false })
+    const state = await CreateProjectFromDialog()
+    const projectId = importedSingleProjectId(state, previousProjectIds)
+    applyState(state, { refreshGitStatus: false })
+    selectImportedProjectCandidate(projectId)
   } catch (error) {
     showError(error)
   }
@@ -813,7 +857,7 @@ async function autoRestartIfExited(terminalId) {
   if (autoRestartedTerminals.has(terminalId)) {
     return
   }
-  if (!activeTodoProjectProject.value?.available) {
+  if (!terminalCanRestart(terminal)) {
     return
   }
   autoRestartedTerminals.add(terminalId)
@@ -844,6 +888,20 @@ async function createTerminal(todoProjectId, launchProfile = null) {
       }
       await SendTerminalInput(state.activeTerminalId, `${launchProfile.command}\r`)
     }
+  } catch (error) {
+    showError(error)
+  }
+}
+
+async function createWorkspaceTerminal() {
+  if (!hasWorkspace.value) {
+    return
+  }
+  try {
+    const size = terminalManager.size() || { cols: 80, rows: 24 }
+    const state = await CreateWorkspaceTerminal(size.cols || 80, size.rows || 24)
+    applyState(state)
+    await activateActiveTerminal()
   } catch (error) {
     showError(error)
   }
@@ -965,7 +1023,7 @@ async function activateActiveTerminal() {
 
 async function restartActiveShell() {
   const terminal = activeTerminal.value
-  if (!terminal || !activeTodoProjectProject.value?.available) {
+  if (!terminal || !terminalCanRestart(terminal)) {
     return
   }
   const size = terminalManager.size(terminal.id) || { cols: 80, rows: 24 }
@@ -1332,6 +1390,66 @@ function normalizedTodoPriority(priority) {
   return todoPriorities.some((option) => option.value === priority) ? priority : 'medium'
 }
 
+function terminalWithAttention(terminal) {
+  return {
+    ...terminal,
+    attentionState: terminalAckIds.has(terminal.id) ? 'needs-ack' : ''
+  }
+}
+
+function terminalCanRestart(terminal) {
+  if (!terminal) {
+    return false
+  }
+  if (terminal.workspaceTerminal) {
+    return hasWorkspace.value
+  }
+  return Boolean(activeTodoProjectProject.value?.available)
+}
+
+function importedSingleProjectId(state, previousProjectIds) {
+  const addedProjects = Array.isArray(state?.importSummary?.added)
+    ? state.importSummary.added.filter((project) => project?.id)
+    : []
+  if (addedProjects.length === 1) {
+    return addedProjects[0].id
+  }
+
+  const skippedPaths = Array.isArray(state?.importSummary?.skippedPaths)
+    ? state.importSummary.skippedPaths.map(normalizeProjectPath).filter(Boolean)
+    : []
+  if (skippedPaths.length === 1) {
+    const skippedPath = skippedPaths[0]
+    const existingProject = (state?.projects || []).find((project) => normalizeProjectPath(project.path) === skippedPath)
+    if (existingProject?.id) {
+      return existingProject.id
+    }
+  }
+
+  const nextProjectIds = (state?.projects || []).map((project) => project.id).filter(Boolean)
+  const newProjectIds = nextProjectIds.filter((projectId) => !previousProjectIds.has(projectId))
+  return newProjectIds.length === 1 ? newProjectIds[0] : ''
+}
+
+function selectImportedProjectCandidate(projectId) {
+  if (!projectId) {
+    return
+  }
+  if (todoForm.visible) {
+    todoForm.projectIds = appendProjectId(todoForm.projectIds, projectId)
+  }
+  if (todoDetail.visible && !todoDetail.readOnly) {
+    todoDetail.projectIds = appendProjectId(todoDetail.projectIds, projectId)
+  }
+  if (projectPicker.visible) {
+    projectPicker.projectIds = appendProjectId(projectPicker.projectIds, projectId)
+  }
+}
+
+function appendProjectId(projectIds, projectId) {
+  return projectIds.includes(projectId) ? projectIds : [...projectIds, projectId]
+}
+
 function toggleProjectId(projectIds, projectId) {
   if (projectIds.includes(projectId)) {
     return projectIds.filter((candidate) => candidate !== projectId)
@@ -1528,7 +1646,7 @@ function handleTerminalCommandState(terminalId, event) {
       commandType: 'command-end',
       at: Date.now()
     })
-    if (terminal.id === activeTerminalId.value) {
+    if (terminal.id === activeTerminalId.value && !terminal.workspaceTerminal) {
       refreshProjectGitStatus()
     }
   }
@@ -1644,6 +1762,10 @@ function sanitizeCommandLabel(command) {
   return (command || '').replace(/\s+/g, ' ').trim().slice(0, 120)
 }
 
+function globalTerminalLabel(terminal) {
+  return sanitizeCommandLabel(terminal.currentCommand) || terminal.runtimeTitle || terminal.shellName || 'Terminal'
+}
+
 function exitedAgentStatus() {
   return createAgentStatus({
     phase: AGENT_PHASE.EXITED,
@@ -1720,6 +1842,17 @@ function showError(error) {
           <button
             type="button"
             class="toolbar-button"
+            data-testid="create-global-terminal"
+            title="New global terminal"
+            :disabled="!hasWorkspace"
+            @click="createWorkspaceTerminal"
+          >
+            <Plus :size="16" />
+            <span>Global terminal</span>
+          </button>
+          <button
+            type="button"
+            class="toolbar-button"
             data-testid="settings-toggle"
             title="Settings"
             @click="openTerminalSettings"
@@ -1728,7 +1861,7 @@ function showError(error) {
             <span>Settings</span>
           </button>
           <button
-            v-if="activeTodoProjectProject && activeTerminalState === 'exited'"
+            v-if="canRestartActiveShell"
             type="button"
             class="toolbar-button"
             title="Restart shell"
@@ -1740,7 +1873,54 @@ function showError(error) {
         </div>
       </header>
 
-      <div class="terminal-surface" data-testid="terminal-surface">
+      <div
+        class="terminal-surface"
+        :class="{ 'has-global-terminals': workspaceTerminals.length > 0 }"
+        data-testid="terminal-surface"
+      >
+        <div
+          v-if="workspaceTerminals.length"
+          class="global-terminal-group"
+          data-testid="global-terminal-group"
+        >
+          <span class="global-terminal-group-label">Global</span>
+          <div class="global-terminal-tabs">
+            <div
+              v-for="terminal in workspaceTerminals"
+              :key="terminal.id"
+              class="global-terminal-tab"
+              :class="{ active: terminal.id === activeTerminalId }"
+              :data-testid="`global-terminal-${terminal.id}`"
+              :data-activity-state="terminal.attentionState || terminal.activityState || null"
+              role="button"
+              tabindex="0"
+              @click="selectTerminal(terminal.id)"
+              @keydown.enter.prevent="selectTerminal(terminal.id)"
+              @keydown.space.prevent="selectTerminal(terminal.id)"
+            >
+              <span>{{ globalTerminalLabel(terminal) }}</span>
+              <button
+                type="button"
+                class="global-terminal-delete"
+                :data-testid="`delete-global-terminal-${terminal.id}`"
+                :title="`Delete ${globalTerminalLabel(terminal)}`"
+                @click.stop="deleteTerminal(terminal.id)"
+              >
+                <X :size="12" />
+              </button>
+            </div>
+            <button
+              type="button"
+              class="global-terminal-create"
+              data-testid="create-global-terminal-from-group"
+              title="New global terminal"
+              @click="createWorkspaceTerminal"
+            >
+              <Plus :size="14" />
+            </button>
+          </div>
+        </div>
+
         <div
           v-for="terminal in terminals"
           :key="terminal.id"
@@ -1771,14 +1951,14 @@ function showError(error) {
           </button>
         </div>
 
-        <div v-if="!hasWorkspace" class="state-layer" data-testid="workspace-empty-state">Open a project</div>
-        <div v-else-if="!activeTodoProject || !activeTodoProjectProject" class="state-layer">Select a TODO project</div>
-        <div v-else-if="!activeTodoProjectProject.available" class="state-layer warning">Project path unavailable</div>
-        <div v-else-if="!activeTerminal" class="state-layer">Select a terminal</div>
-        <div v-else-if="activeTerminalState === 'unsupported'" class="state-layer warning">
-          Embedded terminal is not supported on Windows
+        <div
+          v-if="terminalStateLayer"
+          class="state-layer"
+          :class="{ warning: terminalStateLayer.warning }"
+          :data-testid="terminalStateLayer.testId || null"
+        >
+          {{ terminalStateLayer.text }}
         </div>
-        <div v-else-if="activeTerminalState === 'exited'" class="state-layer warning">Shell exited</div>
       </div>
 
       <footer class="status-bar">

@@ -11,6 +11,7 @@ import {
   CompleteTodo,
   CreateTodo,
   CreateTodoTerminal,
+  CreateWorkspaceTerminal,
   CreateProjectFromDialog,
   DeleteCompletedTodos,
   DeleteProject,
@@ -49,6 +50,7 @@ const appApiMock = vi.hoisted(() => ({
   CompleteTodo: vi.fn(),
   CreateTodo: vi.fn(),
   CreateTodoTerminal: vi.fn(),
+  CreateWorkspaceTerminal: vi.fn(),
   CreateProjectFromDialog: vi.fn(),
   DeleteCompletedTodos: vi.fn(),
   DeleteProject: vi.fn(),
@@ -164,6 +166,15 @@ describe('App project terminal tree', () => {
           terminal({ id: 'terminal-b', shellName: 'bash', state: 'running' })
         ],
         activeTerminalId: 'terminal-b'
+      })
+    )
+    appApiMock.CreateWorkspaceTerminal.mockResolvedValue(
+      projectState({
+        terminals: [
+          terminal({ id: 'terminal-a' }),
+          workspaceTerminal({ id: 'global-terminal', shellName: 'bash', state: 'running' })
+        ],
+        activeTerminalId: 'global-terminal'
       })
     )
     appApiMock.CreateTodo.mockResolvedValue(projectState({ todos: [todo({ id: 'todo-a' }), todo({ id: 'todo-b', title: 'Write tests' })] }))
@@ -362,6 +373,69 @@ describe('App project terminal tree', () => {
     expect(SendTerminalInput).toHaveBeenCalledWith('terminal-a', 'echo hi\n')
     expect(wrapper.find('[data-testid="terminal-context-menu"]').exists()).toBe(false)
     expect(xtermMock.sessions.get('terminal-a').terminal.focus).toHaveBeenCalledTimes(1)
+  })
+
+  it('creates and selects workspace global terminals from the terminal surface', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        terminals: [terminal({ id: 'terminal-a' })],
+        activeTerminalId: 'terminal-a'
+      })
+    )
+    appApiMock.CreateWorkspaceTerminal.mockResolvedValue(
+      projectState({
+        terminals: [
+          terminal({ id: 'terminal-a' }),
+          workspaceTerminal({ id: 'global-terminal', shellName: 'bash', state: 'running' })
+        ],
+        activeTerminalId: 'global-terminal'
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    expect(wrapper.find('[data-testid="global-terminal-group"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="create-global-terminal"]').trigger('click')
+    await flushPromises()
+
+    expect(CreateWorkspaceTerminal).toHaveBeenCalledWith(100, 32)
+    expect(wrapper.find('[data-testid="global-terminal-group"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="global-terminal-global-terminal"]').classes()).toContain('active')
+    expect(wrapper.find('[data-testid="terminal-pane-global-terminal"]').classes()).toContain('active')
+    expect(wrapper.find('[data-testid="terminal-global-terminal"]').exists()).toBe(false)
+
+    CreateWorkspaceTerminal.mockClear()
+    await wrapper.find('[data-testid="create-global-terminal-from-group"]').trigger('click')
+    await flushPromises()
+    expect(CreateWorkspaceTerminal).toHaveBeenCalledWith(100, 32)
+  })
+
+  it('shows global terminal group only while workspace terminals exist', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        terminals: [
+          terminal({ id: 'terminal-a' }),
+          workspaceTerminal({ id: 'global-terminal', shellName: 'bash', state: 'running' })
+        ],
+        activeTerminalId: 'global-terminal'
+      })
+    )
+    appApiMock.DeleteTerminal.mockResolvedValue(
+      projectState({
+        terminals: [terminal({ id: 'terminal-a' })],
+        activeTerminalId: 'terminal-a'
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    expect(wrapper.find('[data-testid="global-terminal-group"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="terminal-global-terminal"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="delete-global-terminal-global-terminal"]').trigger('click')
+    await flushPromises()
+
+    expect(DeleteTerminal).toHaveBeenCalledWith('global-terminal')
+    expect(wrapper.find('[data-testid="global-terminal-group"]').exists()).toBe(false)
   })
 
   it('closes the context menu and restores terminal focus when pasting an empty clipboard', async () => {
@@ -1816,6 +1890,103 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="todo-project-picker-option-project-b"]').exists()).toBe(true)
   })
 
+  it('selects a single imported project in the create TODO form only after import', async () => {
+    appApiMock.CreateProjectFromDialog.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
+          { id: 'project-b', name: 'beta', path: '/work/beta', available: true }
+        ],
+        importSummary: {
+          parentPath: '/work/beta',
+          addedCount: 1,
+          skippedCount: 0,
+          added: [{ id: 'project-b', name: 'beta', path: '/work/beta', available: true }]
+        }
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="new-todo"]').trigger('click')
+    await wrapper.find('[data-testid="import-single-project-candidate"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="todo-selected-project-tag-project-b"]').exists()).toBe(true)
+
+    await wrapper.find('[data-testid="todo-selected-project-remove-project-b"]').trigger('click')
+    await wrapper.find('[data-testid="todo-name-input"]').setValue('New task')
+    await wrapper.find('[data-testid="todo-create-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(CreateTodo).toHaveBeenCalledWith({
+      title: 'New task',
+      description: '',
+      priority: 'medium',
+      projectIds: []
+    })
+  })
+
+  it('selects an existing project candidate when single import skips a duplicate', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
+          { id: 'project-b', name: 'beta', path: '/work/beta', available: true }
+        ]
+      })
+    )
+    appApiMock.CreateProjectFromDialog.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
+          { id: 'project-b', name: 'beta', path: '/work/beta', available: true }
+        ],
+        importSummary: {
+          parentPath: '/work',
+          addedCount: 0,
+          skippedCount: 1,
+          skippedPaths: ['/work/beta']
+        }
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="new-todo"]').trigger('click')
+    await wrapper.find('[data-testid="import-single-project-candidate"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="todo-selected-project-tag-project-b"]').exists()).toBe(true)
+  })
+
+  it('selects a single imported project in the edit TODO and add-project pickers', async () => {
+    appApiMock.CreateProjectFromDialog.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
+          { id: 'project-b', name: 'beta', path: '/work/beta', available: true }
+        ],
+        importSummary: {
+          parentPath: '/work/beta',
+          addedCount: 1,
+          skippedCount: 0,
+          added: [{ id: 'project-b', name: 'beta', path: '/work/beta', available: true }]
+        }
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await selectTodoMenuAction(wrapper, 'edit', 'todo-a')
+    await wrapper.find('[data-testid="import-single-project-candidate"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="todo-detail-selected-project-tag-project-b"]').exists()).toBe(true)
+
+    await wrapper.find('[data-testid="todo-detail-close"]').trigger('click')
+    await selectTodoMenuAction(wrapper, 'add-project', 'todo-a')
+    await wrapper.find('[data-testid="import-single-project-candidate"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="todo-project-picker-tag-project-b"]').exists()).toBe(true)
+  })
+
   it('does not refresh git status immediately after importing projects', async () => {
     appApiMock.ImportProjectsFromParentDirectoryDialog.mockResolvedValue(
       projectState({
@@ -2586,6 +2757,31 @@ describe('App project terminal tree', () => {
     expect(GetProjectGitStatus).toHaveBeenCalledWith('project-a')
   })
 
+  it('toggles a TODO branch by double clicking the TODO header row', async () => {
+    const wrapper = await mountReadyApp()
+
+    expect(wrapper.find('[data-testid="todo-project-list-todo-a"]').exists()).toBe(true)
+
+    await wrapper.find('[data-testid="todo-todo-a"]').trigger('dblclick')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="todo-project-list-todo-a"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="todo-todo-a"]').trigger('dblclick')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="todo-project-list-todo-a"]').exists()).toBe(true)
+  })
+
+  it('does not toggle a TODO branch when double clicking a header action button', async () => {
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-menu-button-todo-a"]').trigger('dblclick')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="todo-project-list-todo-a"]').exists()).toBe(true)
+  })
+
   it('does not refresh git status when an unrelated TODO branch expands', async () => {
     const twoTodoState = projectState({
       projects: [
@@ -3163,6 +3359,17 @@ function terminal(overrides = {}) {
     state: 'running',
     ...overrides
   }
+}
+
+function workspaceTerminal(overrides = {}) {
+  return terminal({
+    id: 'global-terminal',
+    projectId: '',
+    todoId: '',
+    todoProjectId: '',
+    workspaceTerminal: true,
+    ...overrides
+  })
 }
 
 function gitStatus(overrides = {}) {

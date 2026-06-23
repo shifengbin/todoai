@@ -11,15 +11,16 @@ import (
 // recent output history. It is saved to terminal-history.json alongside
 // the existing project config and restored on application startup.
 type TerminalHistoryRecord struct {
-	TerminalID     string `json:"terminalId"`
-	ProjectID      string `json:"projectId"`
-	TodoID         string `json:"todoId,omitempty"`
-	TodoProjectID  string `json:"todoProjectId,omitempty"`
-	ShellName      string `json:"shellName"`
-	State          string `json:"state"`
-	CreatedAt      string `json:"createdAt"`
-	LastSelectedAt string `json:"lastSelectedAt"`
-	Output         string `json:"output,omitempty"`
+	TerminalID        string `json:"terminalId"`
+	ProjectID         string `json:"projectId"`
+	TodoID            string `json:"todoId,omitempty"`
+	TodoProjectID     string `json:"todoProjectId,omitempty"`
+	WorkspaceTerminal bool   `json:"workspaceTerminal,omitempty"`
+	ShellName         string `json:"shellName"`
+	State             string `json:"state"`
+	CreatedAt         string `json:"createdAt"`
+	LastSelectedAt    string `json:"lastSelectedAt"`
+	Output            string `json:"output,omitempty"`
 }
 
 // TerminalHistoryStore manages persistence of terminal history records

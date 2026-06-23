@@ -1215,6 +1215,7 @@ watch(
             class="todo-header-row"
             :class="[{ active: todo.id === activeTodoId }, todoPriorityClass(todo), collapsedTodoActivityClass(todo)]"
             :data-activity-state="collapsedTodoFeedbackState(todo) || null"
+            @dblclick="toggleTodoBranch(todo.id)"
           >
             <button
               type="button"
@@ -1225,6 +1226,7 @@ watch(
               :data-testid="`toggle-todo-${todo.id}`"
               :title="isTodoCollapsed(todo.id) ? 'Expand TODO' : 'Collapse TODO'"
               @click.stop="toggleTodoBranch(todo.id)"
+              @dblclick.stop
             >
               <ChevronRight v-if="isTodoCollapsed(todo.id)" :size="16" />
               <ChevronDown v-else :size="16" />
@@ -1273,6 +1275,7 @@ watch(
               :data-testid="`todo-actions-${todo.id}`"
               role="group"
               :aria-label="`${todo.title} actions`"
+              @dblclick.stop
             >
               <div class="todo-action-confirm-control">
                 <button
