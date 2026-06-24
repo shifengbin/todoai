@@ -889,6 +889,43 @@ func TestAppCompletesTodoAndClosesOnlyOwnedTerminals(t *testing.T) {
 	}
 }
 
+func TestAppCompletesTodoClosesTerminalsBeforeReadingSnapshotBranches(t *testing.T) {
+	projectDir := t.TempDir()
+	starter := newFakeShellStarter()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		starter.Start,
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-a")),
+	)
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	todoID, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", state.Projects[0].ID)
+	if _, err := app.CreateTodoTerminal(todoProjectID, 80, 24); err != nil {
+		t.Fatalf("CreateTodoTerminal() error = %v", err)
+	}
+	app.projects.gitBranch = func(path string) (string, error) {
+		if len(starter.processes) != 1 || !starter.processes[0].closed {
+			t.Fatal("git branch snapshot read before completed todo terminal was closed")
+		}
+		return "feature/login", nil
+	}
+
+	state, err = app.CompleteTodo(todoID)
+	if err != nil {
+		t.Fatalf("CompleteTodo() error = %v", err)
+	}
+
+	completed := findTodo(state.Todos, todoID)
+	if completed == nil || len(completed.ProjectSnapshots) != 1 {
+		t.Fatalf("completed todo = %#v, want one project snapshot", completed)
+	}
+	if completed.ProjectSnapshots[0].WorktreeBranch != "feature/login" {
+		t.Fatalf("WorktreeBranch = %q, want feature/login", completed.ProjectSnapshots[0].WorktreeBranch)
+	}
+}
+
 func TestAppDeletesCompletedTodosThroughPublicAPI(t *testing.T) {
 	starter := newFakeShellStarter()
 	app := NewAppWithConfigAndShellStarter(
@@ -1799,6 +1836,96 @@ func TestAppGetProjectGitStatusReturnsErrorWhenProjectIsMissing(t *testing.T) {
 
 	if _, err := app.GetProjectGitStatus("missing-project"); err == nil {
 		t.Fatal("GetProjectGitStatus() error = nil, want error")
+	}
+}
+
+func TestAppChecksCompletedTodoProjectMergeStatus(t *testing.T) {
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	calls := 0
+	app.gitBranchMerged = func(path string, worktreeBranch string, baseBranch string) (bool, error) {
+		calls++
+		if path != "/work/frontend" || worktreeBranch != "todo/fix-login" || baseBranch != "main" {
+			t.Fatalf("merge check args = %q/%q/%q, want snapshot args", path, worktreeBranch, baseBranch)
+		}
+		return true, nil
+	}
+
+	statuses, err := app.GetCompletedTodoProjectMergeStatuses([]CompletedTodoProjectMergeStatusRequest{
+		{ID: "todo-a:project-a", Path: "/work/frontend", WorktreeBranch: "todo/fix-login", BaseBranch: "main"},
+	})
+	if err != nil {
+		t.Fatalf("GetCompletedTodoProjectMergeStatuses() error = %v", err)
+	}
+
+	if calls != 1 {
+		t.Fatalf("merge check calls = %d, want 1", calls)
+	}
+	if len(statuses) != 1 {
+		t.Fatalf("statuses length = %d, want 1", len(statuses))
+	}
+	if statuses[0].ID != "todo-a:project-a" || statuses[0].Status != CompletedTodoProjectMergeStatusMerged {
+		t.Fatalf("status = %#v, want merged result for request", statuses[0])
+	}
+}
+
+func TestAppCompletedTodoProjectMergeStatusReturnsUnknownForInvalidInputs(t *testing.T) {
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	app.gitBranchMerged = func(path string, worktreeBranch string, baseBranch string) (bool, error) {
+		t.Fatal("gitBranchMerged called for invalid request")
+		return false, nil
+	}
+
+	statuses, err := app.GetCompletedTodoProjectMergeStatuses([]CompletedTodoProjectMergeStatusRequest{
+		{ID: "missing-path", WorktreeBranch: "todo/fix-login", BaseBranch: "main"},
+		{ID: "missing-worktree", Path: "/work/frontend", BaseBranch: "main"},
+		{ID: "missing-base", Path: "/work/frontend", WorktreeBranch: "todo/fix-login"},
+	})
+	if err != nil {
+		t.Fatalf("GetCompletedTodoProjectMergeStatuses() error = %v", err)
+	}
+
+	for _, status := range statuses {
+		if status.Status != CompletedTodoProjectMergeStatusUnknown || status.Reason == "" {
+			t.Fatalf("status = %#v, want unknown with reason", status)
+		}
+	}
+}
+
+func TestAppCompletedTodoProjectMergeStatusMapsUnmergedAndErrors(t *testing.T) {
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	app.gitBranchMerged = func(path string, worktreeBranch string, baseBranch string) (bool, error) {
+		switch path {
+		case "/work/unmerged":
+			return false, nil
+		case "/work/error":
+			return false, errors.New("branch missing")
+		default:
+			return true, nil
+		}
+	}
+
+	statuses, err := app.GetCompletedTodoProjectMergeStatuses([]CompletedTodoProjectMergeStatusRequest{
+		{ID: "unmerged", Path: "/work/unmerged", WorktreeBranch: "todo/fix-login", BaseBranch: "main"},
+		{ID: "error", Path: "/work/error", WorktreeBranch: "todo/fix-login", BaseBranch: "main"},
+	})
+	if err != nil {
+		t.Fatalf("GetCompletedTodoProjectMergeStatuses() error = %v", err)
+	}
+
+	if statuses[0].Status != CompletedTodoProjectMergeStatusUnmerged {
+		t.Fatalf("first status = %#v, want unmerged", statuses[0])
+	}
+	if statuses[1].Status != CompletedTodoProjectMergeStatusUnknown || statuses[1].Reason == "" {
+		t.Fatalf("second status = %#v, want unknown with reason", statuses[1])
 	}
 }
 

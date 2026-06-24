@@ -566,16 +566,93 @@ describe('ProjectSidebar', () => {
     expect(wrapper.find('[data-testid="expand-all-todos"]').attributes('disabled')).toBeDefined()
   })
 
-  it('shows completed TODO snapshots without terminal launch controls', async () => {
-    const wrapper = mountSidebar()
+  it('shows completed TODO snapshot branches with merge status icons without terminal launch controls', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        completedMergeStatuses: {
+          'todo-completed::project-a::/work/archived-alpha::0': { id: 'todo-completed::project-a::/work/archived-alpha::0', status: 'merged' },
+          'todo-completed::project-b::/work/archived-beta::1': { id: 'todo-completed::project-b::/work/archived-beta::1', status: 'unmerged' }
+        },
+        todos: [
+          { id: 'todo-a', title: '修复登录问题', status: 'active' },
+          {
+            id: 'todo-completed',
+            title: '已完成任务',
+            status: 'completed',
+            completedAt: '2026-06-10T10:00:00Z',
+            projectSnapshots: [
+              {
+                projectId: 'project-a',
+                name: 'archived-alpha',
+                path: '/work/archived-alpha',
+                worktreeBranch: 'feature/login',
+                baseBranch: 'main'
+              },
+              {
+                projectId: 'project-b',
+                name: 'archived-beta',
+                path: '/work/archived-beta',
+                worktreeBranch: 'feature/payments',
+                baseBranch: 'release/2026'
+              },
+              {
+                projectId: 'project-legacy',
+                name: 'legacy-alpha',
+                path: '/work/legacy-alpha'
+              }
+            ]
+          }
+        ]
+      }
+    })
 
     await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
 
     expect(wrapper.find('[data-testid="completed-todos"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('已完成任务')
     expect(wrapper.text()).toContain('completed')
-    expect(wrapper.text()).toContain('/work/archived-alpha')
+    expect(wrapper.text()).toContain('feature/login -> main')
+    expect(wrapper.text()).toContain('feature/payments -> release/2026')
+    expect(wrapper.text()).toContain('Unknown branch -> Unknown base')
+    expect(wrapper.text()).not.toContain('/work/archived-alpha')
+    expect(wrapper.find('[data-testid="completed-project-merge-status-todo-completed-project-a-0"]').classes()).toContain('merged')
+    expect(wrapper.find('[data-testid="completed-project-merge-status-todo-completed-project-a-0"]').attributes('title')).toBe('Merged')
+    expect(wrapper.find('[data-testid="completed-project-merge-status-todo-completed-project-b-1"]').classes()).toContain('unmerged')
+    expect(wrapper.find('[data-testid="completed-project-merge-status-todo-completed-project-b-1"]').attributes('title')).toBe('Not merged')
+    expect(wrapper.find('[data-testid="completed-project-merge-status-todo-completed-project-legacy-2"]').classes()).toContain('unknown')
+    expect(wrapper.find('[data-testid="completed-project-merge-status-todo-completed-project-legacy-2"]').attributes('title')).toBe('Merge status unknown')
     expect(wrapper.find('[data-testid="add-terminal-todo-project-a"]').exists()).toBe(false)
+  })
+
+  it('renders completed snapshot merge status as checking while async results load', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        todos: [
+          { id: 'todo-a', title: '修复登录问题', status: 'active' },
+          {
+            id: 'todo-completed',
+            title: '已完成任务',
+            status: 'completed',
+            completedAt: '2026-06-10T10:00:00Z',
+            projectSnapshots: [
+              {
+                projectId: 'project-a',
+                name: 'archived-alpha',
+                path: '/work/archived-alpha',
+                worktreeBranch: 'feature/login',
+                baseBranch: 'main'
+              }
+            ]
+          }
+        ]
+      }
+    })
+
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
+
+    const status = wrapper.find('[data-testid="completed-project-merge-status-todo-completed-project-a-0"]')
+    expect(status.classes()).toContain('checking')
+    expect(status.attributes('title')).toBe('Checking merge status')
   })
 
   it('shows terminal activity in the TODO tree', () => {
