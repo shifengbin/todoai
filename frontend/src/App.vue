@@ -129,6 +129,10 @@ const gitStatusLoading = ref(false)
 const gitStatusError = ref('')
 const gitInitLoading = ref(false)
 const projectBranchOptions = reactive({})
+const projectBranchLoadStates = reactive({})
+const projectBranchPickerQueries = reactive({})
+const openProjectBranchPickerKey = ref('')
+const projectBranchCandidateLimit = 50
 const settingsPanel = reactive({
   visible: false,
   loading: false,
@@ -736,6 +740,7 @@ function closeTodoForm() {
   todoForm.visible = false
   todoForm.projectSelections = []
   todoForm.saving = false
+  closeProjectBranchPicker()
 }
 
 async function submitTodoForm() {
@@ -802,6 +807,7 @@ function closeTodoDetail() {
   todoDetail.projectSearch = ''
   todoDetail.readOnly = false
   todoDetail.saving = false
+  closeProjectBranchPicker()
 }
 
 async function toggleTodoDetailProject(project) {
@@ -873,6 +879,7 @@ function closeProjectPicker() {
   projectPicker.query = ''
   projectPicker.projectSelections = []
   projectPicker.saving = false
+  closeProjectBranchPicker()
 }
 
 async function toggleProjectForTodo(project) {
@@ -1537,23 +1544,83 @@ function normalizedProjectBranches(branches, projectIds) {
 }
 
 async function ensureProjectBranchesLoaded(projectId) {
-  if (!projectId || projectBranchOptions[projectId]) {
+  if (!projectId) {
     return
   }
+  const loadState = projectBranchLoadStates[projectId]
+  if (loadState === 'loading' || loadState === 'loaded' || loadState === 'failed') {
+    return
+  }
+  projectBranchLoadStates[projectId] = 'loading'
   projectBranchOptions[projectId] = []
   try {
-    projectBranchOptions[projectId] = await ListProjectBranches(projectId)
+    const branches = await ListProjectBranches(projectId)
+    projectBranchOptions[projectId] = Array.isArray(branches) ? branches : []
+    projectBranchLoadStates[projectId] = 'loaded'
   } catch {
     projectBranchOptions[projectId] = []
+    projectBranchLoadStates[projectId] = 'failed'
   }
 }
 
-function projectBranchOptionsId(scope, projectId) {
-  return `project-branch-options-${scope}-${projectId}`
+function projectBranchPickerKey(scope, projectId) {
+  return `${scope}:${projectId}`
+}
+
+function openProjectBranchPicker(scope, projectId) {
+  if (!projectId) {
+    return
+  }
+  projectBranchPickerQueries[projectBranchPickerKey(scope, projectId)] = ''
+  openProjectBranchPickerKey.value = projectBranchPickerKey(scope, projectId)
+  void ensureProjectBranchesLoaded(projectId)
+}
+
+function closeProjectBranchPicker() {
+  openProjectBranchPickerKey.value = ''
+}
+
+function isProjectBranchPickerOpen(scope, projectId) {
+  return openProjectBranchPickerKey.value === projectBranchPickerKey(scope, projectId)
 }
 
 function branchesForProject(projectId) {
   return projectBranchOptions[projectId] || []
+}
+
+function projectBranchPickerQuery(scope, projectId) {
+  return projectBranchPickerQueries[projectBranchPickerKey(scope, projectId)] || ''
+}
+
+function matchingProjectBranches(scope, projectId) {
+  const query = normalizeSearch(projectBranchPickerQuery(scope, projectId))
+  const branches = branchesForProject(projectId)
+  if (!query) {
+    return branches
+  }
+  return branches.filter((branch) => normalizeSearch(branch).includes(query))
+}
+
+function visibleProjectBranches(scope, projectId) {
+  return matchingProjectBranches(scope, projectId).slice(0, projectBranchCandidateLimit)
+}
+
+function projectBranchPickerStatus(scope, projectId) {
+  const loadState = projectBranchLoadStates[projectId]
+  if (loadState === 'loading') {
+    return 'Loading suggestions...'
+  }
+  if (loadState === 'failed') {
+    return 'Suggestions unavailable'
+  }
+  const matchCount = matchingProjectBranches(scope, projectId).length
+  if (matchCount > projectBranchCandidateLimit) {
+    return 'Keep typing to narrow branch suggestions'
+  }
+  if (loadState === 'loaded' && matchCount === 0) {
+    return 'No matching branches'
+  }
+  return ''
 }
 
 function terminalWithAttention(terminal) {
@@ -1665,6 +1732,32 @@ function setTodoDetailProjectBaseBranch(projectId, baseBranch) {
 
 function setProjectPickerBaseBranch(projectId, baseBranch) {
   projectPicker.projectSelections = updateProjectBaseBranch(projectPicker.projectSelections, projectId, baseBranch)
+}
+
+function setProjectBaseBranchForScope(scope, projectId, baseBranch) {
+  if (scope === 'todo-create') {
+    setTodoFormProjectBaseBranch(projectId, baseBranch)
+    return
+  }
+  if (scope === 'todo-detail') {
+    setTodoDetailProjectBaseBranch(projectId, baseBranch)
+    return
+  }
+  if (scope === 'project-picker') {
+    setProjectPickerBaseBranch(projectId, baseBranch)
+  }
+}
+
+function updateProjectBranchInput(scope, projectId, baseBranch) {
+  projectBranchPickerQueries[projectBranchPickerKey(scope, projectId)] = baseBranch
+  setProjectBaseBranchForScope(scope, projectId, baseBranch)
+  openProjectBranchPicker(scope, projectId)
+}
+
+function selectProjectBranchCandidate(scope, projectId, branch) {
+  projectBranchPickerQueries[projectBranchPickerKey(scope, projectId)] = branch
+  setProjectBaseBranchForScope(scope, projectId, branch)
+  closeProjectBranchPicker()
 }
 
 function todoProjectSelectionPayload(projectSelections) {
@@ -2513,26 +2606,45 @@ function clearToastTimer() {
                 :data-testid="`todo-selected-project-tag-${project.id}`"
               >
                 <span class="project-name">{{ project.name }}</span>
-                <input
-                  :value="selectedProjectBaseBranch(todoForm.projectSelections, project.id)"
-                  type="text"
-                  class="todo-branch-input"
-                  placeholder="base 分支 (留空使用默认)"
-                  :list="projectBranchOptionsId('todo-create', project.id)"
-                  :data-testid="`todo-selected-project-branch-${project.id}`"
-                  aria-label="Base branch"
-                  @input="setTodoFormProjectBaseBranch(project.id, $event.target.value)"
-                />
-                <datalist
-                  :id="projectBranchOptionsId('todo-create', project.id)"
-                  :data-testid="`project-branch-options-todo-create-${project.id}`"
-                >
-                  <option
-                    v-for="branch in branchesForProject(project.id)"
-                    :key="branch"
-                    :value="branch"
+                <span class="todo-branch-picker">
+                  <input
+                    :value="selectedProjectBaseBranch(todoForm.projectSelections, project.id)"
+                    type="text"
+                    class="todo-branch-input"
+                    placeholder="base 分支 (留空使用默认)"
+                    :data-testid="`todo-selected-project-branch-${project.id}`"
+                    aria-label="Base branch"
+                    @focus="openProjectBranchPicker('todo-create', project.id)"
+                    @input="updateProjectBranchInput('todo-create', project.id, $event.target.value)"
+                    @keydown.escape.stop.prevent="closeProjectBranchPicker"
                   />
-                </datalist>
+                  <div
+                    v-if="isProjectBranchPickerOpen('todo-create', project.id)"
+                    class="project-branch-picker-menu"
+                    :data-testid="`project-branch-picker-options-todo-create-${project.id}`"
+                    role="listbox"
+                  >
+                    <button
+                      v-for="branch in visibleProjectBranches('todo-create', project.id)"
+                      :key="branch"
+                      type="button"
+                      class="project-branch-picker-option"
+                      :data-testid="`project-branch-picker-option-todo-create-${project.id}`"
+                      role="option"
+                      @mousedown.prevent
+                      @click="selectProjectBranchCandidate('todo-create', project.id, branch)"
+                    >
+                      {{ branch }}
+                    </button>
+                    <div
+                      v-if="projectBranchPickerStatus('todo-create', project.id)"
+                      class="project-branch-picker-status"
+                      :data-testid="`project-branch-picker-status-todo-create-${project.id}`"
+                    >
+                      {{ projectBranchPickerStatus('todo-create', project.id) }}
+                    </div>
+                  </div>
+                </span>
                 <button
                   type="button"
                   class="todo-selected-project-remove"
@@ -2724,27 +2836,46 @@ function clearToastTimer() {
                 :data-testid="`todo-detail-selected-project-tag-${project.id}`"
               >
                 <span class="project-name">{{ project.name }}</span>
-                <input
-                  :value="selectedProjectBaseBranch(todoDetail.projectSelections, project.id)"
-                  type="text"
-                  class="todo-branch-input"
-                  placeholder="base 分支 (留空使用默认)"
-                  :disabled="todoDetail.saving"
-                  :list="projectBranchOptionsId('todo-detail', project.id)"
-                  :data-testid="`todo-detail-selected-project-branch-${project.id}`"
-                  aria-label="Base branch"
-                  @input="setTodoDetailProjectBaseBranch(project.id, $event.target.value)"
-                />
-                <datalist
-                  :id="projectBranchOptionsId('todo-detail', project.id)"
-                  :data-testid="`project-branch-options-todo-detail-${project.id}`"
-                >
-                  <option
-                    v-for="branch in branchesForProject(project.id)"
-                    :key="branch"
-                    :value="branch"
+                <span class="todo-branch-picker">
+                  <input
+                    :value="selectedProjectBaseBranch(todoDetail.projectSelections, project.id)"
+                    type="text"
+                    class="todo-branch-input"
+                    placeholder="base 分支 (留空使用默认)"
+                    :disabled="todoDetail.saving"
+                    :data-testid="`todo-detail-selected-project-branch-${project.id}`"
+                    aria-label="Base branch"
+                    @focus="openProjectBranchPicker('todo-detail', project.id)"
+                    @input="updateProjectBranchInput('todo-detail', project.id, $event.target.value)"
+                    @keydown.escape.stop.prevent="closeProjectBranchPicker"
                   />
-                </datalist>
+                  <div
+                    v-if="isProjectBranchPickerOpen('todo-detail', project.id)"
+                    class="project-branch-picker-menu"
+                    :data-testid="`project-branch-picker-options-todo-detail-${project.id}`"
+                    role="listbox"
+                  >
+                    <button
+                      v-for="branch in visibleProjectBranches('todo-detail', project.id)"
+                      :key="branch"
+                      type="button"
+                      class="project-branch-picker-option"
+                      :data-testid="`project-branch-picker-option-todo-detail-${project.id}`"
+                      role="option"
+                      @mousedown.prevent
+                      @click="selectProjectBranchCandidate('todo-detail', project.id, branch)"
+                    >
+                      {{ branch }}
+                    </button>
+                    <div
+                      v-if="projectBranchPickerStatus('todo-detail', project.id)"
+                      class="project-branch-picker-status"
+                      :data-testid="`project-branch-picker-status-todo-detail-${project.id}`"
+                    >
+                      {{ projectBranchPickerStatus('todo-detail', project.id) }}
+                    </div>
+                  </div>
+                </span>
                 <button
                   type="button"
                   class="todo-selected-project-remove"
@@ -2869,27 +3000,46 @@ function clearToastTimer() {
               :data-testid="`todo-project-picker-tag-${project.id}`"
             >
               <span class="project-name">{{ project.name }}</span>
-              <input
-                :value="selectedProjectBaseBranch(projectPicker.projectSelections, project.id)"
-                type="text"
-                class="todo-branch-input"
-                placeholder="base 分支 (留空使用默认)"
-                :disabled="projectPicker.saving"
-                :list="projectBranchOptionsId('project-picker', project.id)"
-                :data-testid="`todo-project-picker-branch-${project.id}`"
-                aria-label="Base branch"
-                @input="setProjectPickerBaseBranch(project.id, $event.target.value)"
-              />
-              <datalist
-                :id="projectBranchOptionsId('project-picker', project.id)"
-                :data-testid="`project-branch-options-project-picker-${project.id}`"
-              >
-                <option
-                  v-for="branch in branchesForProject(project.id)"
-                  :key="branch"
-                  :value="branch"
+              <span class="todo-branch-picker">
+                <input
+                  :value="selectedProjectBaseBranch(projectPicker.projectSelections, project.id)"
+                  type="text"
+                  class="todo-branch-input"
+                  placeholder="base 分支 (留空使用默认)"
+                  :disabled="projectPicker.saving"
+                  :data-testid="`todo-project-picker-branch-${project.id}`"
+                  aria-label="Base branch"
+                  @focus="openProjectBranchPicker('project-picker', project.id)"
+                  @input="updateProjectBranchInput('project-picker', project.id, $event.target.value)"
+                  @keydown.escape.stop.prevent="closeProjectBranchPicker"
                 />
-              </datalist>
+                <div
+                  v-if="isProjectBranchPickerOpen('project-picker', project.id)"
+                  class="project-branch-picker-menu"
+                  :data-testid="`project-branch-picker-options-project-picker-${project.id}`"
+                  role="listbox"
+                >
+                  <button
+                    v-for="branch in visibleProjectBranches('project-picker', project.id)"
+                    :key="branch"
+                    type="button"
+                    class="project-branch-picker-option"
+                    :data-testid="`project-branch-picker-option-project-picker-${project.id}`"
+                    role="option"
+                    @mousedown.prevent
+                    @click="selectProjectBranchCandidate('project-picker', project.id, branch)"
+                  >
+                    {{ branch }}
+                  </button>
+                  <div
+                    v-if="projectBranchPickerStatus('project-picker', project.id)"
+                    class="project-branch-picker-status"
+                    :data-testid="`project-branch-picker-status-project-picker-${project.id}`"
+                  >
+                    {{ projectBranchPickerStatus('project-picker', project.id) }}
+                  </div>
+                </div>
+              </span>
               <button
                 type="button"
                 class="todo-selected-project-remove"

@@ -1033,12 +1033,73 @@ describe('App project terminal tree', () => {
 
     expect(ListProjectBranches).toHaveBeenCalledWith('project-a')
     const input = wrapper.find('[data-testid="todo-selected-project-branch-project-a"]')
-    expect(input.attributes('list')).toBe('project-branch-options-todo-create-project-a')
+    await input.trigger('focus')
+    await nextTick()
     const options = wrapper
-      .find('[data-testid="project-branch-options-todo-create-project-a"]')
-      .findAll('option')
-      .map((option) => option.attributes('value'))
+      .find('[data-testid="project-branch-picker-options-todo-create-project-a"]')
+      .findAll('[data-testid="project-branch-picker-option-todo-create-project-a"]')
+      .map((option) => option.text())
     expect(options).toEqual(['main', 'origin/main', 'origin/feature/login'])
+  })
+
+  it('limits rendered project branch candidates while creating a TODO', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'frontend-app', path: '/work/frontend-app', available: true }
+        ]
+      })
+    )
+    appApiMock.ListProjectBranches.mockResolvedValue(
+      Array.from({ length: 75 }, (_, index) => `feature/branch-${String(index + 1).padStart(2, '0')}`)
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="new-todo"]').trigger('click')
+    await nextTick()
+    await wrapper.find('[data-testid="todo-project-option-project-a"]').trigger('click')
+    await flushPromises()
+    const input = wrapper.find('[data-testid="todo-selected-project-branch-project-a"]')
+    await input.setValue('feature/')
+    await input.trigger('focus')
+    await nextTick()
+
+    const options = wrapper
+      .find('[data-testid="project-branch-picker-options-todo-create-project-a"]')
+      .findAll('[data-testid="project-branch-picker-option-todo-create-project-a"]')
+    expect(options).toHaveLength(50)
+    expect(wrapper.find('[data-testid="project-branch-picker-status-todo-create-project-a"]').text()).toContain(
+      'Keep typing'
+    )
+  })
+
+  it('reopens project branch candidates without a stale filter', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'frontend-app', path: '/work/frontend-app', available: true }
+        ]
+      })
+    )
+    appApiMock.ListProjectBranches.mockResolvedValue(['main', 'develop', 'release'])
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="new-todo"]').trigger('click')
+    await nextTick()
+    await wrapper.find('[data-testid="todo-project-option-project-a"]').trigger('click')
+    await flushPromises()
+    const input = wrapper.find('[data-testid="todo-selected-project-branch-project-a"]')
+    await input.setValue('rel')
+    await input.trigger('keydown', { key: 'Escape' })
+    await nextTick()
+    await input.trigger('focus')
+    await nextTick()
+
+    const options = wrapper
+      .find('[data-testid="project-branch-picker-options-todo-create-project-a"]')
+      .findAll('[data-testid="project-branch-picker-option-todo-create-project-a"]')
+      .map((option) => option.text())
+    expect(options).toEqual(['main', 'develop', 'release'])
   })
 
   it('removes selected project tags before creating a TODO', async () => {
@@ -1328,12 +1389,48 @@ describe('App project terminal tree', () => {
 
     expect(ListProjectBranches).toHaveBeenCalledWith('project-b')
     const input = wrapper.find('[data-testid="todo-project-picker-branch-project-b"]')
-    expect(input.attributes('list')).toBe('project-branch-options-project-picker-project-b')
+    await input.trigger('focus')
+    await nextTick()
     const options = wrapper
-      .find('[data-testid="project-branch-options-project-picker-project-b"]')
-      .findAll('option')
-      .map((option) => option.attributes('value'))
+      .find('[data-testid="project-branch-picker-options-project-picker-project-b"]')
+      .findAll('[data-testid="project-branch-picker-option-project-picker-project-b"]')
+      .map((option) => option.text())
     expect(options).toEqual(['develop', 'origin/develop', 'origin/release'])
+  })
+
+  it('adds a project to a TODO using a selected branch candidate', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'frontend-app', path: '/work/frontend-app', available: true },
+          { id: 'project-b', name: 'api-service', path: '/work/api-service', available: true }
+        ],
+        todoProjects: [todoProject({ projectId: 'project-a' })],
+        terminals: [],
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      })
+    )
+    appApiMock.ListProjectBranches.mockResolvedValue(['develop', 'origin/develop', 'origin/release'])
+    const wrapper = await mountReadyApp()
+
+    await selectTodoMenuAction(wrapper, 'add-project', 'todo-a')
+    await nextTick()
+    await wrapper.find('[data-testid="todo-project-picker-option-project-b"]').trigger('click')
+    await flushPromises()
+    const input = wrapper.find('[data-testid="todo-project-picker-branch-project-b"]')
+    await input.trigger('focus')
+    await nextTick()
+    await wrapper
+      .findAll('[data-testid="project-branch-picker-option-project-picker-project-b"]')
+      .find((option) => option.text() === 'origin/release')
+      .trigger('click')
+    await wrapper.find('[data-testid="todo-project-picker-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(AddProjectSelectionsToTodo).toHaveBeenCalledWith('todo-a', [
+      { projectId: 'project-b', baseBranch: 'origin/release' }
+    ])
   })
 
   it('preserves workspace sidebar width after adding projects to a TODO', async () => {
@@ -1523,6 +1620,43 @@ describe('App project terminal tree', () => {
         { projectId: 'project-a', baseBranch: 'release' },
         { projectId: 'project-b', baseBranch: 'develop' }
       ]
+    })
+  })
+
+  it('keeps TODO detail branch input editable when branch loading fails', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'frontend-app', path: '/work/frontend-app', available: true }
+        ],
+        todos: [todo({ title: 'Fix login', description: 'Old description', priority: 'medium' })],
+        todoProjects: [todoProject({ projectId: 'project-a', baseBranch: 'main' })],
+        terminals: []
+      })
+    )
+    appApiMock.ListProjectBranches.mockRejectedValue(new Error('git branch list timed out'))
+    const wrapper = await mountReadyApp()
+
+    await selectTodoMenuAction(wrapper, 'edit', 'todo-a')
+    await flushPromises()
+    const input = wrapper.find('[data-testid="todo-detail-selected-project-branch-project-a"]')
+    await input.trigger('focus')
+    await input.setValue('feature/manual-branch')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="project-branch-picker-status-todo-detail-project-a"]').text()).toContain(
+      'Suggestions unavailable'
+    )
+
+    await wrapper.find('[data-testid="todo-detail-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(UpdateTodo).toHaveBeenCalledWith({
+      id: 'todo-a',
+      title: 'Fix login',
+      description: 'Old description',
+      priority: 'medium',
+      projects: [{ projectId: 'project-a', baseBranch: 'feature/manual-branch' }]
     })
   })
 
