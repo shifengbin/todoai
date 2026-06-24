@@ -29,6 +29,7 @@ import {
   InitializeProjectGitRepository,
   ListProjectBranches,
   LoadTerminalSettings,
+  LoadTodoInitializationFiles,
   LoadTodoProjectUIState,
   OpenTodoFolder,
   OpenRecentWorkspace,
@@ -38,6 +39,7 @@ import {
   SaveTerminalLaunchProfiles,
   SaveTerminalShell,
   SaveTerminalTheme,
+  SaveTodoInitializationFiles,
   SaveTodoSidebarWidth,
   SaveTodoProjectUIState,
   SelectTerminal,
@@ -75,6 +77,7 @@ const appApiMock = vi.hoisted(() => ({
   ListProjectBranches: vi.fn(),
   ListProjects: vi.fn(),
   LoadTerminalSettings: vi.fn(),
+  LoadTodoInitializationFiles: vi.fn(),
   LoadTodoProjectUIState: vi.fn(),
   OpenTodoFolder: vi.fn(),
   OpenRecentWorkspace: vi.fn(),
@@ -88,6 +91,7 @@ const appApiMock = vi.hoisted(() => ({
   SaveTerminalLaunchProfiles: vi.fn(),
   SaveTerminalShell: vi.fn(),
   SaveTerminalTheme: vi.fn(),
+  SaveTodoInitializationFiles: vi.fn(),
   SaveTodoSidebarWidth: vi.fn(),
   SaveTodoProjectUIState: vi.fn(),
   SendTerminalInput: vi.fn(),
@@ -160,6 +164,7 @@ describe('App project terminal tree', () => {
     })
     appApiMock.ListProjects.mockResolvedValue(projectState())
     appApiMock.LoadTerminalSettings.mockResolvedValue(settingsState())
+    appApiMock.LoadTodoInitializationFiles.mockResolvedValue([])
     appApiMock.LoadTodoProjectUIState.mockResolvedValue(todoProjectUIStateFile())
     appApiMock.SaveTodoProjectUIState.mockResolvedValue()
     appApiMock.DetectTerminalShell.mockResolvedValue(shellSetting({ path: '/usr/bin/bash', displayName: 'bash' }))
@@ -168,6 +173,7 @@ describe('App project terminal tree', () => {
     )
     appApiMock.SaveTerminalLaunchProfiles.mockResolvedValue(settingsState())
     appApiMock.SaveTerminalTheme.mockResolvedValue(settingsState())
+    appApiMock.SaveTodoInitializationFiles.mockResolvedValue(settingsState())
     appApiMock.SaveTodoSidebarWidth.mockResolvedValue()
     appApiMock.SelectProject.mockResolvedValue(projectState())
     appApiMock.SelectTodoProject.mockResolvedValue(projectState())
@@ -949,6 +955,39 @@ describe('App project terminal tree', () => {
       ]
     })
     expect(wrapper.text()).toContain('Write tests')
+  })
+
+  it('preselects default initialization files and submits selected snapshots when creating a TODO', async () => {
+    appApiMock.LoadTodoInitializationFiles.mockResolvedValue([
+      initializationFile({ name: 'Agent Rules', fileName: 'AGENTS.md', content: 'rules', defaultSelected: true }),
+      initializationFile({ name: 'Prompt', description: '可选提示词', fileName: 'prompt.md', content: 'prompt', defaultSelected: false })
+    ])
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="new-todo"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="todo-name-input"]').setValue('Write tests')
+
+    expect(wrapper.find('[data-testid="todo-initialization-file-0"]').text()).toContain('Agent Rules')
+    expect(wrapper.find('[data-testid="todo-initialization-file-0"]').text()).toContain('AGENTS.md')
+    expect(wrapper.find('[data-testid="todo-initialization-file-1"]').text()).toContain('Prompt')
+    expect(wrapper.find('[data-testid="todo-initialization-file-selected-0"]').element.checked).toBe(true)
+    expect(wrapper.find('[data-testid="todo-initialization-file-selected-1"]').element.checked).toBe(false)
+
+    await wrapper.find('[data-testid="todo-initialization-file-selected-1"]').setValue(true)
+    await wrapper.find('[data-testid="todo-create-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(CreateTodo).toHaveBeenCalledWith({
+      title: 'Write tests',
+      description: '',
+      priority: 'medium',
+      projects: [],
+      initializationFiles: [
+        { name: 'Agent Rules', description: '任务执行约束', fileName: 'AGENTS.md', content: 'rules' },
+        { name: 'Prompt', description: '可选提示词', fileName: 'prompt.md', content: 'prompt' }
+      ]
+    })
   })
 
   it('defaults selected project base branch from the active project git branch when available', async () => {
@@ -4051,6 +4090,52 @@ describe('App project terminal tree', () => {
     ])
   })
 
+  it('adds edits reorders and saves TODO initialization files from settings', async () => {
+    appApiMock.LoadTerminalSettings.mockResolvedValue(
+      settingsState({
+        todoInitializationFiles: [
+          initializationFile({ name: 'Agent Rules', fileName: 'AGENTS.md', content: 'rules', defaultSelected: true }),
+          initializationFile({ name: 'Prompt', description: '可选提示词', fileName: 'prompt.md', content: 'prompt', defaultSelected: false })
+        ]
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await openSettings(wrapper)
+    await wrapper.find('[data-testid="todo-initialization-file-down-0"]').trigger('click')
+    await wrapper.find('[data-testid="todo-initialization-file-remove-1"]').trigger('click')
+    await wrapper.find('[data-testid="todo-initialization-file-add"]').trigger('click')
+    await wrapper.find('[data-testid="todo-initialization-file-name-1"]').setValue('Notes')
+    await wrapper.find('[data-testid="todo-initialization-file-description-1"]').setValue('记录上下文')
+    await wrapper.find('[data-testid="todo-initialization-file-filename-1"]').setValue('notes.md')
+    await wrapper.find('[data-testid="todo-initialization-file-content-1"]').setValue('notes')
+    await wrapper.find('[data-testid="todo-initialization-file-default-1"]').setValue(true)
+    await wrapper.find('[data-testid="terminal-settings-save"]').trigger('click')
+    await flushPromises()
+
+    expect(SaveTodoInitializationFiles).toHaveBeenCalledWith([
+      { name: 'Prompt', description: '可选提示词', fileName: 'prompt.md', content: 'prompt', defaultSelected: false },
+      { name: 'Notes', description: '记录上下文', fileName: 'notes.md', content: 'notes', defaultSelected: true }
+    ])
+  })
+
+  it('shows TODO initialization file save errors without losing edited settings', async () => {
+    appApiMock.SaveTodoInitializationFiles.mockRejectedValue(new Error('initialization file filename is duplicated'))
+    const wrapper = await mountReadyApp()
+
+    await openSettings(wrapper)
+    await wrapper.find('[data-testid="todo-initialization-file-add"]').trigger('click')
+    await wrapper.find('[data-testid="todo-initialization-file-name-0"]').setValue('Agent Rules')
+    await wrapper.find('[data-testid="todo-initialization-file-filename-0"]').setValue('AGENTS.md')
+    await wrapper.find('[data-testid="todo-initialization-file-content-0"]').setValue('rules')
+    await wrapper.find('[data-testid="terminal-settings-save"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="terminal-settings-error"]').text()).toContain('initialization file filename is duplicated')
+    expect(wrapper.find('[data-testid="terminal-settings-dialog"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="todo-initialization-file-name-0"]').element.value).toBe('Agent Rules')
+  })
+
   it('shows launch profile validation errors without closing settings', async () => {
     appApiMock.LoadTerminalSettings.mockResolvedValue(
       settingsState({ launchProfiles: [{ name: 'codex', command: 'codex' }] })
@@ -4301,6 +4386,18 @@ function settingsState(overrides = {}) {
       { name: 'codex', command: defaultCodexLaunchCommand },
       { name: 'claude', command: defaultClaudeLaunchCommand }
     ],
+    todoInitializationFiles: [],
+    ...overrides
+  }
+}
+
+function initializationFile(overrides = {}) {
+  return {
+    name: 'Agent Rules',
+    description: '任务执行约束',
+    fileName: 'AGENTS.md',
+    content: '请先阅读任务说明',
+    defaultSelected: true,
     ...overrides
   }
 }

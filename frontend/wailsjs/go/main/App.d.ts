@@ -68,6 +68,8 @@ export function ListProjects():Promise<main.ProjectState>;
 
 export function LoadTerminalSettings():Promise<main.TerminalSettingsState>;
 
+export function LoadTodoInitializationFiles():Promise<Array<main.TodoInitializationFileTemplate>>;
+
 export function LoadTodoProjectUIState():Promise<main.TodoProjectUIStateFile>;
 
 export function OpenRecentWorkspace(arg1:string):Promise<main.ProjectState>;
@@ -89,6 +91,8 @@ export function SaveTerminalLaunchProfiles(arg1:Array<main.TerminalLaunchProfile
 export function SaveTerminalShell(arg1:string,arg2:string):Promise<main.TerminalSettingsState>;
 
 export function SaveTerminalTheme(arg1:string):Promise<main.TerminalSettingsState>;
+
+export function SaveTodoInitializationFiles(arg1:Array<main.TodoInitializationFileTemplate>):Promise<main.TerminalSettingsState>;
 
 export function SaveTodoProjectUIState(arg1:string,arg2:main.TodoProjectUIState):Promise<void>;
 

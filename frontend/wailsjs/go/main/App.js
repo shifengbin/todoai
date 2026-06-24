@@ -134,6 +134,10 @@ export function LoadTerminalSettings() {
   return window['go']['main']['App']['LoadTerminalSettings']();
 }
 
+export function LoadTodoInitializationFiles() {
+  return window['go']['main']['App']['LoadTodoInitializationFiles']();
+}
+
 export function LoadTodoProjectUIState() {
   return window['go']['main']['App']['LoadTodoProjectUIState']();
 }
@@ -176,6 +180,10 @@ export function SaveTerminalShell(arg1, arg2) {
 
 export function SaveTerminalTheme(arg1) {
   return window['go']['main']['App']['SaveTerminalTheme'](arg1);
+}
+
+export function SaveTodoInitializationFiles(arg1) {
+  return window['go']['main']['App']['SaveTodoInitializationFiles'](arg1);
 }
 
 export function SaveTodoProjectUIState(arg1, arg2) {

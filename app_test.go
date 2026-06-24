@@ -537,6 +537,64 @@ func TestAppCreatesTaskTerminalInTaskWorkspaceWithoutChangingTodoProjectContext(
 	}
 }
 
+func TestAppWritesTodoInitializationFilesWhenTaskWorkspaceIsPrepared(t *testing.T) {
+	workspaceDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
+	)
+	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err := app.CreateTodo(CreateTodoRequest{
+		Title: "修复登录问题",
+		InitializationFiles: []TodoInitializationFileSnapshot{
+			{Name: "Agent Rules", FileName: "AGENTS.md", Content: "请先阅读任务说明"},
+			{Name: "Prompt", FileName: "prompt.md", Content: "模板内容"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	todoID := state.Todos[0].ID
+
+	state, err = app.ChangeTodoStatus(todoID, "in-progress")
+	if err != nil {
+		t.Fatalf("ChangeTodoStatus(in-progress) error = %v", err)
+	}
+	taskDir := filepath.Join(mustAbs(t, workspaceDir), "tasks", state.Todos[0].WorkspaceDirName)
+	agentsPath := filepath.Join(taskDir, "AGENTS.md")
+	agents, err := os.ReadFile(agentsPath)
+	if err != nil {
+		t.Fatalf("read AGENTS.md: %v", err)
+	}
+	if string(agents) != "请先阅读任务说明" {
+		t.Fatalf("AGENTS.md = %q, want snapshot content", string(agents))
+	}
+
+	if err := os.WriteFile(agentsPath, []byte("用户修改内容"), 0o644); err != nil {
+		t.Fatalf("modify AGENTS.md: %v", err)
+	}
+	if err := app.OpenTodoFolder(todoID); err != nil {
+		t.Fatalf("OpenTodoFolder() error = %v", err)
+	}
+	agents, err = os.ReadFile(agentsPath)
+	if err != nil {
+		t.Fatalf("read AGENTS.md after reopen: %v", err)
+	}
+	if string(agents) != "用户修改内容" {
+		t.Fatalf("AGENTS.md after reopen = %q, want existing content preserved", string(agents))
+	}
+	readme, err := os.ReadFile(filepath.Join(taskDir, "README.md"))
+	if err != nil {
+		t.Fatalf("read README.md: %v", err)
+	}
+	if !strings.Contains(string(readme), "# 任务: 修复登录问题") {
+		t.Fatalf("README.md = %q, want generated readme", string(readme))
+	}
+}
+
 func TestAppProjectTerminalUsesPreparedWorktreeDirectory(t *testing.T) {
 	workspaceDir := t.TempDir()
 	projectDir := t.TempDir()
@@ -1667,6 +1725,68 @@ func TestAppSavesTerminalLaunchProfiles(t *testing.T) {
 		t.Fatalf("LoadTerminalSettings() error = %v", err)
 	}
 	assertLaunchProfiles(t, loaded.LaunchProfiles, state.LaunchProfiles)
+}
+
+func TestAppSavesTodoInitializationFilesGlobally(t *testing.T) {
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	files := []TodoInitializationFileTemplate{
+		{Name: "Agent Rules", Description: "任务执行约束", FileName: "AGENTS.md", Content: "请先阅读任务说明", DefaultSelected: true},
+		{Name: "Prompt", Description: "可选提示词", FileName: "prompt.md", Content: "生成实现计划"},
+	}
+
+	state, err := app.SaveTodoInitializationFiles(files)
+	if err != nil {
+		t.Fatalf("SaveTodoInitializationFiles() error = %v", err)
+	}
+	assertTodoInitializationFiles(t, state.TodoInitializationFiles, files)
+
+	loaded, err := app.LoadTodoInitializationFiles()
+	if err != nil {
+		t.Fatalf("LoadTodoInitializationFiles() error = %v", err)
+	}
+	assertTodoInitializationFiles(t, loaded, files)
+}
+
+func TestAppCreateTodoStoresInitializationFileSnapshots(t *testing.T) {
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	initialFiles := []TodoInitializationFileTemplate{
+		{Name: "Agent Rules", Description: "任务执行约束", FileName: "AGENTS.md", Content: "旧内容", DefaultSelected: true},
+	}
+	if _, err := app.SaveTodoInitializationFiles(initialFiles); err != nil {
+		t.Fatalf("SaveTodoInitializationFiles(initial) error = %v", err)
+	}
+
+	state, err := app.CreateTodo(CreateTodoRequest{
+		Title: "修复登录问题",
+		InitializationFiles: []TodoInitializationFileSnapshot{
+			{Name: initialFiles[0].Name, Description: initialFiles[0].Description, FileName: initialFiles[0].FileName, Content: initialFiles[0].Content},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	if _, err := app.SaveTodoInitializationFiles([]TodoInitializationFileTemplate{
+		{Name: "Agent Rules", Description: "任务执行约束", FileName: "AGENTS.md", Content: "新内容", DefaultSelected: true},
+	}); err != nil {
+		t.Fatalf("SaveTodoInitializationFiles(updated) error = %v", err)
+	}
+
+	reloaded, err := app.ListProjects()
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	if len(state.Todos) != 1 || len(reloaded.Todos) != 1 {
+		t.Fatalf("todos = initial %#v reloaded %#v, want one todo", state.Todos, reloaded.Todos)
+	}
+	assertTodoInitializationFileSnapshots(t, reloaded.Todos[0].InitializationFiles, []TodoInitializationFileSnapshot{
+		{Name: "Agent Rules", Description: "任务执行约束", FileName: "AGENTS.md", Content: "旧内容"},
+	})
 }
 
 func TestAppSavesTerminalThemeWithoutChangingProjectShellBehavior(t *testing.T) {

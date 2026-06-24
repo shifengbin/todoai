@@ -81,3 +81,42 @@ func TestWriteTodoWorkspaceReadmeWritesGeneratedFile(t *testing.T) {
 		t.Fatalf("README content = %q, want description and branch metadata", content)
 	}
 }
+
+func TestWriteTodoWorkspaceInitializationFilesCreatesMissingAndPreservesExisting(t *testing.T) {
+	workspaceDir := t.TempDir()
+	todo := Todo{
+		ID:               "todo-a",
+		Title:            "修复登录问题",
+		WorkspaceDirName: "abc123",
+		InitializationFiles: []TodoInitializationFileSnapshot{
+			{Name: "Agent Rules", FileName: "AGENTS.md", Content: "请先阅读任务说明"},
+			{Name: "Prompt", FileName: "prompt.md", Content: "模板内容"},
+		},
+	}
+	taskDir := filepath.Join(workspaceDir, "tasks", "abc123")
+	if err := os.MkdirAll(taskDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(taskDir) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(taskDir, "prompt.md"), []byte("用户修改内容"), 0o644); err != nil {
+		t.Fatalf("write existing prompt: %v", err)
+	}
+
+	if err := writeTodoWorkspaceInitializationFiles(todo, workspaceDir); err != nil {
+		t.Fatalf("writeTodoWorkspaceInitializationFiles() error = %v", err)
+	}
+
+	agents, err := os.ReadFile(filepath.Join(taskDir, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("read AGENTS.md: %v", err)
+	}
+	if string(agents) != "请先阅读任务说明" {
+		t.Fatalf("AGENTS.md = %q, want snapshot content", string(agents))
+	}
+	prompt, err := os.ReadFile(filepath.Join(taskDir, "prompt.md"))
+	if err != nil {
+		t.Fatalf("read prompt.md: %v", err)
+	}
+	if string(prompt) != "用户修改内容" {
+		t.Fatalf("prompt.md = %q, want existing content preserved", string(prompt))
+	}
+}

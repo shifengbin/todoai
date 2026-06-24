@@ -120,3 +120,31 @@ func writeTodoWorkspaceReadme(todo Todo, todoProjects []TodoProject, workspacePa
 	}
 	return os.Rename(tempPath, readmePath)
 }
+
+func writeTodoWorkspaceInitializationFiles(todo Todo, workspacePath string) error {
+	dirPath, ok := todoWorkspacePath(todo, workspacePath)
+	if !ok {
+		return nil
+	}
+	if len(todo.InitializationFiles) == 0 {
+		return nil
+	}
+	if err := os.MkdirAll(dirPath, 0o755); err != nil {
+		return err
+	}
+	for _, file := range todo.InitializationFiles {
+		if !validTodoInitializationFileName(file.FileName) {
+			return fmt.Errorf("initialization file filename must be a root-level file name")
+		}
+		filePath := filepath.Join(dirPath, file.FileName)
+		if _, err := os.Stat(filePath); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		if err := os.WriteFile(filePath, []byte(file.Content), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}

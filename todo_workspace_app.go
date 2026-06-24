@@ -91,6 +91,7 @@ func (a *App) ensureTaskWorkspaceDir(todo Todo, workspacePath string) (string, e
 	if err := os.MkdirAll(taskDir, 0o755); err != nil {
 		return "", err
 	}
+	_ = writeTodoWorkspaceInitializationFiles(todo, workspacePath)
 	return taskDir, nil
 }
 
@@ -148,6 +149,12 @@ func (a *App) prepareTodoWorkspace(todoID string) {
 	if err != nil {
 		return
 	}
+	for _, candidate := range persistedState.Todos {
+		if candidate.ID == todoID {
+			_ = writeTodoWorkspaceInitializationFiles(candidate, workspacePath)
+			break
+		}
+	}
 	a.writeTodoReadmeFromState(persistedState, todoID, workspacePath)
 }
 
@@ -181,5 +188,6 @@ func (a *App) writeTodoReadmeFromState(state ProjectState, todoID string, worksp
 	if !found || todo.WorkspaceDirName == "" {
 		return
 	}
+	_ = writeTodoWorkspaceInitializationFiles(todo, workspacePath)
 	_ = writeTodoWorkspaceReadme(todo, todoProjectsForTodoID(state.TodoProjects, todoID), workspacePath)
 }

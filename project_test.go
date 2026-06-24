@@ -442,6 +442,10 @@ func TestProjectManagerCreatesTodoWithDetailsAndOptionalProjects(t *testing.T) {
 		Description: "  登录后跳回首页  ",
 		Priority:    TodoPriorityHigh,
 		ProjectIDs:  []string{project.ID, otherProject.ID},
+		InitializationFiles: []TodoInitializationFileSnapshot{
+			{Name: "Agent Rules", Description: "任务执行约束", FileName: "AGENTS.md", Content: "请先阅读任务说明"},
+			{Name: "Prompt", Description: "可选提示词", FileName: "prompt.md", Content: "生成实现计划"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("CreateTodo() error = %v", err)
@@ -460,6 +464,10 @@ func TestProjectManagerCreatesTodoWithDetailsAndOptionalProjects(t *testing.T) {
 	if todo.Priority != TodoPriorityHigh {
 		t.Fatalf("Priority = %q, want %q", todo.Priority, TodoPriorityHigh)
 	}
+	assertTodoInitializationFileSnapshots(t, todo.InitializationFiles, []TodoInitializationFileSnapshot{
+		{Name: "Agent Rules", Description: "任务执行约束", FileName: "AGENTS.md", Content: "请先阅读任务说明"},
+		{Name: "Prompt", Description: "可选提示词", FileName: "prompt.md", Content: "生成实现计划"},
+	})
 	if state.ActiveTodoID != "" || state.ActiveTodoProjectID != "" || state.ActiveProjectID != otherProject.ID {
 		t.Fatalf("active context = %q/%q/%q, want unchanged project context %q", state.ActiveTodoID, state.ActiveTodoProjectID, state.ActiveProjectID, otherProject.ID)
 	}
@@ -1773,6 +1781,18 @@ func findTodo(todos []Todo, todoID string) *Todo {
 		}
 	}
 	return nil
+}
+
+func assertTodoInitializationFileSnapshots(t *testing.T, got []TodoInitializationFileSnapshot, want []TodoInitializationFileSnapshot) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("len(InitializationFiles) = %d, want %d: %#v", len(got), len(want), got)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("InitializationFiles[%d] = %#v, want %#v", index, got[index], want[index])
+		}
+	}
 }
 
 func runGitForTest(t *testing.T, path string, args ...string) {
