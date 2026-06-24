@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,27 +52,29 @@ type Project struct {
 }
 
 type Todo struct {
-	ID               string                `json:"id"`
-	Title            string                `json:"title"`
-	Description      string                `json:"description,omitempty"`
-	Priority         string                `json:"priority"`
-	Status           string                `json:"status"`
-	ArchivedReason   string                `json:"archivedReason,omitempty"`
-	WorkspaceDirName string                `json:"workspaceDirName,omitempty"`
-	ProjectSnapshots []TodoProjectSnapshot `json:"projectSnapshots,omitempty"`
-	CreatedAt        string                `json:"createdAt"`
-	StartedAt        string                `json:"startedAt,omitempty"`
-	CompletedAt      string                `json:"completedAt,omitempty"`
-	ArchivedAt       string                `json:"archivedAt,omitempty"`
+	ID                  string                           `json:"id"`
+	Title               string                           `json:"title"`
+	Description         string                           `json:"description,omitempty"`
+	Priority            string                           `json:"priority"`
+	Status              string                           `json:"status"`
+	ArchivedReason      string                           `json:"archivedReason,omitempty"`
+	WorkspaceDirName    string                           `json:"workspaceDirName,omitempty"`
+	InitializationFiles []TodoInitializationFileSnapshot `json:"initializationFiles,omitempty"`
+	ProjectSnapshots    []TodoProjectSnapshot            `json:"projectSnapshots,omitempty"`
+	CreatedAt           string                           `json:"createdAt"`
+	StartedAt           string                           `json:"startedAt,omitempty"`
+	CompletedAt         string                           `json:"completedAt,omitempty"`
+	ArchivedAt          string                           `json:"archivedAt,omitempty"`
 }
 
 type CreateTodoRequest struct {
-	Title           string                 `json:"title"`
-	Description     string                 `json:"description,omitempty"`
-	Priority        string                 `json:"priority,omitempty"`
-	ProjectIDs      []string               `json:"projectIds,omitempty"`
-	ProjectBranches map[string]string      `json:"projectBranches,omitempty"`
-	Projects        []TodoProjectSelection `json:"projects,omitempty"`
+	Title               string                           `json:"title"`
+	Description         string                           `json:"description,omitempty"`
+	Priority            string                           `json:"priority,omitempty"`
+	ProjectIDs          []string                         `json:"projectIds,omitempty"`
+	ProjectBranches     map[string]string                `json:"projectBranches,omitempty"`
+	Projects            []TodoProjectSelection           `json:"projects,omitempty"`
+	InitializationFiles []TodoInitializationFileSnapshot `json:"initializationFiles,omitempty"`
 }
 
 type UpdateTodoRequest struct {
@@ -87,6 +90,13 @@ type UpdateTodoRequest struct {
 type TodoProjectSelection struct {
 	ProjectID  string `json:"projectId"`
 	BaseBranch string `json:"baseBranch,omitempty"`
+}
+
+type TodoInitializationFileSnapshot struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	FileName    string `json:"fileName"`
+	Content     string `json:"content"`
 }
 
 type TodoProject struct {
@@ -364,6 +374,10 @@ func (manager *ProjectManager) CreateTodo(request CreateTodoRequest) (ProjectSta
 	}
 	normalizedPriority := normalizeTodoPriority(request.Priority)
 	normalizedDescription := strings.TrimSpace(request.Description)
+	initializationFiles, err := normalizeTodoInitializationFileSnapshots(request.InitializationFiles)
+	if err != nil {
+		return ProjectState{}, err
+	}
 	projectSelections := normalizeProjectSelections(request.Projects, request.ProjectIDs, request.ProjectBranches)
 	projectIDs := projectIDsFromSelections(projectSelections)
 
@@ -379,12 +393,13 @@ func (manager *ProjectManager) CreateTodo(request CreateTodoRequest) (ProjectSta
 	}
 	now := manager.now().UTC().Format(time.RFC3339)
 	todo := Todo{
-		ID:          manager.newID(),
-		Title:       normalizedTitle,
-		Description: normalizedDescription,
-		Priority:    normalizedPriority,
-		Status:      TodoStatusNotStarted,
-		CreatedAt:   now,
+		ID:                  manager.newID(),
+		Title:               normalizedTitle,
+		Description:         normalizedDescription,
+		Priority:            normalizedPriority,
+		Status:              TodoStatusNotStarted,
+		InitializationFiles: initializationFiles,
+		CreatedAt:           now,
 	}
 	state.Todos = append(state.Todos, todo)
 	for _, selection := range projectSelections {
@@ -1232,6 +1247,37 @@ func normalizeTodoPriority(priority string) string {
 	default:
 		return TodoPriorityMedium
 	}
+}
+
+func normalizeTodoInitializationFileSnapshots(files []TodoInitializationFileSnapshot) ([]TodoInitializationFileSnapshot, error) {
+	normalized := make([]TodoInitializationFileSnapshot, 0, len(files))
+	seen := map[string]struct{}{}
+	for _, file := range files {
+		name := strings.TrimSpace(file.Name)
+		description := strings.TrimSpace(file.Description)
+		fileName := strings.TrimSpace(file.FileName)
+		if name == "" {
+			return nil, errors.New("initialization file name is required")
+		}
+		if fileName == "" {
+			return nil, errors.New("initialization file filename is required")
+		}
+		if !validTodoInitializationFileName(fileName) {
+			return nil, errors.New("initialization file filename must be a root-level file name")
+		}
+		key := strings.ToLower(fileName)
+		if _, ok := seen[key]; ok {
+			return nil, fmt.Errorf("initialization file filename is duplicated: %s", fileName)
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, TodoInitializationFileSnapshot{
+			Name:        name,
+			Description: description,
+			FileName:    fileName,
+			Content:     file.Content,
+		})
+	}
+	return normalized, nil
 }
 
 func normalizeTodoWorkflowStatus(status string) string {

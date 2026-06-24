@@ -243,6 +243,110 @@ func TestSettingsManagerSavesThemeAndPreservesOtherSettings(t *testing.T) {
 	assertLaunchProfiles(t, reloaded.LaunchProfiles, wantProfiles)
 }
 
+func TestSettingsManagerSavesTodoInitializationFilesAndPreservesOtherSettings(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "settings.json")
+	shellPath := executableFile(t, "zsh")
+	manager := NewSettingsManager(configPath)
+	if _, err := manager.SaveShellPath(shellPath, ShellSourceManual); err != nil {
+		t.Fatalf("SaveShellPath() error = %v", err)
+	}
+	wantProfiles := []TerminalLaunchProfileSetting{{Name: "Codex", Command: "codex", Enabled: true}}
+	if _, err := manager.SaveLaunchProfiles(wantProfiles); err != nil {
+		t.Fatalf("SaveLaunchProfiles() error = %v", err)
+	}
+
+	files := []TodoInitializationFileTemplate{
+		{Name: "Agent Rules", Description: "任务执行约束", FileName: "AGENTS.md", Content: "请先阅读任务说明", DefaultSelected: true},
+		{Name: "Prompt", Description: "可选提示词", FileName: "prompt.md", Content: "生成实现计划"},
+	}
+	state, err := manager.SaveTodoInitializationFiles(files)
+	if err != nil {
+		t.Fatalf("SaveTodoInitializationFiles() error = %v", err)
+	}
+
+	if state.Selected.Path != shellPath {
+		t.Fatalf("Selected.Path = %q, want %q", state.Selected.Path, shellPath)
+	}
+	assertLaunchProfiles(t, state.LaunchProfiles, wantProfiles)
+	assertTodoInitializationFiles(t, state.TodoInitializationFiles, files)
+
+	reloaded, err := manager.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	assertTodoInitializationFiles(t, reloaded.TodoInitializationFiles, files)
+	assertLaunchProfiles(t, reloaded.LaunchProfiles, wantProfiles)
+}
+
+func TestSettingsManagerDefaultsTodoInitializationFilesToEmpty(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "settings.json")
+	writeSettingsFile(t, configPath, executableFile(t, "zsh"), "manual")
+	manager := NewSettingsManager(configPath)
+
+	state, err := manager.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(state.TodoInitializationFiles) != 0 {
+		t.Fatalf("TodoInitializationFiles = %#v, want empty", state.TodoInitializationFiles)
+	}
+}
+
+func TestSettingsManagerRejectsInvalidTodoInitializationFiles(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "settings.json")
+	manager := NewSettingsManager(configPath)
+	if _, err := manager.SaveShellPath(executableFile(t, "zsh"), ShellSourceManual); err != nil {
+		t.Fatalf("SaveShellPath() error = %v", err)
+	}
+
+	tests := []struct {
+		name  string
+		files []TodoInitializationFileTemplate
+		want  string
+	}{
+		{
+			name:  "missing name",
+			files: []TodoInitializationFileTemplate{{FileName: "AGENTS.md", Content: "rules"}},
+			want:  "initialization file name is required",
+		},
+		{
+			name:  "missing file name",
+			files: []TodoInitializationFileTemplate{{Name: "Rules", Content: "rules"}},
+			want:  "initialization file filename is required",
+		},
+		{
+			name: "duplicate file name",
+			files: []TodoInitializationFileTemplate{
+				{Name: "Rules", FileName: "AGENTS.md"},
+				{Name: "Other", FileName: "agents.md"},
+			},
+			want: "initialization file filename is duplicated",
+		},
+		{
+			name:  "absolute file name",
+			files: []TodoInitializationFileTemplate{{Name: "Rules", FileName: "/tmp/AGENTS.md"}},
+			want:  "initialization file filename must be a root-level file name",
+		},
+		{
+			name:  "path traversal",
+			files: []TodoInitializationFileTemplate{{Name: "Rules", FileName: "../AGENTS.md"}},
+			want:  "initialization file filename must be a root-level file name",
+		},
+		{
+			name:  "directory separator",
+			files: []TodoInitializationFileTemplate{{Name: "Rules", FileName: "docs/AGENTS.md"}},
+			want:  "initialization file filename must be a root-level file name",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := manager.SaveTodoInitializationFiles(tc.files); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("SaveTodoInitializationFiles() error = %v, want containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestSettingsManagerRejectsInvalidThemeWithoutChangingSavedTheme(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "settings.json")
 	manager := NewSettingsManager(configPath)
@@ -687,6 +791,18 @@ func assertLaunchProfiles(t *testing.T, got []TerminalLaunchProfileSetting, want
 	for index := range want {
 		if got[index] != want[index] {
 			t.Fatalf("LaunchProfiles[%d] = %#v, want %#v", index, got[index], want[index])
+		}
+	}
+}
+
+func assertTodoInitializationFiles(t *testing.T, got []TodoInitializationFileTemplate, want []TodoInitializationFileTemplate) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("len(TodoInitializationFiles) = %d, want %d: %#v", len(got), len(want), got)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("TodoInitializationFiles[%d] = %#v, want %#v", index, got[index], want[index])
 		}
 	}
 }

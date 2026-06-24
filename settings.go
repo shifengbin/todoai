@@ -37,6 +37,14 @@ type TerminalLaunchProfileSetting struct {
 	Enabled bool   `json:"enabled"`
 }
 
+type TodoInitializationFileTemplate struct {
+	Name            string `json:"name"`
+	Description     string `json:"description,omitempty"`
+	FileName        string `json:"fileName"`
+	Content         string `json:"content"`
+	DefaultSelected bool   `json:"defaultSelected,omitempty"`
+}
+
 func (profile *TerminalLaunchProfileSetting) UnmarshalJSON(data []byte) error {
 	type terminalLaunchProfileSettingJSON struct {
 		Name    string `json:"name"`
@@ -57,12 +65,13 @@ func (profile *TerminalLaunchProfileSetting) UnmarshalJSON(data []byte) error {
 }
 
 type TerminalSettingsState struct {
-	Version        int                            `json:"version"`
-	Selected       TerminalShellSetting           `json:"selected"`
-	Detected       *TerminalShellSetting          `json:"detected,omitempty"`
-	Fallback       *TerminalShellSetting          `json:"fallback,omitempty"`
-	LaunchProfiles []TerminalLaunchProfileSetting `json:"launchProfiles"`
-	Theme          string                         `json:"theme"`
+	Version                 int                              `json:"version"`
+	Selected                TerminalShellSetting             `json:"selected"`
+	Detected                *TerminalShellSetting            `json:"detected,omitempty"`
+	Fallback                *TerminalShellSetting            `json:"fallback,omitempty"`
+	LaunchProfiles          []TerminalLaunchProfileSetting   `json:"launchProfiles"`
+	Theme                   string                           `json:"theme"`
+	TodoInitializationFiles []TodoInitializationFileTemplate `json:"todoInitializationFiles"`
 }
 
 type SettingsManagerOption func(*SettingsManager)
@@ -75,10 +84,11 @@ type SettingsManager struct {
 }
 
 type persistedSettings struct {
-	Version        int                            `json:"version"`
-	Selected       TerminalShellSetting           `json:"selected"`
-	LaunchProfiles []TerminalLaunchProfileSetting `json:"launchProfiles"`
-	Theme          string                         `json:"theme"`
+	Version                 int                              `json:"version"`
+	Selected                TerminalShellSetting             `json:"selected"`
+	LaunchProfiles          []TerminalLaunchProfileSetting   `json:"launchProfiles"`
+	Theme                   string                           `json:"theme"`
+	TodoInitializationFiles []TodoInitializationFileTemplate `json:"todoInitializationFiles,omitempty"`
 }
 
 func NewSettingsManager(configPath string, opts ...SettingsManagerOption) *SettingsManager {
@@ -151,6 +161,23 @@ func (manager *SettingsManager) SaveTheme(theme string) (TerminalSettingsState, 
 	return state, manager.saveLocked(state)
 }
 
+func (manager *SettingsManager) SaveTodoInitializationFiles(files []TodoInitializationFileTemplate) (TerminalSettingsState, error) {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	normalizedFiles, err := normalizeTodoInitializationFileTemplates(files)
+	if err != nil {
+		state, _ := manager.loadExistingLocked()
+		return state, err
+	}
+	state, err := manager.loadLocked()
+	if err != nil {
+		return TerminalSettingsState{}, err
+	}
+	state.TodoInitializationFiles = normalizedFiles
+	return state, manager.saveLocked(state)
+}
+
 func (manager *SettingsManager) SaveShellPath(path string, source string) (TerminalSettingsState, error) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
@@ -198,11 +225,12 @@ func (manager *SettingsManager) loadLocked() (TerminalSettingsState, error) {
 			return TerminalSettingsState{}, detectErr
 		}
 		state = TerminalSettingsState{
-			Version:        settingsConfigVersion,
-			Selected:       detected,
-			Detected:       &detected,
-			LaunchProfiles: defaultTerminalLaunchProfiles(),
-			Theme:          AppearanceThemeLight,
+			Version:                 settingsConfigVersion,
+			Selected:                detected,
+			Detected:                &detected,
+			LaunchProfiles:          defaultTerminalLaunchProfiles(),
+			Theme:                   AppearanceThemeLight,
+			TodoInitializationFiles: []TodoInitializationFileTemplate{},
 		}
 		if saveErr := manager.saveLocked(state); saveErr != nil {
 			return TerminalSettingsState{}, saveErr
@@ -256,10 +284,11 @@ func (manager *SettingsManager) loadExistingLocked() (TerminalSettingsState, err
 		launchProfiles = defaultTerminalLaunchProfiles()
 	}
 	return TerminalSettingsState{
-		Version:        persisted.Version,
-		Selected:       persisted.Selected,
-		LaunchProfiles: launchProfiles,
-		Theme:          normalizeAppearanceTheme(persisted.Theme),
+		Version:                 persisted.Version,
+		Selected:                persisted.Selected,
+		LaunchProfiles:          launchProfiles,
+		Theme:                   normalizeAppearanceTheme(persisted.Theme),
+		TodoInitializationFiles: append([]TodoInitializationFileTemplate{}, persisted.TodoInitializationFiles...),
 	}, nil
 }
 
@@ -272,10 +301,11 @@ func (manager *SettingsManager) saveLocked(state TerminalSettingsState) error {
 		launchProfiles = defaultTerminalLaunchProfiles()
 	}
 	data, err := json.MarshalIndent(persistedSettings{
-		Version:        settingsConfigVersion,
-		Selected:       normalizeShellSetting(state.Selected),
-		LaunchProfiles: append([]TerminalLaunchProfileSetting{}, launchProfiles...),
-		Theme:          normalizeAppearanceTheme(state.Theme),
+		Version:                 settingsConfigVersion,
+		Selected:                normalizeShellSetting(state.Selected),
+		LaunchProfiles:          append([]TerminalLaunchProfileSetting{}, launchProfiles...),
+		Theme:                   normalizeAppearanceTheme(state.Theme),
+		TodoInitializationFiles: append([]TodoInitializationFileTemplate{}, state.TodoInitializationFiles...),
 	}, "", "  ")
 	if err != nil {
 		return err
@@ -324,6 +354,48 @@ func normalizeTerminalLaunchProfiles(profiles []TerminalLaunchProfileSetting) ([
 		normalized = append(normalized, TerminalLaunchProfileSetting{Name: name, Command: command, Enabled: profile.Enabled})
 	}
 	return normalized, nil
+}
+
+func normalizeTodoInitializationFileTemplates(files []TodoInitializationFileTemplate) ([]TodoInitializationFileTemplate, error) {
+	normalized := make([]TodoInitializationFileTemplate, 0, len(files))
+	seen := map[string]struct{}{}
+	for _, file := range files {
+		name := strings.TrimSpace(file.Name)
+		description := strings.TrimSpace(file.Description)
+		fileName := strings.TrimSpace(file.FileName)
+		if name == "" {
+			return nil, errors.New("initialization file name is required")
+		}
+		if fileName == "" {
+			return nil, errors.New("initialization file filename is required")
+		}
+		if !validTodoInitializationFileName(fileName) {
+			return nil, errors.New("initialization file filename must be a root-level file name")
+		}
+		key := strings.ToLower(fileName)
+		if _, ok := seen[key]; ok {
+			return nil, fmt.Errorf("initialization file filename is duplicated: %s", fileName)
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, TodoInitializationFileTemplate{
+			Name:            name,
+			Description:     description,
+			FileName:        fileName,
+			Content:         file.Content,
+			DefaultSelected: file.DefaultSelected,
+		})
+	}
+	return normalized, nil
+}
+
+func validTodoInitializationFileName(fileName string) bool {
+	if fileName == "" || filepath.IsAbs(fileName) {
+		return false
+	}
+	if fileName != filepath.Base(fileName) || strings.Contains(fileName, "/") || strings.Contains(fileName, "\\") {
+		return false
+	}
+	return fileName != "." && fileName != ".."
 }
 
 func defaultTerminalLaunchProfiles() []TerminalLaunchProfileSetting {

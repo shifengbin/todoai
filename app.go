@@ -1045,6 +1045,18 @@ func (a *App) SaveTerminalTheme(theme string) (TerminalSettingsState, error) {
 	return a.settings.SaveTheme(theme)
 }
 
+func (a *App) LoadTodoInitializationFiles() ([]TodoInitializationFileTemplate, error) {
+	state, err := a.settings.Load()
+	if err != nil {
+		return nil, err
+	}
+	return state.TodoInitializationFiles, nil
+}
+
+func (a *App) SaveTodoInitializationFiles(files []TodoInitializationFileTemplate) (TerminalSettingsState, error) {
+	return a.settings.SaveTodoInitializationFiles(files)
+}
+
 func (a *App) DetectTerminalShell() (TerminalShellSetting, error) {
 	return a.settings.DetectShell()
 }
