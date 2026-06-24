@@ -14,6 +14,10 @@ export function AddProjectsToTodo(arg1, arg2) {
   return window['go']['main']['App']['AddProjectsToTodo'](arg1, arg2);
 }
 
+export function AddProjectsToTodoWithBranches(arg1, arg2, arg3) {
+  return window['go']['main']['App']['AddProjectsToTodoWithBranches'](arg1, arg2, arg3);
+}
+
 export function ChangeTodoStatus(arg1, arg2) {
   return window['go']['main']['App']['ChangeTodoStatus'](arg1, arg2);
 }
@@ -32,6 +36,10 @@ export function CompleteTodo(arg1) {
 
 export function CreateProjectFromDialog() {
   return window['go']['main']['App']['CreateProjectFromDialog']();
+}
+
+export function CreateTaskTerminal(arg1, arg2, arg3) {
+  return window['go']['main']['App']['CreateTaskTerminal'](arg1, arg2, arg3);
 }
 
 export function CreateTerminal(arg1, arg2, arg3) {
@@ -98,6 +106,10 @@ export function InitializeProjectGitRepository(arg1) {
   return window['go']['main']['App']['InitializeProjectGitRepository'](arg1);
 }
 
+export function ListProjectBranches(arg1) {
+  return window['go']['main']['App']['ListProjectBranches'](arg1);
+}
+
 export function ListProjects() {
   return window['go']['main']['App']['ListProjects']();
 }
@@ -112,6 +124,14 @@ export function LoadTodoProjectUIState() {
 
 export function OpenRecentWorkspace(arg1) {
   return window['go']['main']['App']['OpenRecentWorkspace'](arg1);
+}
+
+export function OpenTodoFolder(arg1) {
+  return window['go']['main']['App']['OpenTodoFolder'](arg1);
+}
+
+export function OpenTodoProjectFolder(arg1) {
+  return window['go']['main']['App']['OpenTodoProjectFolder'](arg1);
 }
 
 export function OpenWorkspaceFromDialog() {

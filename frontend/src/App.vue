@@ -12,11 +12,12 @@ import {
 import { TerminalSessionManager } from './terminalManager'
 import { createXtermSession } from './xtermFactory'
 import {
-  AddProjectsToTodo,
+  AddProjectsToTodoWithBranches,
   ChangeTodoStatus,
   CompleteTodo,
   CreateProjectFromDialog,
   CreateTodo,
+  CreateTaskTerminal,
   CreateTodoTerminal,
   CreateWorkspaceTerminal,
   DeleteCompletedTodos,
@@ -28,9 +29,11 @@ import {
   GetProjectGitStatus,
   ImportProjectsFromParentDirectoryDialog,
   InitializeProjectGitRepository,
+  ListProjectBranches,
   ListProjects,
   LoadTerminalSettings,
   LoadTodoProjectUIState,
+  OpenTodoFolder,
   OpenRecentWorkspace,
   RemoveTodoProject,
   ResizeTerminal,
@@ -111,6 +114,7 @@ const gitStatus = ref(null)
 const gitStatusLoading = ref(false)
 const gitStatusError = ref('')
 const gitInitLoading = ref(false)
+const projectBranchOptions = reactive({})
 const settingsPanel = reactive({
   visible: false,
   loading: false,
@@ -128,6 +132,7 @@ const todoForm = reactive({
   description: '',
   priority: 'medium',
   projectIds: [],
+  projectBranches: {},
   projectSearch: '',
   saving: false
 })
@@ -138,6 +143,7 @@ const todoDetail = reactive({
   description: '',
   priority: 'medium',
   projectIds: [],
+  projectBranches: {},
   projectSnapshots: [],
   projectSearch: '',
   readOnly: false,
@@ -148,6 +154,7 @@ const projectPicker = reactive({
   todoId: '',
   query: '',
   projectIds: [],
+  projectBranches: {},
   saving: false
 })
 const recentWorkspacePicker = reactive({
@@ -199,6 +206,11 @@ const activeTerminal = computed(() => {
   return terminals.value.find((terminal) => terminal.id === activeTerminalId.value) || null
 })
 
+const activeTerminalIsTaskTerminal = computed(() => {
+  const terminal = activeTerminal.value
+  return Boolean(terminal && !terminal.workspaceTerminal && terminal.todoId && !terminal.todoProjectId)
+})
+
 const activeTerminalState = computed(() => {
   return activeTerminal.value ? terminalState(activeTerminal.value.id) : ''
 })
@@ -214,6 +226,16 @@ const terminalStateLayer = computed(() => {
 
   const terminal = activeTerminal.value
   if (terminal?.workspaceTerminal) {
+    if (activeTerminalState.value === 'unsupported') {
+      return { text: 'Embedded terminal is not supported on Windows', warning: true }
+    }
+    if (activeTerminalState.value === 'exited') {
+      return { text: 'Shell exited', warning: true }
+    }
+    return null
+  }
+
+  if (activeTerminalIsTaskTerminal.value) {
     if (activeTerminalState.value === 'unsupported') {
       return { text: 'Embedded terminal is not supported on Windows', warning: true }
     }
@@ -640,6 +662,7 @@ function createTodo() {
   todoForm.description = ''
   todoForm.priority = 'medium'
   todoForm.projectIds = []
+  todoForm.projectBranches = {}
   todoForm.projectSearch = ''
   todoForm.saving = false
   errorMessage.value = ''
@@ -647,6 +670,7 @@ function createTodo() {
 
 function closeTodoForm() {
   todoForm.visible = false
+  todoForm.projectBranches = {}
   todoForm.saving = false
 }
 
@@ -664,7 +688,8 @@ async function submitTodoForm() {
         title,
         description: todoForm.description.trim(),
         priority: normalizedTodoPriority(todoForm.priority),
-        projectIds: [...todoForm.projectIds]
+        projectIds: [...todoForm.projectIds],
+        projectBranches: normalizedProjectBranches(todoForm.projectBranches, todoForm.projectIds)
       })
     )
     closeTodoForm()
@@ -682,14 +707,21 @@ function editTodo(todoId) {
     return
   }
 
+  const linkedTodoProjects = todoProjects.value.filter((todoProject) => todoProject.todoId === todo.id)
+  const branchSeed = {}
+  for (const todoProject of linkedTodoProjects) {
+    if (todoProject.baseBranch) {
+      branchSeed[todoProject.projectId] = todoProject.baseBranch
+    }
+  }
+
   todoDetail.visible = true
   todoDetail.todoId = todo.id
   todoDetail.title = todo.title || ''
   todoDetail.description = todo.description || ''
   todoDetail.priority = normalizedTodoPriority(todo.priority)
-  todoDetail.projectIds = todoProjects.value
-    .filter((todoProject) => todoProject.todoId === todo.id)
-    .map((todoProject) => todoProject.projectId)
+  todoDetail.projectIds = linkedTodoProjects.map((todoProject) => todoProject.projectId)
+  todoDetail.projectBranches = branchSeed
   todoDetail.projectSnapshots = Array.isArray(todo.projectSnapshots) ? todo.projectSnapshots : []
   todoDetail.projectSearch = ''
   todoDetail.readOnly = todo.status === 'completed'
@@ -704,17 +736,21 @@ function closeTodoDetail() {
   todoDetail.description = ''
   todoDetail.priority = 'medium'
   todoDetail.projectIds = []
+  todoDetail.projectBranches = {}
   todoDetail.projectSnapshots = []
   todoDetail.projectSearch = ''
   todoDetail.readOnly = false
   todoDetail.saving = false
 }
 
-function toggleTodoDetailProject(project) {
+async function toggleTodoDetailProject(project) {
   if (todoDetail.readOnly || !project?.id) {
     return
   }
   todoDetail.projectIds = toggleProjectId(todoDetail.projectIds, project.id)
+  if (todoDetail.projectIds.includes(project.id)) {
+    await ensureProjectBranchesLoaded(project.id)
+  }
 }
 
 function removeTodoDetailProject(projectId) {
@@ -749,7 +785,8 @@ async function submitTodoDetail() {
         title,
         description: todoDetail.description.trim(),
         priority: normalizedTodoPriority(todoDetail.priority),
-        projectIds: [...todoDetail.projectIds]
+        projectIds: [...todoDetail.projectIds],
+        projectBranches: normalizedProjectBranches(todoDetail.projectBranches, todoDetail.projectIds)
       })
     )
     closeTodoDetail()
@@ -765,6 +802,7 @@ async function addProjectToTodo(todoId) {
   projectPicker.todoId = todoId
   projectPicker.query = ''
   projectPicker.projectIds = []
+  projectPicker.projectBranches = {}
   projectPicker.saving = false
   projectPicker.visible = true
   errorMessage.value = ''
@@ -775,14 +813,18 @@ function closeProjectPicker() {
   projectPicker.todoId = ''
   projectPicker.query = ''
   projectPicker.projectIds = []
+  projectPicker.projectBranches = {}
   projectPicker.saving = false
 }
 
-function toggleProjectForTodo(project) {
+async function toggleProjectForTodo(project) {
   if (!project?.id) {
     return
   }
   projectPicker.projectIds = toggleProjectId(projectPicker.projectIds, project.id)
+  if (projectPicker.projectIds.includes(project.id)) {
+    await ensureProjectBranchesLoaded(project.id)
+  }
 }
 
 function removeProjectPickerProject(projectId) {
@@ -795,7 +837,13 @@ async function submitProjectPicker() {
   }
   projectPicker.saving = true
   try {
-    applyState(await AddProjectsToTodo(projectPicker.todoId, [...projectPicker.projectIds]))
+    applyState(
+      await AddProjectsToTodoWithBranches(
+        projectPicker.todoId,
+        [...projectPicker.projectIds],
+        normalizedProjectBranches(projectPicker.projectBranches, projectPicker.projectIds)
+      )
+    )
     closeProjectPicker()
     await activateActiveTerminal()
   } catch (error) {
@@ -805,11 +853,14 @@ async function submitProjectPicker() {
   }
 }
 
-function toggleTodoFormProject(project) {
+async function toggleTodoFormProject(project) {
   if (!project?.id) {
     return
   }
   todoForm.projectIds = toggleProjectId(todoForm.projectIds, project.id)
+  if (todoForm.projectIds.includes(project.id)) {
+    await ensureProjectBranchesLoaded(project.id)
+  }
 }
 
 function removeTodoFormProject(projectId) {
@@ -877,20 +928,37 @@ async function createTerminal(todoProjectId, launchProfile = null) {
     const state = await CreateTodoTerminal(todoProjectId, size.cols || 80, size.rows || 24)
     applyState(state)
     await activateActiveTerminal()
-    if (launchProfile?.command && state?.activeTerminalId) {
-      const terminal = terminals.value.find((candidate) => candidate.id === state.activeTerminalId)
-      if (terminal) {
-        applyTerminalAgentEvent(terminal, {
-          type: 'launch-profile-label',
-          command: launchProfile.command,
-          at: Date.now()
-        })
-      }
-      await SendTerminalInput(state.activeTerminalId, `${launchProfile.command}\r`)
-    }
+    await runLaunchProfileCommand(state, launchProfile)
   } catch (error) {
     showError(error)
   }
+}
+
+async function createTaskTerminal(todoId, launchProfile = null) {
+  try {
+    const size = terminalManager.size() || { cols: 80, rows: 24 }
+    const state = await CreateTaskTerminal(todoId, size.cols || 80, size.rows || 24)
+    applyState(state)
+    await activateActiveTerminal()
+    await runLaunchProfileCommand(state, launchProfile)
+  } catch (error) {
+    showError(error)
+  }
+}
+
+async function runLaunchProfileCommand(state, launchProfile) {
+  if (!launchProfile?.command || !state?.activeTerminalId) {
+    return
+  }
+  const terminal = terminals.value.find((candidate) => candidate.id === state.activeTerminalId)
+  if (terminal) {
+    applyTerminalAgentEvent(terminal, {
+      type: 'launch-profile-label',
+      command: launchProfile.command,
+      at: Date.now()
+    })
+  }
+  await SendTerminalInput(state.activeTerminalId, `${launchProfile.command}\r`)
 }
 
 async function createWorkspaceTerminal() {
@@ -920,6 +988,14 @@ async function deleteTodo(todoId) {
   try {
     applyState(await DeleteTodo(todoId))
     await activateActiveTerminal()
+  } catch (error) {
+    showError(error)
+  }
+}
+
+async function openTodoFolder(todoId) {
+  try {
+    await OpenTodoFolder(todoId)
   } catch (error) {
     showError(error)
   }
@@ -1390,6 +1466,44 @@ function normalizedTodoPriority(priority) {
   return todoPriorities.some((option) => option.value === priority) ? priority : 'medium'
 }
 
+function normalizedProjectBranches(branches, projectIds) {
+  if (!branches || typeof branches !== 'object') {
+    return {}
+  }
+  const allowed = new Set(projectIds || [])
+  const result = {}
+  for (const projectId of Object.keys(branches)) {
+    if (!allowed.has(projectId)) {
+      continue
+    }
+    const value = (branches[projectId] || '').trim()
+    if (value) {
+      result[projectId] = value
+    }
+  }
+  return result
+}
+
+async function ensureProjectBranchesLoaded(projectId) {
+  if (!projectId || projectBranchOptions[projectId]) {
+    return
+  }
+  projectBranchOptions[projectId] = []
+  try {
+    projectBranchOptions[projectId] = await ListProjectBranches(projectId)
+  } catch {
+    projectBranchOptions[projectId] = []
+  }
+}
+
+function projectBranchOptionsId(scope, projectId) {
+  return `project-branch-options-${scope}-${projectId}`
+}
+
+function branchesForProject(projectId) {
+  return projectBranchOptions[projectId] || []
+}
+
 function terminalWithAttention(terminal) {
   return {
     ...terminal,
@@ -1403,6 +1517,10 @@ function terminalCanRestart(terminal) {
   }
   if (terminal.workspaceTerminal) {
     return hasWorkspace.value
+  }
+  if (terminal.todoId && !terminal.todoProjectId) {
+    const todo = todos.value.find((candidate) => candidate.id === terminal.todoId)
+    return todo?.status === 'in-progress'
   }
   return Boolean(activeTodoProjectProject.value?.available)
 }
@@ -1809,11 +1927,13 @@ function showError(error) {
       @copy-todo-description="copyTodoDescription"
       @delete-todo="deleteTodo"
       @delete-completed-todos="deleteCompletedTodos"
+      @create-task-terminal="createTaskTerminal"
       @create-terminal="createTerminal"
       @select-terminal="selectTerminal"
       @delete-project="deleteProject"
       @delete-projects="deleteProjects"
       @delete-terminal="deleteTerminal"
+      @open-todo-folder="openTodoFolder"
       @todo-view-change="handleTodoViewChange"
     />
 
@@ -2100,6 +2220,24 @@ function showError(error) {
                 :data-testid="`todo-selected-project-tag-${project.id}`"
               >
                 <span class="project-name">{{ project.name }}</span>
+                <input
+                  v-model="todoForm.projectBranches[project.id]"
+                  type="text"
+                  class="todo-selected-project-branch"
+                  placeholder="base 分支 (留空使用默认)"
+                  :list="projectBranchOptionsId('todo-create', project.id)"
+                  :data-testid="`todo-selected-project-branch-${project.id}`"
+                />
+                <datalist
+                  :id="projectBranchOptionsId('todo-create', project.id)"
+                  :data-testid="`project-branch-options-todo-create-${project.id}`"
+                >
+                  <option
+                    v-for="branch in branchesForProject(project.id)"
+                    :key="branch"
+                    :value="branch"
+                  />
+                </datalist>
                 <button
                   type="button"
                   class="todo-selected-project-remove"
@@ -2290,6 +2428,25 @@ function showError(error) {
                 :data-testid="`todo-detail-selected-project-tag-${project.id}`"
               >
                 <span class="project-name">{{ project.name }}</span>
+                <input
+                  v-model="todoDetail.projectBranches[project.id]"
+                  type="text"
+                  class="todo-selected-project-branch"
+                  placeholder="base 分支 (留空使用默认)"
+                  :disabled="todoDetail.saving"
+                  :list="projectBranchOptionsId('todo-detail', project.id)"
+                  :data-testid="`todo-detail-selected-project-branch-${project.id}`"
+                />
+                <datalist
+                  :id="projectBranchOptionsId('todo-detail', project.id)"
+                  :data-testid="`project-branch-options-todo-detail-${project.id}`"
+                >
+                  <option
+                    v-for="branch in branchesForProject(project.id)"
+                    :key="branch"
+                    :value="branch"
+                  />
+                </datalist>
                 <button
                   type="button"
                   class="todo-selected-project-remove"
@@ -2413,6 +2570,25 @@ function showError(error) {
               :data-testid="`todo-project-picker-tag-${project.id}`"
             >
               <span class="project-name">{{ project.name }}</span>
+              <input
+                v-model="projectPicker.projectBranches[project.id]"
+                type="text"
+                class="todo-selected-project-branch"
+                placeholder="base 分支 (留空使用默认)"
+                :disabled="projectPicker.saving"
+                :list="projectBranchOptionsId('project-picker', project.id)"
+                :data-testid="`todo-project-picker-branch-${project.id}`"
+              />
+              <datalist
+                :id="projectBranchOptionsId('project-picker', project.id)"
+                :data-testid="`project-branch-options-project-picker-${project.id}`"
+              >
+                <option
+                  v-for="branch in branchesForProject(project.id)"
+                  :key="branch"
+                  :value="branch"
+                />
+              </datalist>
               <button
                 type="button"
                 class="todo-selected-project-remove"

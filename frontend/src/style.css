@@ -83,6 +83,7 @@ button {
     --tree-guide-active: #91b4d4;
     --terminal-active-bg: #e9f3fb;
     --terminal-active-text: #1c4f7a;
+    --task-terminal-hover-bg: #e6edf5;
     --status-bg: #eef2f5;
     --status-border: #d3d9e1;
     --status-text: #3a4652;
@@ -656,6 +657,7 @@ button {
 }
 
 .todo-actions {
+    position: relative;
     display: inline-flex;
     align-items: center;
     flex-wrap: nowrap;
@@ -1116,6 +1118,16 @@ button {
     color: var(--accent);
 }
 
+.add-terminal-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+}
+
+.add-terminal-button:disabled:hover {
+    background: transparent;
+    color: var(--muted-icon);
+}
+
 .terminal-launch-menu {
     position: absolute;
     z-index: 20;
@@ -1264,6 +1276,22 @@ button {
     font-weight: 700;
 }
 
+.project-status-error {
+    overflow: hidden;
+    max-width: 100%;
+    color: var(--delete-text);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.task-terminal-group {
+    display: grid;
+    min-width: 0;
+    gap: 1px;
+    margin: 2px 0 4px 12px;
+    padding-left: 22px;
+}
+
 .terminal-list {
     position: relative;
     display: grid;
@@ -1310,6 +1338,18 @@ button {
     color: var(--text-secondary);
     text-align: left;
     cursor: pointer;
+}
+
+.task-terminal-row {
+    min-height: 30px;
+}
+
+.task-terminal-row:hover {
+    background: var(--task-terminal-hover-bg);
+}
+
+.task-terminal-row.active {
+    background: var(--terminal-active-bg);
 }
 
 .terminal-row::before {
@@ -2079,6 +2119,23 @@ button {
     background: var(--hover-bg);
     color: var(--text-strong);
     outline: none;
+}
+
+.todo-selected-project-branch {
+    min-width: 0;
+    width: 140px;
+    padding: 2px 6px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--text-strong);
+    font-size: 11px;
+    line-height: 1.2;
+}
+
+.todo-selected-project-branch:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
 }
 
 .todo-project-options {
