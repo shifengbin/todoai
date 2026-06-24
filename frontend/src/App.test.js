@@ -1042,6 +1042,46 @@ describe('App project terminal tree', () => {
     expect(options).toEqual(['main', 'origin/main', 'origin/feature/login'])
   })
 
+  it('filters project branch candidates as the user types', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'frontend-app', path: '/work/frontend-app', available: true }
+        ]
+      })
+    )
+    appApiMock.ListProjectBranches.mockResolvedValue(['main', 'develop', 'release'])
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="new-todo"]').trigger('click')
+    await nextTick()
+    await wrapper.find('[data-testid="todo-project-option-project-a"]').trigger('click')
+    await flushPromises()
+
+    const input = wrapper.find('[data-testid="todo-selected-project-branch-project-a"]')
+    await input.trigger('focus')
+    await nextTick()
+    await input.setValue('rel')
+    await nextTick()
+
+    const options = wrapper
+      .find('[data-testid="project-branch-picker-options-todo-create-project-a"]')
+      .findAll('[data-testid="project-branch-picker-option-todo-create-project-a"]')
+      .map((option) => option.text())
+    expect(options).toEqual(['release'])
+  })
+
+  it('uses opaque branch picker backgrounds', () => {
+    const styles = readFileSync('src/style.css', 'utf8')
+    const inputRule = styles.match(/\.todo-branch-input\s*{([^}]*)}/s)?.[1] || ''
+    const menuRule = styles.match(/\.project-branch-picker-menu\s*{([^}]*)}/s)?.[1] || ''
+
+    expect(inputRule).toContain('background: var(--surface-bg);')
+    expect(menuRule).toContain('background: var(--surface-bg);')
+    expect(inputRule).not.toContain('var(--panel)')
+    expect(menuRule).not.toContain('var(--panel)')
+  })
+
   it('limits rendered project branch candidates while creating a TODO', async () => {
     appApiMock.ListProjects.mockResolvedValue(
       projectState({
