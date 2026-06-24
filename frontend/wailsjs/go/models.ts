@@ -1,14 +1,14 @@
 export namespace main {
-
+	
 	export class CompletedTodoProjectMergeStatus {
 	    id: string;
 	    status: string;
 	    reason?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CompletedTodoProjectMergeStatus(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -21,11 +21,11 @@ export namespace main {
 	    path?: string;
 	    worktreeBranch?: string;
 	    baseBranch?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CompletedTodoProjectMergeStatusRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -37,11 +37,11 @@ export namespace main {
 	export class TodoProjectSelection {
 	    projectId: string;
 	    baseBranch?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TodoProjectSelection(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectId = source["projectId"];
@@ -55,11 +55,11 @@ export namespace main {
 	    projectIds?: string[];
 	    projectBranches?: Record<string, string>;
 	    projects?: TodoProjectSelection[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CreateTodoRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.title = source["title"];
@@ -69,7 +69,7 @@ export namespace main {
 	        this.projectBranches = source["projectBranches"];
 	        this.projects = this.convertValues(source["projects"], TodoProjectSelection);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -100,11 +100,11 @@ export namespace main {
 	    behind: number;
 	    pathUnavailable?: boolean;
 	    gitUnavailable?: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new GitStatus(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectId = source["projectId"];
@@ -127,11 +127,11 @@ export namespace main {
 	    available: boolean;
 	    createdAt: string;
 	    lastSelectedAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Project(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -148,11 +148,11 @@ export namespace main {
 	    skippedCount: number;
 	    added?: Project[];
 	    skippedPaths?: string[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ProjectImportSummary(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.parentPath = source["parentPath"];
@@ -161,7 +161,7 @@ export namespace main {
 	        this.added = this.convertValues(source["added"], Project);
 	        this.skippedPaths = source["skippedPaths"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -192,11 +192,11 @@ export namespace main {
 	    createdAt: string;
 	    lastSelectedAt: string;
 	    output?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ProjectTerminal(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -227,11 +227,11 @@ export namespace main {
 	    available: boolean;
 	    createdAt: string;
 	    lastSelectedAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TodoProject(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -256,11 +256,11 @@ export namespace main {
 	    path: string;
 	    baseBranch?: string;
 	    worktreeBranch?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TodoProjectSnapshot(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectId = source["projectId"];
@@ -283,11 +283,11 @@ export namespace main {
 	    startedAt?: string;
 	    completedAt?: string;
 	    archivedAt?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Todo(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -303,7 +303,7 @@ export namespace main {
 	        this.completedAt = source["completedAt"];
 	        this.archivedAt = source["archivedAt"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -328,11 +328,11 @@ export namespace main {
 	    dataPath: string;
 	    available: boolean;
 	    lastOpenedAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Workspace(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -355,11 +355,11 @@ export namespace main {
 	    terminals?: ProjectTerminal[];
 	    activeTerminalId?: string;
 	    importSummary?: ProjectImportSummary;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ProjectState(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.version = source["version"];
@@ -375,7 +375,7 @@ export namespace main {
 	        this.activeTerminalId = source["activeTerminalId"];
 	        this.importSummary = this.convertValues(source["importSummary"], ProjectImportSummary);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -398,18 +398,18 @@ export namespace main {
 	    state?: ProjectState;
 	    requiresGitInitialization?: boolean;
 	    path?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ProjectImportResult(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.state = this.convertValues(source["state"], ProjectState);
 	        this.requiresGitInitialization = source["requiresGitInitialization"];
 	        this.path = source["path"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -428,9 +428,9 @@ export namespace main {
 		    return a;
 		}
 	}
-
-
-
+	
+	
+	
 	export class ShellStatus {
 	    projectId: string;
 	    todoId?: string;
@@ -438,11 +438,11 @@ export namespace main {
 	    workspaceTerminal?: boolean;
 	    terminalId: string;
 	    state: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ShellStatus(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectId = source["projectId"];
@@ -457,11 +457,11 @@ export namespace main {
 	    name: string;
 	    command: string;
 	    enabled: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TerminalLaunchProfileSetting(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -474,11 +474,11 @@ export namespace main {
 	    displayName: string;
 	    source: string;
 	    available: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TerminalShellSetting(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.path = source["path"];
@@ -494,11 +494,11 @@ export namespace main {
 	    fallback?: TerminalShellSetting;
 	    launchProfiles: TerminalLaunchProfileSetting[];
 	    theme: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TerminalSettingsState(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.version = source["version"];
@@ -508,7 +508,7 @@ export namespace main {
 	        this.launchProfiles = this.convertValues(source["launchProfiles"], TerminalLaunchProfileSetting);
 	        this.theme = source["theme"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -527,18 +527,18 @@ export namespace main {
 		    return a;
 		}
 	}
-
-
-
-
-
+	
+	
+	
+	
+	
 	export class TodoProjectUIState {
 	    todoView: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TodoProjectUIState(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.todoView = source["todoView"];
@@ -548,18 +548,18 @@ export namespace main {
 	    version: number;
 	    sidebarWidth?: number;
 	    todoProjects: Record<string, TodoProjectUIState>;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TodoProjectUIStateFile(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.version = source["version"];
 	        this.sidebarWidth = source["sidebarWidth"];
 	        this.todoProjects = this.convertValues(source["todoProjects"], TodoProjectUIState, true);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -586,11 +586,11 @@ export namespace main {
 	    projectIds?: string[];
 	    projectBranches?: Record<string, string>;
 	    projects?: TodoProjectSelection[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new UpdateTodoRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -601,7 +601,7 @@ export namespace main {
 	        this.projectBranches = source["projectBranches"];
 	        this.projects = this.convertValues(source["projects"], TodoProjectSelection);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -620,23 +620,23 @@ export namespace main {
 		    return a;
 		}
 	}
-
+	
 	export class WorkspaceState {
 	    version: number;
 	    currentWorkspace?: Workspace;
 	    recentWorkspaces: Workspace[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new WorkspaceState(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.version = source["version"];
 	        this.currentWorkspace = this.convertValues(source["currentWorkspace"], Workspace);
 	        this.recentWorkspaces = this.convertValues(source["recentWorkspaces"], Workspace);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -657,3 +657,4 @@ export namespace main {
 	}
 
 }
+
