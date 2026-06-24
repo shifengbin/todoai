@@ -114,6 +114,42 @@ func TestGitStatusForPathReturnsCommandFailure(t *testing.T) {
 	}
 }
 
+func TestParseGitBranchListIncludesLocalAndRemoteBranches(t *testing.T) {
+	branches := parseGitBranchList(`
+main
+feature/login
+origin/HEAD
+origin/main
+origin/feature/login
+remotes/origin/release
+origin/main
+`)
+
+	want := []string{"feature/login", "main", "origin/feature/login", "origin/main", "origin/release"}
+	if strings.Join(branches, ",") != strings.Join(want, ",") {
+		t.Fatalf("branches = %#v, want %#v", branches, want)
+	}
+}
+
+func TestGitBranchesForPathReturnsLocalAndRemoteBranches(t *testing.T) {
+	gotPath := ""
+	branches, err := gitBranchesForPath("/work/repo", gitAvailable, func(ctx context.Context, path string) ([]byte, error) {
+		gotPath = path
+		return []byte("main\norigin/main\norigin/feature/login\n"), nil
+	})
+
+	if err != nil {
+		t.Fatalf("gitBranchesForPath() error = %v", err)
+	}
+	if gotPath != "/work/repo" {
+		t.Fatalf("git branches path = %q, want /work/repo", gotPath)
+	}
+	want := []string{"main", "origin/feature/login", "origin/main"}
+	if strings.Join(branches, ",") != strings.Join(want, ",") {
+		t.Fatalf("branches = %#v, want %#v", branches, want)
+	}
+}
+
 func TestPathHasGitRepositoryMetadataDetectsGitDirectory(t *testing.T) {
 	repoDir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(repoDir, ".git"), 0o755); err != nil {

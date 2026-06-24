@@ -5,6 +5,7 @@ export namespace main {
 	    description?: string;
 	    priority?: string;
 	    projectIds?: string[];
+	    projectBranches?: Record<string, string>;
 
 	    static createFrom(source: any = {}) {
 	        return new CreateTodoRequest(source);
@@ -16,6 +17,7 @@ export namespace main {
 	        this.description = source["description"];
 	        this.priority = source["priority"];
 	        this.projectIds = source["projectIds"];
+	        this.projectBranches = source["projectBranches"];
 	    }
 	}
 	export class GitStatus {
@@ -149,6 +151,11 @@ export namespace main {
 	    sourceProjectId?: string;
 	    name?: string;
 	    path?: string;
+	    baseBranch?: string;
+	    worktreeBranch?: string;
+	    worktreePath?: string;
+	    worktreeStatus?: string;
+	    worktreeError?: string;
 	    available: boolean;
 	    createdAt: string;
 	    lastSelectedAt: string;
@@ -165,6 +172,11 @@ export namespace main {
 	        this.sourceProjectId = source["sourceProjectId"];
 	        this.name = source["name"];
 	        this.path = source["path"];
+	        this.baseBranch = source["baseBranch"];
+	        this.worktreeBranch = source["worktreeBranch"];
+	        this.worktreePath = source["worktreePath"];
+	        this.worktreeStatus = source["worktreeStatus"];
+	        this.worktreeError = source["worktreeError"];
 	        this.available = source["available"];
 	        this.createdAt = source["createdAt"];
 	        this.lastSelectedAt = source["lastSelectedAt"];
@@ -193,6 +205,7 @@ export namespace main {
 	    priority: string;
 	    status: string;
 	    archivedReason?: string;
+	    workspaceDirName?: string;
 	    projectSnapshots?: TodoProjectSnapshot[];
 	    createdAt: string;
 	    startedAt?: string;
@@ -211,6 +224,7 @@ export namespace main {
 	        this.priority = source["priority"];
 	        this.status = source["status"];
 	        this.archivedReason = source["archivedReason"];
+	        this.workspaceDirName = source["workspaceDirName"];
 	        this.projectSnapshots = this.convertValues(source["projectSnapshots"], TodoProjectSnapshot);
 	        this.createdAt = source["createdAt"];
 	        this.startedAt = source["startedAt"];
@@ -497,6 +511,7 @@ export namespace main {
 	    description?: string;
 	    priority?: string;
 	    projectIds?: string[];
+	    projectBranches?: Record<string, string>;
 
 	    static createFrom(source: any = {}) {
 	        return new UpdateTodoRequest(source);
@@ -509,6 +524,7 @@ export namespace main {
 	        this.description = source["description"];
 	        this.priority = source["priority"];
 	        this.projectIds = source["projectIds"];
+	        this.projectBranches = source["projectBranches"];
 	    }
 	}
 
@@ -548,4 +564,3 @@ export namespace main {
 	}
 
 }
-

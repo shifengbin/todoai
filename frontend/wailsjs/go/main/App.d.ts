@@ -8,6 +8,8 @@ export function AddProjectToTodo(arg1:string,arg2:string):Promise<main.ProjectSt
 
 export function AddProjectsToTodo(arg1:string,arg2:Array<string>):Promise<main.ProjectState>;
 
+export function AddProjectsToTodoWithBranches(arg1:string,arg2:Array<string>,arg3:Record<string, string>):Promise<main.ProjectState>;
+
 export function ChangeTodoStatus(arg1:string,arg2:string):Promise<main.ProjectState>;
 
 export function ClearRecentWorkspaces():Promise<main.WorkspaceState>;
@@ -17,6 +19,8 @@ export function CloseWorkspace():Promise<main.ProjectState>;
 export function CompleteTodo(arg1:string):Promise<main.ProjectState>;
 
 export function CreateProjectFromDialog():Promise<main.ProjectImportResult>;
+
+export function CreateTaskTerminal(arg1:string,arg2:number,arg3:number):Promise<main.ProjectState>;
 
 export function CreateTerminal(arg1:string,arg2:number,arg3:number):Promise<main.ProjectState>;
 
@@ -54,6 +58,8 @@ export function InitializeGitRepositoryAndImportProject(arg1:string):Promise<mai
 
 export function InitializeProjectGitRepository(arg1:string):Promise<void>;
 
+export function ListProjectBranches(arg1:string):Promise<Array<string>>;
+
 export function ListProjects():Promise<main.ProjectState>;
 
 export function LoadTerminalSettings():Promise<main.TerminalSettingsState>;
@@ -61,6 +67,10 @@ export function LoadTerminalSettings():Promise<main.TerminalSettingsState>;
 export function LoadTodoProjectUIState():Promise<main.TodoProjectUIStateFile>;
 
 export function OpenRecentWorkspace(arg1:string):Promise<main.ProjectState>;
+
+export function OpenTodoFolder(arg1:string):Promise<void>;
+
+export function OpenTodoProjectFolder(arg1:string):Promise<void>;
 
 export function OpenWorkspaceFromDialog():Promise<main.ProjectState>;
 

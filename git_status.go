@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ var errGitUnavailable = errors.New("Git is not installed")
 type gitCommandChecker func() error
 type gitStatusRunner func(context.Context, string) ([]byte, error)
 type gitInitRunner func(context.Context, string) ([]byte, error)
+type gitBranchesRunner func(context.Context, string) ([]byte, error)
 
 type GitStatus struct {
 	ProjectID       string `json:"projectId,omitempty"`
@@ -74,6 +76,10 @@ func queryGitStatus(path string) (GitStatus, error) {
 	return gitStatusForPath(path, gitCommandAvailable, runGitStatusCommand)
 }
 
+func queryGitBranches(path string) ([]string, error) {
+	return gitBranchesForPath(path, gitCommandAvailable, runGitBranchesCommand)
+}
+
 func initializeGitRepository(path string) error {
 	return initializeGitRepositoryForPath(path, gitCommandAvailable, runGitInitCommand)
 }
@@ -105,6 +111,24 @@ func gitStatusForPath(path string, checker gitCommandChecker, runner gitStatusRu
 		return GitStatus{}, fmt.Errorf("git status failed: %w", err)
 	}
 	return parseGitStatusPorcelainV2(string(output)), nil
+}
+
+func gitBranchesForPath(path string, checker gitCommandChecker, runner gitBranchesRunner) ([]string, error) {
+	if err := checker(); err != nil {
+		return nil, gitUnavailableError(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), gitStatusTimeout)
+	defer cancel()
+
+	output, err := runner(ctx, path)
+	if err != nil {
+		if errorsIsDeadlineExceeded(ctx.Err()) {
+			return nil, fmt.Errorf("git branch list timed out")
+		}
+		return nil, fmt.Errorf("git branch list failed: %w", err)
+	}
+	return parseGitBranchList(string(output)), nil
 }
 
 func initializeGitRepositoryForPath(path string, checker gitCommandChecker, runner gitInitRunner) error {
@@ -145,6 +169,11 @@ func runGitStatusCommand(ctx context.Context, path string) ([]byte, error) {
 	return cmd.CombinedOutput()
 }
 
+func runGitBranchesCommand(ctx context.Context, path string) ([]byte, error) {
+	cmd := newBackgroundCommand(ctx, "git", "-C", path, "branch", "--format=%(refname:short)", "--list", "--remotes")
+	return cmd.CombinedOutput()
+}
+
 func runGitInitCommand(ctx context.Context, path string) ([]byte, error) {
 	cmd := newBackgroundCommand(ctx, "git", "-C", path, "init")
 	return cmd.CombinedOutput()
@@ -167,6 +196,21 @@ func parseBranchAheadBehind(status *GitStatus, value string) {
 			status.Behind, _ = strconv.Atoi(strings.TrimPrefix(field, "-"))
 		}
 	}
+}
+
+func parseGitBranchList(output string) []string {
+	seen := map[string]bool{}
+	branches := []string{}
+	for _, line := range strings.Split(output, "\n") {
+		branch := strings.TrimSpace(strings.TrimPrefix(line, "remotes/"))
+		if branch == "" || strings.HasSuffix(branch, "/HEAD") || seen[branch] {
+			continue
+		}
+		seen[branch] = true
+		branches = append(branches, branch)
+	}
+	sort.Strings(branches)
+	return branches
 }
 
 func countTrackedGitStatus(status *GitStatus, xy string) {

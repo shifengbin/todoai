@@ -276,6 +276,43 @@ func (manager *ShellSessionManager) CreateTodoProjectTerminal(todoProject TodoPr
 	return manager.createTerminal(todoProject, project, size)
 }
 
+// CreateTaskTerminal starts a task-level terminal rooted at a TODO's task
+// workspace directory. The directory must exist; callers resolve it (and gate it
+// on an in-progress TODO) before invoking this.
+func (manager *ShellSessionManager) CreateTaskTerminal(todoID, workingDir string, size TerminalSize) (ProjectTerminal, error) {
+	if strings.TrimSpace(todoID) == "" {
+		return ProjectTerminal{}, errors.New("todo id is required")
+	}
+	absoluteWorkingDir, err := normalizeProjectPath(workingDir)
+	if err != nil {
+		return ProjectTerminal{}, err
+	}
+	if !directoryAvailable(absoluteWorkingDir) {
+		return ProjectTerminal{}, errors.New("task workspace directory is unavailable")
+	}
+
+	manager.mu.Lock()
+	terminal := manager.registerTaskTerminalLocked(todoID, absoluteWorkingDir)
+	manager.mu.Unlock()
+
+	manager.saveTerminalToHistory(terminal)
+
+	if _, err := manager.StartTerminal(terminal.ID, size); err != nil {
+		manager.mu.Lock()
+		delete(manager.terminals, terminal.ID)
+		delete(manager.activeByContext, terminalContextKeyForTerminal(terminal))
+		manager.mu.Unlock()
+		manager.deleteTerminalFromHistory(terminal.ID)
+		return ProjectTerminal{}, err
+	}
+	result, err := manager.Terminal(terminal.ID)
+	if err != nil {
+		return ProjectTerminal{}, err
+	}
+	manager.saveTerminalToHistory(result)
+	return result, nil
+}
+
 func (manager *ShellSessionManager) CreateWorkspaceTerminal(workspacePath string, size TerminalSize) (ProjectTerminal, error) {
 	absoluteWorkspacePath, err := normalizeProjectPath(workspacePath)
 	if err != nil {
@@ -651,7 +688,8 @@ func (manager *ShellSessionManager) RestoreTerminals(state ProjectState) []Termi
 	orphaned := false
 
 	for _, record := range history.Records {
-		if !record.WorkspaceTerminal && !restorableTerminalProject(record, projectIDs, todoProjectProjectIDs, todoProjectSourceProjectIDs) {
+		isTaskTerminal := !record.WorkspaceTerminal && record.TodoProjectID == "" && record.ProjectID == "" && record.TodoID != ""
+		if !record.WorkspaceTerminal && !isTaskTerminal && !restorableTerminalProject(record, projectIDs, todoProjectProjectIDs, todoProjectSourceProjectIDs) {
 			orphaned = true
 			continue
 		}
@@ -714,6 +752,12 @@ func restorableTerminalProject(record TerminalHistoryRecord, projectIDs map[stri
 func (manager *ShellSessionManager) registerTerminalLocked(todoProject TodoProject, project Project) ProjectTerminal {
 	shellPath := manager.shellPathResolver()
 	now := manager.now().UTC().Format(time.RFC3339)
+	// A TODO project terminal runs inside its prepared worktree so its file
+	// changes are isolated from the original project checkout.
+	workingDir := project.Path
+	if todoProject.WorktreePath != "" {
+		workingDir = todoProject.WorktreePath
+	}
 	terminal := &ProjectTerminal{
 		ID:             manager.newID(),
 		ProjectID:      project.ID,
@@ -723,7 +767,28 @@ func (manager *ShellSessionManager) registerTerminalLocked(todoProject TodoProje
 		State:          ShellStateExited,
 		CreatedAt:      now,
 		LastSelectedAt: now,
-		projectPath:    project.Path,
+		projectPath:    workingDir,
+		shellPath:      shellPath,
+	}
+	manager.terminals[terminal.ID] = terminal
+	manager.activeByContext[terminalContextKeyForTerminal(*terminal)] = terminal.ID
+	return *terminal
+}
+
+// registerTaskTerminalLocked registers a task-level terminal whose working
+// directory is a TODO's task workspace directory. Task terminals carry only a
+// TodoID (no project or TODO project reference) and share the TODO's context.
+func (manager *ShellSessionManager) registerTaskTerminalLocked(todoID, workingDir string) ProjectTerminal {
+	shellPath := manager.shellPathResolver()
+	now := manager.now().UTC().Format(time.RFC3339)
+	terminal := &ProjectTerminal{
+		ID:             manager.newID(),
+		TodoID:         todoID,
+		ShellName:      shellNameFromPath(shellPath),
+		State:          ShellStateExited,
+		CreatedAt:      now,
+		LastSelectedAt: now,
+		projectPath:    workingDir,
 		shellPath:      shellPath,
 	}
 	manager.terminals[terminal.ID] = terminal
@@ -770,6 +835,15 @@ func (manager *ShellSessionManager) mostRecentlySelectedTerminalIDLocked(context
 	return selectedTerminalID
 }
 
+// taskTerminalContextIDPrefix namespaces the active-terminal context key for
+// task-level terminals so they never collide with project or workspace
+// terminals.
+const taskTerminalContextIDPrefix = "__task__"
+
+func taskTerminalContextID(todoID string) string {
+	return taskTerminalContextIDPrefix + todoID
+}
+
 func terminalContextKey(todoProjectID string, projectID string) string {
 	if todoProjectID != "" {
 		return todoProjectID
@@ -781,7 +855,13 @@ func terminalContextKeyForTerminal(terminal ProjectTerminal) string {
 	if terminal.WorkspaceTerminal {
 		return WorkspaceTerminalContextID
 	}
-	return terminalContextKey(terminal.TodoProjectID, terminal.ProjectID)
+	if terminal.TodoProjectID != "" {
+		return terminal.TodoProjectID
+	}
+	if terminal.TodoID != "" {
+		return taskTerminalContextID(terminal.TodoID)
+	}
+	return terminal.ProjectID
 }
 
 func validateTodoProjectTerminalContext(todoProject TodoProject, project Project) error {

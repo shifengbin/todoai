@@ -88,9 +88,11 @@ const emit = defineEmits([
   'copy-todo-description',
   'delete-todo',
   'delete-completed-todos',
+  'create-task-terminal',
   'create-terminal',
   'select-terminal',
   'delete-terminal',
+  'open-todo-folder',
   'todo-expanded',
   'update:todo-view',
   'todo-view-change'
@@ -100,7 +102,7 @@ const internalTodoView = ref('not-started')
 const activeTodoSortMode = ref('priority')
 const collapsedTodoIds = ref(new Set())
 const knownTodoIds = ref(new Set(props.todos.map((todo) => todo.id)))
-const openLaunchTodoProjectId = ref('')
+const openLaunchTarget = ref({ kind: '', id: '' })
 const confirmRemoveTodoProjectId = ref('')
 const todoActionConfirm = ref({ todoId: '', action: '' })
 const confirmDeleteProjectId = ref('')
@@ -215,6 +217,20 @@ const terminalsByTodoProject = computed(() => {
   return groups
 })
 
+const taskTerminalsByTodo = computed(() => {
+  const groups = new Map()
+  for (const terminal of props.terminals) {
+    if (!terminal.todoId || terminal.todoProjectId) {
+      continue
+    }
+    if (!groups.has(terminal.todoId)) {
+      groups.set(terminal.todoId, [])
+    }
+    groups.get(terminal.todoId).push(terminal)
+  }
+  return groups
+})
+
 function todoProjectsForTodo(todoId) {
   return todoProjectsByTodo.value.get(todoId) || []
 }
@@ -238,6 +254,14 @@ function todoProjectTerminals(todoProjectId) {
   return terminalsByTodoProject.value.get(todoProjectId) || []
 }
 
+function taskTerminalsForTodo(todoId) {
+  return taskTerminalsByTodo.value.get(todoId) || []
+}
+
+function hasTaskTerminals(todoId) {
+  return taskTerminalsForTodo(todoId).length > 0
+}
+
 function hasTodoProjectTerminals(todoProjectId) {
   return todoProjectTerminals(todoProjectId).length > 0
 }
@@ -248,6 +272,14 @@ function todoHasActiveTerminal(todo) {
 
 function todoProjectHasActiveTerminal(todoProject) {
   return todoProjectTerminals(todoProject.id).some((terminal) => terminal.id === props.activeTerminalId)
+}
+
+function todoProjectWorktreeFailed(todoProject) {
+  return todoProject?.worktreeStatus === 'failed'
+}
+
+function todoProjectCanCreateTerminal(todoProject) {
+  return !todoProjectWorktreeFailed(todoProject)
 }
 
 function isTodoCollapsed(todoId) {
@@ -325,23 +357,53 @@ function selectTodoProject(todoProject) {
 }
 
 function toggleTerminalLaunchMenu(todoProject, event) {
+  if (!todoProjectCanCreateTerminal(todoProject)) {
+    return
+  }
   hideTodoDescriptionTooltip()
   expandTodo(todoProject.todoId)
   closeTodoProjectRemovePopover()
   closeTodoActionPopover()
   closeTodoContextMenu()
-  if (openLaunchTodoProjectId.value === todoProject.id) {
+  closeProjectDeletePopover()
+  closeBulkProjectDeletePopover()
+  closeBulkCompletedTodoDeletePopover()
+  closeCompletedTodoMenu()
+  if (isTerminalLaunchMenuOpen('project', todoProject.id)) {
     closeTerminalLaunchMenu()
     return
   }
 
   updateTerminalLaunchMenuPlacement(event?.currentTarget)
-  openLaunchTodoProjectId.value = todoProject.id
+  openLaunchTarget.value = { kind: 'project', id: todoProject.id }
+}
+
+function toggleTaskTerminalLaunchMenu(todoId, event) {
+  hideTodoDescriptionTooltip()
+  expandTodo(todoId)
+  closeTodoProjectRemovePopover()
+  closeTodoActionPopover()
+  closeTodoContextMenu()
+  closeProjectDeletePopover()
+  closeBulkProjectDeletePopover()
+  closeBulkCompletedTodoDeletePopover()
+  closeCompletedTodoMenu()
+  if (isTerminalLaunchMenuOpen('task', todoId)) {
+    closeTerminalLaunchMenu()
+    return
+  }
+
+  updateTerminalLaunchMenuPlacement(event?.currentTarget)
+  openLaunchTarget.value = { kind: 'task', id: todoId }
 }
 
 function closeTerminalLaunchMenu() {
-  openLaunchTodoProjectId.value = ''
+  openLaunchTarget.value = { kind: '', id: '' }
   resetTerminalLaunchMenuPlacement()
+}
+
+function isTerminalLaunchMenuOpen(kind, id) {
+  return openLaunchTarget.value.kind === kind && openLaunchTarget.value.id === id
 }
 
 function openTodoProjectRemovePopover(todoProjectId) {
@@ -470,6 +532,12 @@ function changeTodoStatus(todoId, status) {
   hideTodoDescriptionTooltip()
   setTodoView(status)
   emit('change-todo-status', todoId, status)
+}
+
+function createTaskTerminal(todoId, option = null) {
+  hideTodoDescriptionTooltip()
+  expandTodo(todoId)
+  emit('create-task-terminal', todoId, option?.command ? option : null)
 }
 
 function setTodoView(view) {
@@ -619,9 +687,20 @@ function closeFloatingMenus() {
 }
 
 function selectTerminalLaunchOption(todoProject, option) {
+  if (!todoProjectCanCreateTerminal(todoProject)) {
+    closeTerminalLaunchMenu()
+    return
+  }
   hideTodoDescriptionTooltip()
   expandTodo(todoProject.todoId)
   emit('create-terminal', todoProject.id, option.command ? option : null)
+  closeTerminalLaunchMenu()
+}
+
+function selectTaskTerminalLaunchOption(todoId, option) {
+  hideTodoDescriptionTooltip()
+  expandTodo(todoId)
+  emit('create-task-terminal', todoId, option.command ? option : null)
   closeTerminalLaunchMenu()
 }
 
@@ -1329,6 +1408,39 @@ watch(
               >
                 <Play :size="14" />
               </button>
+              <button
+                v-if="todoWorkflowStatus(todo) === 'in-progress'"
+                type="button"
+                class="todo-action-button"
+                :data-testid="`add-task-terminal-${todo.id}`"
+                title="New task terminal"
+                aria-label="New task terminal"
+                :aria-expanded="isTerminalLaunchMenuOpen('task', todo.id)"
+                :aria-controls="`terminal-launch-menu-task-${todo.id}`"
+                @click.stop="toggleTaskTerminalLaunchMenu(todo.id, $event)"
+              >
+                <Plus :size="14" />
+              </button>
+              <div
+                v-if="isTerminalLaunchMenuOpen('task', todo.id)"
+                :id="`terminal-launch-menu-task-${todo.id}`"
+                class="terminal-launch-menu"
+                :class="terminalLaunchMenuClass()"
+                :style="terminalLaunchMenuStyle()"
+                :data-testid="`terminal-launch-menu-task-${todo.id}`"
+                @click.stop
+              >
+                <button
+                  v-for="(option, index) in terminalLaunchOptions"
+                  :key="`${option.name}-${index}`"
+                  type="button"
+                  class="terminal-launch-option"
+                  :data-testid="`terminal-launch-option-task-${todo.id}-${index}`"
+                  @click="selectTaskTerminalLaunchOption(todo.id, option)"
+                >
+                  {{ option.name }}
+                </button>
+              </div>
               <div v-if="todoWorkflowStatus(todo) === 'in-progress'" class="todo-action-confirm-control">
                 <button
                   type="button"
@@ -1402,6 +1514,15 @@ watch(
             <button
               type="button"
               class="todo-context-menu-item"
+              :data-testid="`todo-menu-open-folder-${todo.id}`"
+              @click="emit('open-todo-folder', todo.id); closeTodoContextMenu()"
+            >
+              <FolderPlus :size="14" />
+              <span>打开任务文件夹</span>
+            </button>
+            <button
+              type="button"
+              class="todo-context-menu-item"
               :data-testid="`todo-menu-copy-title-description-${todo.id}`"
               @click="emit('copy-todo-description', todo.id); closeTodoContextMenu()"
             >
@@ -1428,8 +1549,60 @@ watch(
             role="group"
             :aria-label="`Projects for ${todo.title}`"
           >
-            <div v-if="todoProjectsForTodo(todo.id).length === 0" class="sidebar-empty nested">
+            <div v-if="todoProjectsForTodo(todo.id).length === 0 && !hasTaskTerminals(todo.id)" class="sidebar-empty nested">
               No projects linked
+            </div>
+
+            <div
+              v-if="hasTaskTerminals(todo.id)"
+              class="task-terminal-group"
+              :data-testid="`task-terminal-list-${todo.id}`"
+            >
+              <div
+                v-for="terminal in taskTerminalsForTodo(todo.id)"
+                :key="terminal.id"
+                class="terminal-entry task-terminal-entry"
+              >
+                <button
+                  type="button"
+                  class="terminal-row task-terminal-row"
+                  :class="{
+                    active: terminal.id === activeTerminalId,
+                    exited: terminal.state === 'exited',
+                    'activity-busy': terminalActivityState(terminal) === 'busy',
+                    'activity-needs-input': terminalActivityState(terminal) === 'needs-input',
+                    'activity-needs-ack': terminalActivityState(terminal) === 'needs-ack'
+                  }"
+                  :aria-label="terminalRowLabel(terminal)"
+                  :title="terminalRowLabel(terminal)"
+                  :data-activity-state="terminalActivityState(terminal)"
+                  :data-testid="`task-terminal-${terminal.id}`"
+                  @click="emit('select-terminal', terminal.id)"
+                >
+                  <span
+                    class="terminal-activity"
+                    :class="terminalActivityState(terminal)"
+                    :data-testid="`task-terminal-activity-${terminal.id}`"
+                    :aria-label="terminalActivityLabel(terminal)"
+                    role="img"
+                  >
+                    <LoaderCircle v-if="terminalActivityState(terminal) === 'busy'" :size="13" aria-hidden="true" />
+                    <CircleAlert v-else-if="terminalActivityState(terminal) === 'needs-input'" :size="13" aria-hidden="true" />
+                    <TriangleAlert v-else-if="terminalActivityState(terminal) === 'needs-ack'" :size="13" aria-hidden="true" />
+                  </span>
+                  <TerminalSquare class="terminal-icon" :size="15" />
+                  <span class="terminal-name">{{ terminalDisplayName(terminal) }}</span>
+                </button>
+                <button
+                  type="button"
+                  class="delete-terminal-button"
+                  :data-testid="`delete-terminal-${terminal.id}`"
+                  title="Delete terminal"
+                  @click.stop="emit('delete-terminal', terminal.id)"
+                >
+                  <Trash2 :size="13" />
+                </button>
+              </div>
             </div>
 
             <div
@@ -1464,6 +1637,13 @@ watch(
                     </span>
                     <span class="project-path">{{ projectForTodoProject(todoProject)?.path || todoProject.projectId }}</span>
                     <span v-if="!projectForTodoProject(todoProject)?.available" class="project-status">Unavailable</span>
+                    <span
+                      v-if="todoProjectWorktreeFailed(todoProject)"
+                      class="project-status project-status-error"
+                      :data-testid="`todo-project-worktree-error-${todoProject.id}`"
+                    >
+                      {{ todoProject.worktreeError || 'Worktree preparation failed' }}
+                    </span>
                   </span>
                 </button>
 
@@ -1476,14 +1656,15 @@ watch(
                     class="add-terminal-button"
                     :data-testid="`add-terminal-${todoProject.id}`"
                     title="New terminal"
-                    :aria-expanded="openLaunchTodoProjectId === todoProject.id"
+                    :disabled="!todoProjectCanCreateTerminal(todoProject)"
+                    :aria-expanded="isTerminalLaunchMenuOpen('project', todoProject.id)"
                     :aria-controls="`terminal-launch-menu-${todoProject.id}`"
                     @click.stop="toggleTerminalLaunchMenu(todoProject, $event)"
                   >
                     <Plus :size="14" />
                   </button>
                   <div
-                    v-if="openLaunchTodoProjectId === todoProject.id"
+                    v-if="isTerminalLaunchMenuOpen('project', todoProject.id)"
                     :id="`terminal-launch-menu-${todoProject.id}`"
                     class="terminal-launch-menu"
                     :class="terminalLaunchMenuClass()"

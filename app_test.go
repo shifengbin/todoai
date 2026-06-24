@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -365,6 +366,7 @@ func TestAppCloseWorkspaceClearsRuntimeStateAndPreservesData(t *testing.T) {
 	app := NewAppWithConfigAndShellStarter(
 		filepath.Join(appConfigDir, "projects.json"),
 		starter.Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
 		WithShellTerminalIDGenerator(sequenceIDs("terminal-1")),
 	)
 	state, err := app.OpenWorkspaceFromPath(workspaceDir)
@@ -413,6 +415,7 @@ func TestAppCreatesAndSelectsTodoProjectTerminals(t *testing.T) {
 	app := NewAppWithConfigAndShellStarter(
 		filepath.Join(t.TempDir(), "projects.json"),
 		starter.Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
 		WithShellTerminalIDGenerator(sequenceIDs("terminal-1", "terminal-2")),
 	)
 
@@ -488,6 +491,186 @@ func TestAppCreatesAndSelectsTodoProjectTerminals(t *testing.T) {
 	}
 }
 
+func TestAppCreatesTaskTerminalInTaskWorkspaceWithoutChangingTodoProjectContext(t *testing.T) {
+	workspaceDir := t.TempDir()
+	projectDir := t.TempDir()
+	starter := newFakeShellStarter()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		starter.Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
+		WithShellTerminalIDGenerator(sequenceIDs("project-terminal", "task-terminal")),
+	)
+	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	todoID, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", state.Projects[0].ID)
+	if _, err := app.CreateTodoTerminal(todoProjectID, 80, 24); err != nil {
+		t.Fatalf("CreateTodoTerminal() error = %v", err)
+	}
+
+	state, err = app.CreateTaskTerminal(todoID, 100, 32)
+	if err != nil {
+		t.Fatalf("CreateTaskTerminal() error = %v", err)
+	}
+
+	taskDir := filepath.Join(mustAbs(t, workspaceDir), "tasks", state.Todos[0].WorkspaceDirName)
+	if len(starter.requests) != 2 {
+		t.Fatalf("shell start count = %d, want 2", len(starter.requests))
+	}
+	if starter.requests[1].WorkingDir != taskDir {
+		t.Fatalf("task terminal cwd = %q, want %q", starter.requests[1].WorkingDir, taskDir)
+	}
+	if state.ActiveTerminalID != "task-terminal" {
+		t.Fatalf("ActiveTerminalID = %q, want task-terminal", state.ActiveTerminalID)
+	}
+	if state.ActiveTodoProjectID != todoProjectID || state.ActiveProjectID != state.Projects[0].ID {
+		t.Fatalf("active project context changed to %q/%q, want %q/%q", state.ActiveTodoProjectID, state.ActiveProjectID, todoProjectID, state.Projects[0].ID)
+	}
+	terminal := findTerminalByID(state.Terminals, "task-terminal")
+	if terminal.TodoID != todoID || terminal.TodoProjectID != "" || terminal.ProjectID != "" {
+		t.Fatalf("task terminal identity = %#v, want todo-only terminal", terminal)
+	}
+}
+
+func TestAppProjectTerminalUsesPreparedWorktreeDirectory(t *testing.T) {
+	workspaceDir := t.TempDir()
+	projectDir := t.TempDir()
+	starter := newFakeShellStarter()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		starter.Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
+		WithShellTerminalIDGenerator(sequenceIDs("project-terminal")),
+	)
+	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	_, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", state.Projects[0].ID)
+	state, err = app.CreateTodoTerminal(todoProjectID, 80, 24)
+	if err != nil {
+		t.Fatalf("CreateTodoTerminal() error = %v", err)
+	}
+
+	todoProject := state.TodoProjects[0]
+	if todoProject.WorktreeStatus != WorktreeStatusReady || todoProject.WorktreePath == "" {
+		t.Fatalf("todoProject worktree = %#v, want ready path", todoProject)
+	}
+	if len(starter.requests) != 1 {
+		t.Fatalf("shell start count = %d, want 1", len(starter.requests))
+	}
+	if starter.requests[0].WorkingDir != todoProject.WorktreePath {
+		t.Fatalf("project terminal cwd = %q, want %q", starter.requests[0].WorkingDir, todoProject.WorktreePath)
+	}
+}
+
+func TestAppProjectTerminalPreparesMissingWorktreeBeforeStarting(t *testing.T) {
+	workspaceDir := t.TempDir()
+	projectDir := t.TempDir()
+	starter := newFakeShellStarter()
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	app := NewAppWithConfigAndShellStarter(
+		configPath,
+		starter.Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
+		WithShellTerminalIDGenerator(sequenceIDs("project-terminal")),
+	)
+	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	_, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", state.Projects[0].ID)
+
+	state, err = app.projects.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	for index := range state.TodoProjects {
+		if state.TodoProjects[index].ID == todoProjectID {
+			state.TodoProjects[index].WorktreeStatus = ""
+			state.TodoProjects[index].WorktreePath = ""
+			state.TodoProjects[index].WorktreeBranch = ""
+			state.TodoProjects[index].WorktreeError = ""
+		}
+	}
+	if err := app.projects.saveLocked(state); err != nil {
+		t.Fatalf("save state without worktree metadata: %v", err)
+	}
+
+	state, err = app.CreateTodoTerminal(todoProjectID, 80, 24)
+	if err != nil {
+		t.Fatalf("CreateTodoTerminal() error = %v", err)
+	}
+
+	todoProject := findTodoProjectByIDForApp(t, state.TodoProjects, todoProjectID)
+	if todoProject.WorktreeStatus != WorktreeStatusReady || todoProject.WorktreePath == "" {
+		t.Fatalf("todoProject worktree = %#v, want ready path", todoProject)
+	}
+	if len(starter.requests) != 1 {
+		t.Fatalf("shell start count = %d, want 1", len(starter.requests))
+	}
+	if starter.requests[0].WorkingDir != todoProject.WorktreePath {
+		t.Fatalf("project terminal cwd = %q, want %q", starter.requests[0].WorkingDir, todoProject.WorktreePath)
+	}
+}
+
+func TestAppCloseWorkspaceStopsTaskAndProjectTerminalsButKeepsTaskDirectory(t *testing.T) {
+	workspaceDir := t.TempDir()
+	projectDir := t.TempDir()
+	starter := newFakeShellStarter()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		starter.Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
+		WithShellTerminalIDGenerator(sequenceIDs("project-terminal", "task-terminal")),
+	)
+	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	todoID, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", state.Projects[0].ID)
+	if _, err := app.CreateTodoTerminal(todoProjectID, 80, 24); err != nil {
+		t.Fatalf("CreateTodoTerminal() error = %v", err)
+	}
+	state, err = app.CreateTaskTerminal(todoID, 80, 24)
+	if err != nil {
+		t.Fatalf("CreateTaskTerminal() error = %v", err)
+	}
+	taskDir := filepath.Join(mustAbs(t, workspaceDir), "tasks", state.Todos[0].WorkspaceDirName)
+	if _, err := os.Stat(taskDir); err != nil {
+		t.Fatalf("task dir missing before close: %v", err)
+	}
+
+	state, err = app.CloseWorkspace()
+	if err != nil {
+		t.Fatalf("CloseWorkspace() error = %v", err)
+	}
+
+	if len(state.Terminals) != 0 || state.ActiveTerminalID != "" {
+		t.Fatalf("closed workspace terminals = %#v active %q, want none", state.Terminals, state.ActiveTerminalID)
+	}
+	if !starter.processes[0].closed || !starter.processes[1].closed {
+		t.Fatal("workspace close did not stop task and project terminal processes")
+	}
+	if _, err := os.Stat(taskDir); err != nil {
+		t.Fatalf("task dir missing after close: %v", err)
+	}
+}
+
 func TestAppCreatesWorkspaceGlobalTerminalsWithoutChangingTodoProjectContext(t *testing.T) {
 	workspaceDir := t.TempDir()
 	projectDir := t.TempDir()
@@ -495,6 +678,7 @@ func TestAppCreatesWorkspaceGlobalTerminalsWithoutChangingTodoProjectContext(t *
 	app := NewAppWithConfigAndShellStarter(
 		filepath.Join(t.TempDir(), "projects.json"),
 		starter.Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
 		WithShellTerminalIDGenerator(sequenceIDs("todo-terminal", "global-a", "global-b")),
 	)
 
@@ -584,6 +768,7 @@ func TestAppKeepsWorkspaceGlobalTerminalsWhenDeletingTodoAndProjectCandidate(t *
 	app := NewAppWithConfigAndShellStarter(
 		filepath.Join(t.TempDir(), "projects.json"),
 		starter.Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
 		WithShellTerminalIDGenerator(sequenceIDs("global-terminal", "todo-terminal")),
 	)
 	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
@@ -829,6 +1014,7 @@ func TestAppCompletesTodoAndClosesOnlyOwnedTerminals(t *testing.T) {
 	app := NewAppWithConfigAndShellStarter(
 		filepath.Join(t.TempDir(), "projects.json"),
 		starter.Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
 		WithShellTerminalIDGenerator(sequenceIDs("terminal-a", "terminal-b")),
 	)
 	state, err := app.AddProjectFromPath(projectDir)
@@ -942,6 +1128,7 @@ func TestAppUpdateTodoRemovesProjectAndClosesOnlyThatTodoProjectTerminals(t *tes
 	app := NewAppWithConfigAndShellStarter(
 		filepath.Join(t.TempDir(), "projects.json"),
 		starter.Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
 		WithShellTerminalIDGenerator(sequenceIDs("terminal-a", "terminal-b", "terminal-c")),
 	)
 	state, err := app.AddProjectFromPath(projectDir)
@@ -1024,6 +1211,7 @@ func TestAppRemoveTodoProjectClosesOnlyThatTodoProjectTerminals(t *testing.T) {
 	app := NewAppWithConfigAndShellStarter(
 		filepath.Join(t.TempDir(), "projects.json"),
 		starter.Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
 		WithShellTerminalIDGenerator(sequenceIDs("terminal-a", "terminal-b")),
 	)
 	state, err := app.AddProjectFromPath(projectDir)
@@ -1378,6 +1566,7 @@ func TestAppUsesSavedTerminalShellForNewTerminals(t *testing.T) {
 	app := NewAppWithConfigAndShellStarter(
 		filepath.Join(configDir, "projects.json"),
 		starter.Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
 		WithShellTerminalIDGenerator(sequenceIDs("terminal-1")),
 	)
 	if _, err := app.SaveTerminalShell(shellPath, ShellSourceManual); err != nil {
@@ -1440,6 +1629,7 @@ func TestAppSavesTerminalThemeWithoutChangingProjectShellBehavior(t *testing.T) 
 	app := NewAppWithConfigAndShellStarter(
 		filepath.Join(configDir, "projects.json"),
 		starter.Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
 		WithShellTerminalIDGenerator(sequenceIDs("terminal-1")),
 	)
 	if _, err := app.SaveTerminalShell(shellPath, ShellSourceManual); err != nil {
@@ -1487,6 +1677,7 @@ func TestAppKeepsExistingTerminalShellAfterSettingChanges(t *testing.T) {
 	app := NewAppWithConfigAndShellStarter(
 		filepath.Join(configDir, "projects.json"),
 		starter.Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
 		WithShellTerminalIDGenerator(sequenceIDs("terminal-1", "terminal-2")),
 	)
 	if _, err := app.SaveTerminalShell(shellA, ShellSourceManual); err != nil {
@@ -1530,6 +1721,7 @@ func TestAppFallsBackWhenSavedTerminalShellIsUnavailable(t *testing.T) {
 	app := NewAppWithConfigAndShellStarter(
 		filepath.Join(configDir, "projects.json"),
 		starter.Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
 		WithShellTerminalIDGenerator(sequenceIDs("terminal-1")),
 	)
 
@@ -1557,6 +1749,7 @@ func TestAppDeletesProjectCandidateWithoutClosingTodoProjectTerminals(t *testing
 	app := NewAppWithConfigAndShellStarter(
 		filepath.Join(t.TempDir(), "projects.json"),
 		starter.Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
 		WithShellTerminalIDGenerator(sequenceIDs("terminal-a1", "terminal-a2", "terminal-b1")),
 	)
 
@@ -1615,6 +1808,7 @@ func TestAppDeletesProjectCandidatesWithoutClosingTodoProjectTerminals(t *testin
 	app := NewAppWithConfigAndShellStarter(
 		filepath.Join(t.TempDir(), "projects.json"),
 		starter.Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
 		WithShellTerminalIDGenerator(sequenceIDs("terminal-a1", "terminal-b1", "terminal-c1")),
 	)
 
@@ -1686,6 +1880,7 @@ func TestAppDeletesTerminalAndReturnsUpdatedState(t *testing.T) {
 	app := NewAppWithConfigAndShellStarter(
 		filepath.Join(t.TempDir(), "projects.json"),
 		starter.Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
 		WithShellTerminalIDGenerator(sequenceIDs("terminal-a", "terminal-b")),
 	)
 
@@ -1771,6 +1966,35 @@ func TestAppGetsProjectGitStatusForAvailableProject(t *testing.T) {
 	}
 	if status.ChangedCount != 3 {
 		t.Fatalf("ChangedCount = %d, want 3", status.ChangedCount)
+	}
+}
+
+func TestAppListsProjectBranchesForAvailableProject(t *testing.T) {
+	projectDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	projectID := state.Projects[0].ID
+	app.gitBranches = func(path string) ([]string, error) {
+		if path != projectDir {
+			t.Fatalf("git branches path = %q, want %q", path, projectDir)
+		}
+		return []string{"main", "origin/main", "origin/feature/login"}, nil
+	}
+
+	branches, err := app.ListProjectBranches(projectID)
+	if err != nil {
+		t.Fatalf("ListProjectBranches() error = %v", err)
+	}
+
+	want := []string{"main", "origin/main", "origin/feature/login"}
+	if strings.Join(branches, ",") != strings.Join(want, ",") {
+		t.Fatalf("branches = %#v, want %#v", branches, want)
 	}
 }
 
@@ -2008,6 +2232,17 @@ func findProjectByPathForApp(t *testing.T, projects []Project, path string) Proj
 	}
 	t.Fatalf("project path %q not found in %#v", absolutePath, projects)
 	return Project{}
+}
+
+func findTodoProjectByIDForApp(t *testing.T, todoProjects []TodoProject, id string) TodoProject {
+	t.Helper()
+	for _, todoProject := range todoProjects {
+		if todoProject.ID == id {
+			return todoProject
+		}
+	}
+	t.Fatalf("todo project %q not found in %#v", id, todoProjects)
+	return TodoProject{}
 }
 
 func findTerminalByID(terminals []ProjectTerminal, terminalID string) ProjectTerminal {
