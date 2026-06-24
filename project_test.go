@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -485,6 +486,54 @@ func TestProjectManagerCreatesTodoWithDetailsAndOptionalProjects(t *testing.T) {
 	}
 }
 
+func TestProjectManagerCreatesTodoWithProjectBaseBranches(t *testing.T) {
+	projectDir := t.TempDir()
+	otherProjectDir := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	manager := NewProjectManager(
+		configPath,
+		WithProjectIDGenerator(sequenceIDs("project-a", "project-b", "todo-a", "todo-project-a", "todo-project-b")),
+	)
+	project, _, err := manager.AddProjectPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectPath() error = %v", err)
+	}
+	otherProject, _, err := manager.AddProjectPath(otherProjectDir)
+	if err != nil {
+		t.Fatalf("AddProjectPath(other) error = %v", err)
+	}
+
+	state, err := manager.CreateTodo(CreateTodoRequest{
+		Title: "修复登录问题",
+		Projects: []TodoProjectSelection{
+			{ProjectID: project.ID, BaseBranch: " main "},
+			{ProjectID: otherProject.ID, BaseBranch: "release/2026"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+
+	if len(state.TodoProjects) != 2 {
+		t.Fatalf("TodoProjects length = %d, want 2", len(state.TodoProjects))
+	}
+	if state.TodoProjects[0].ProjectID != project.ID || state.TodoProjects[0].BaseBranch != "main" {
+		t.Fatalf("first TodoProject = %#v, want project A with base branch main", state.TodoProjects[0])
+	}
+	if state.TodoProjects[1].ProjectID != otherProject.ID || state.TodoProjects[1].BaseBranch != "release/2026" {
+		t.Fatalf("second TodoProject = %#v, want project B with base branch release/2026", state.TodoProjects[1])
+	}
+
+	reloaded := NewProjectManager(configPath)
+	persisted, err := reloaded.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if persisted.TodoProjects[0].BaseBranch != "main" || persisted.TodoProjects[1].BaseBranch != "release/2026" {
+		t.Fatalf("persisted TodoProjects = %#v, want base branches preserved", persisted.TodoProjects)
+	}
+}
+
 func TestProjectManagerCreatesTodoWithoutProjectUsingMediumPriority(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "projects.json")
 	manager := NewProjectManager(configPath, WithProjectIDGenerator(sequenceIDs("todo-a")))
@@ -739,6 +788,49 @@ func TestProjectManagerUpdatesTodoDetailsAndProjectAssociations(t *testing.T) {
 	}
 }
 
+func TestProjectManagerUpdatesTodoProjectBaseBranches(t *testing.T) {
+	projectDir := t.TempDir()
+	otherProjectDir := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	manager := NewProjectManager(
+		configPath,
+		WithProjectIDGenerator(sequenceIDs("project-a", "project-b", "todo-a", "todo-project-a", "todo-project-b")),
+	)
+	projectA, _, err := manager.AddProjectPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectPath(A) error = %v", err)
+	}
+	projectB, _, err := manager.AddProjectPath(otherProjectDir)
+	if err != nil {
+		t.Fatalf("AddProjectPath(B) error = %v", err)
+	}
+	if _, err := manager.CreateTodo(CreateTodoRequest{
+		Title:    "旧标题",
+		Projects: []TodoProjectSelection{{ProjectID: projectA.ID, BaseBranch: "main"}},
+	}); err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+
+	state, _, err := manager.UpdateTodo(UpdateTodoRequest{
+		ID:       "todo-a",
+		Title:    "新标题",
+		Projects: []TodoProjectSelection{{ProjectID: projectA.ID, BaseBranch: "release"}, {ProjectID: projectB.ID, BaseBranch: "develop"}},
+	})
+	if err != nil {
+		t.Fatalf("UpdateTodo() error = %v", err)
+	}
+
+	if len(state.TodoProjects) != 2 {
+		t.Fatalf("TodoProjects length = %d, want 2", len(state.TodoProjects))
+	}
+	if state.TodoProjects[0].ID != "todo-project-a" || state.TodoProjects[0].BaseBranch != "release" {
+		t.Fatalf("existing TodoProject = %#v, want existing association with updated base branch", state.TodoProjects[0])
+	}
+	if state.TodoProjects[1].ID != "todo-project-b" || state.TodoProjects[1].BaseBranch != "develop" {
+		t.Fatalf("new TodoProject = %#v, want new association with base branch", state.TodoProjects[1])
+	}
+}
+
 func TestProjectManagerRejectsInvalidTodoUpdateWithoutChangingState(t *testing.T) {
 	projectDir := t.TempDir()
 	configPath := filepath.Join(t.TempDir(), "projects.json")
@@ -890,6 +982,56 @@ func TestProjectManagerArchivesTodoWithProjectSnapshots(t *testing.T) {
 	}
 	if len(state.Todos[0].ProjectSnapshots) != 1 || state.Todos[0].ProjectSnapshots[0].Path != projectDir {
 		t.Fatalf("archived snapshots after project delete = %#v, want unchanged", state.Todos[0].ProjectSnapshots)
+	}
+}
+
+func TestProjectManagerArchivesTodoWithSnapshotBranches(t *testing.T) {
+	projectDir := t.TempDir()
+	runGitForTest(t, projectDir, "init", "-b", "main")
+	runGitForTest(t, projectDir, "checkout", "-b", "todo/fix-login")
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	now := time.Date(2026, 6, 10, 9, 0, 0, 0, time.UTC)
+	manager := NewProjectManager(
+		configPath,
+		WithProjectIDGenerator(sequenceIDs("project-a", "todo-a", "todo-project-a")),
+		WithProjectClock(func() time.Time { return now }),
+	)
+	project, _, err := manager.AddProjectPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectPath() error = %v", err)
+	}
+	if _, err := manager.CreateTodo(CreateTodoRequest{
+		Title:    "修复登录问题",
+		Projects: []TodoProjectSelection{{ProjectID: project.ID, BaseBranch: "main"}},
+	}); err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	if _, err := manager.ChangeTodoStatus("todo-a", "in-progress"); err != nil {
+		t.Fatalf("ChangeTodoStatus(in-progress) error = %v", err)
+	}
+
+	now = now.Add(time.Minute)
+	state, err := manager.CompleteTodo("todo-a")
+	if err != nil {
+		t.Fatalf("CompleteTodo() error = %v", err)
+	}
+
+	todo := state.Todos[0]
+	if len(todo.ProjectSnapshots) != 1 {
+		t.Fatalf("ProjectSnapshots length = %d, want 1", len(todo.ProjectSnapshots))
+	}
+	snapshot := todo.ProjectSnapshots[0]
+	if snapshot.BaseBranch != "main" || snapshot.WorktreeBranch != "" {
+		t.Fatalf("ProjectSnapshot = %#v, want base main before branch fill", snapshot)
+	}
+
+	state, err = manager.FillCompletedTodoSnapshotBranches("todo-a")
+	if err != nil {
+		t.Fatalf("FillCompletedTodoSnapshotBranches() error = %v", err)
+	}
+	snapshot = state.Todos[0].ProjectSnapshots[0]
+	if snapshot.BaseBranch != "main" || snapshot.WorktreeBranch != "todo/fix-login" {
+		t.Fatalf("ProjectSnapshot = %#v, want base main and worktree todo/fix-login", snapshot)
 	}
 }
 
@@ -1379,6 +1521,78 @@ func TestProjectManagerMigratesLegacyWorkspaceProjectsToGlobalCandidatesAndTodoC
 	}
 }
 
+func TestProjectManagerLoadsLegacyProjectCopiesAndSnapshotsWithoutBranches(t *testing.T) {
+	projectDir := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	legacyJSON := `{
+  "version": 1,
+  "projects": [
+    {
+      "id": "project-a",
+      "name": "frontend-app",
+      "path": "` + filepath.ToSlash(projectDir) + `",
+      "available": true,
+      "createdAt": "2026-06-10T09:00:00Z",
+      "lastSelectedAt": "2026-06-10T09:00:00Z"
+    }
+  ],
+  "todos": [
+    {
+      "id": "todo-a",
+      "title": "修复登录问题",
+      "priority": "medium",
+      "status": "not-started",
+      "createdAt": "2026-06-10T09:00:00Z"
+    },
+    {
+      "id": "todo-completed",
+      "title": "已完成任务",
+      "priority": "medium",
+      "status": "completed",
+      "projectSnapshots": [
+        { "projectId": "project-a", "name": "frontend-app", "path": "` + filepath.ToSlash(projectDir) + `" }
+      ],
+      "createdAt": "2026-06-10T09:00:00Z",
+      "completedAt": "2026-06-10T10:00:00Z"
+    }
+  ],
+  "todoProjects": [
+    {
+      "id": "todo-project-a",
+      "todoId": "todo-a",
+      "projectId": "project-a",
+      "name": "frontend-app",
+      "path": "` + filepath.ToSlash(projectDir) + `",
+      "available": true,
+      "createdAt": "2026-06-10T09:00:00Z",
+      "lastSelectedAt": "2026-06-10T09:00:00Z"
+    }
+  ],
+  "activeProjectId": "project-a"
+}`
+	if err := os.WriteFile(configPath, []byte(legacyJSON), 0o600); err != nil {
+		t.Fatalf("write legacy config: %v", err)
+	}
+
+	manager := NewProjectManager(configPath)
+	state, err := manager.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if len(state.TodoProjects) != 1 || state.TodoProjects[0].BaseBranch != "" {
+		t.Fatalf("legacy TodoProjects = %#v, want preserved with empty base branch", state.TodoProjects)
+	}
+	completed := findTodo(state.Todos, "todo-completed")
+	if completed == nil || len(completed.ProjectSnapshots) != 1 {
+		t.Fatalf("completed todo = %#v, want legacy snapshot", completed)
+	}
+	snapshot := completed.ProjectSnapshots[0]
+	if snapshot.BaseBranch != "" || snapshot.WorktreeBranch != "" {
+		t.Fatalf("legacy ProjectSnapshot = %#v, want empty branch fields", snapshot)
+	}
+}
+
 func TestProjectManagerDeleteProjectsRemovesProjectsAndAssociationsSelectsFallback(t *testing.T) {
 	dirA := t.TempDir()
 	dirB := t.TempDir()
@@ -1559,6 +1773,15 @@ func findTodo(todos []Todo, todoID string) *Todo {
 		}
 	}
 	return nil
+}
+
+func runGitForTest(t *testing.T, path string, args ...string) {
+	t.Helper()
+	cmdArgs := append([]string{"-C", path}, args...)
+	output, err := newBackgroundCommand(context.Background(), "git", cmdArgs...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, string(output))
+	}
 }
 
 func todoJSONField(t *testing.T, todo Todo, field string) string {

@@ -14,6 +14,12 @@ func newReadyWorktreePreparer() *readyWorktreePreparer {
 	return &readyWorktreePreparer{}
 }
 
+type readyWorktreePreparerFunc func(repoPath, requestedBranch, projectName, taskWorkspaceDir string) WorktreePrepareResult
+
+func (preparer readyWorktreePreparerFunc) PrepareWorktree(repoPath, requestedBranch, projectName, taskWorkspaceDir string) WorktreePrepareResult {
+	return preparer(repoPath, requestedBranch, projectName, taskWorkspaceDir)
+}
+
 func (preparer *readyWorktreePreparer) PrepareWorktree(repoPath, requestedBranch, projectName, taskWorkspaceDir string) WorktreePrepareResult {
 	branch := requestedBranch
 	if branch == "" {

@@ -6,6 +6,10 @@ export function AddProjectFromPath(arg1) {
   return window['go']['main']['App']['AddProjectFromPath'](arg1);
 }
 
+export function AddProjectSelectionsToTodo(arg1, arg2) {
+  return window['go']['main']['App']['AddProjectSelectionsToTodo'](arg1, arg2);
+}
+
 export function AddProjectToTodo(arg1, arg2) {
   return window['go']['main']['App']['AddProjectToTodo'](arg1, arg2);
 }
@@ -84,6 +88,10 @@ export function DeleteTodoProjectUIState(arg1) {
 
 export function DetectTerminalShell() {
   return window['go']['main']['App']['DetectTerminalShell']();
+}
+
+export function GetCompletedTodoProjectMergeStatuses(arg1) {
+  return window['go']['main']['App']['GetCompletedTodoProjectMergeStatuses'](arg1);
 }
 
 export function GetProjectGitStatus(arg1) {

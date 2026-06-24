@@ -230,3 +230,103 @@ func TestInitializeGitRepositoryForPathReturnsCommandFailure(t *testing.T) {
 		t.Fatalf("error = %q, want git init failed", err.Error())
 	}
 }
+
+func TestGitBranchForPathReturnsTrimmedBranchName(t *testing.T) {
+	branch, err := gitBranchForPath("/work/repo", gitAvailable, func(ctx context.Context, path string) ([]byte, error) {
+		if path != "/work/repo" {
+			t.Fatalf("path = %q, want /work/repo", path)
+		}
+		return []byte("todo/fix-login\n"), nil
+	})
+
+	if err != nil {
+		t.Fatalf("gitBranchForPath() error = %v, want nil", err)
+	}
+	if branch != "todo/fix-login" {
+		t.Fatalf("branch = %q, want todo/fix-login", branch)
+	}
+}
+
+func TestGitBranchMergedForPathReturnsMergedAndUnmerged(t *testing.T) {
+	merged, err := gitBranchMergedForPath("/work/repo", "todo/fix-login", "main", gitAvailable, func(ctx context.Context, path string, worktreeBranch string, baseBranch string) ([]byte, error) {
+		if path != "/work/repo" || worktreeBranch != "todo/fix-login" || baseBranch != "main" {
+			t.Fatalf("args = %q/%q/%q, want repo/worktree/base", path, worktreeBranch, baseBranch)
+		}
+		return []byte(""), nil
+	})
+	if err != nil {
+		t.Fatalf("gitBranchMergedForPath(merged) error = %v, want nil", err)
+	}
+	if !merged {
+		t.Fatal("merged = false, want true")
+	}
+
+	errExitOne := exec.Command("sh", "-c", "exit 1").Run()
+	var exitErr *exec.ExitError
+	if !errors.As(errExitOne, &exitErr) {
+		t.Fatalf("exit error = %T, want *exec.ExitError", errExitOne)
+	}
+	merged, err = gitBranchMergedForPath("/work/repo", "todo/fix-login", "main", gitAvailable, func(ctx context.Context, path string, worktreeBranch string, baseBranch string) ([]byte, error) {
+		return []byte(""), exitErr
+	})
+	if err != nil {
+		t.Fatalf("gitBranchMergedForPath(unmerged) error = %v, want nil", err)
+	}
+	if merged {
+		t.Fatal("merged = true, want false")
+	}
+}
+
+func TestGitBranchMergedForPathRejectsMissingBranches(t *testing.T) {
+	_, err := gitBranchMergedForPath("/work/repo", "", "main", gitAvailable, func(ctx context.Context, path string, worktreeBranch string, baseBranch string) ([]byte, error) {
+		return nil, nil
+	})
+
+	if err == nil {
+		t.Fatal("gitBranchMergedForPath() error = nil, want missing branch error")
+	}
+}
+
+func TestGitBranchMergedForPathTreatsUnexpectedExitCodeAsUnknown(t *testing.T) {
+	errExitTwo := exec.Command("sh", "-c", "exit 2").Run()
+	var exitErr *exec.ExitError
+	if !errors.As(errExitTwo, &exitErr) {
+		t.Fatalf("exit error = %T, want *exec.ExitError", errExitTwo)
+	}
+
+	merged, err := gitBranchMergedForPath("/work/repo", "todo/fix-login", "main", gitAvailable, func(ctx context.Context, path string, worktreeBranch string, baseBranch string) ([]byte, error) {
+		return []byte{}, exitErr
+	})
+
+	if err == nil {
+		t.Fatal("gitBranchMergedForPath() error = nil, want unexpected exit error")
+	}
+	if merged {
+		t.Fatal("merged = true, want false")
+	}
+	if !strings.Contains(err.Error(), "git merge-base failed") {
+		t.Fatalf("error = %q, want git merge-base failed", err.Error())
+	}
+}
+
+func TestGitBranchMergedForPathTreatsExitOneAsUnmerged(t *testing.T) {
+	errExitOne := exec.Command("sh", "-c", "exit 1").Run()
+	var exitErr *exec.ExitError
+	if !errors.As(errExitOne, &exitErr) {
+		t.Fatalf("exit error = %T, want *exec.ExitError", errExitOne)
+	}
+	if exitErr.ExitCode() != 1 && os.Getenv("GOOS") != "windows" {
+		t.Fatalf("exit code = %d, want 1", exitErr.ExitCode())
+	}
+
+	merged, err := gitBranchMergedForPath("/work/repo", "todo/fix-login", "main", gitAvailable, func(ctx context.Context, path string, worktreeBranch string, baseBranch string) ([]byte, error) {
+		return []byte{}, exitErr
+	})
+
+	if err != nil {
+		t.Fatalf("gitBranchMergedForPath() error = %v, want nil", err)
+	}
+	if merged {
+		t.Fatal("merged = true, want false")
+	}
+}

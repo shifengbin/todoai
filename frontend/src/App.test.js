@@ -5,7 +5,7 @@ import App from './App.vue'
 import {
   AddProjectToTodo,
   AddProjectsToTodo,
-  AddProjectsToTodoWithBranches,
+  AddProjectSelectionsToTodo,
   ChangeTodoStatus,
   ClearRecentWorkspaces,
   CloseWorkspace,
@@ -21,6 +21,7 @@ import {
   DeleteTerminal,
   DeleteTodo,
   DetectTerminalShell,
+  GetCompletedTodoProjectMergeStatuses,
   GetProjectGitStatus,
   ImportProjectsFromParentDirectoryDialog,
   InitializeGitRepositoryAndImportProject,
@@ -49,7 +50,7 @@ import { ClipboardGetText, ClipboardSetText } from '../wailsjs/runtime/runtime'
 const appApiMock = vi.hoisted(() => ({
   AddProjectToTodo: vi.fn(),
   AddProjectsToTodo: vi.fn(),
-  AddProjectsToTodoWithBranches: vi.fn(),
+  AddProjectSelectionsToTodo: vi.fn(),
   ChangeTodoStatus: vi.fn(),
   ClearRecentWorkspaces: vi.fn(),
   CloseWorkspace: vi.fn(),
@@ -65,6 +66,7 @@ const appApiMock = vi.hoisted(() => ({
   DeleteTerminal: vi.fn(),
   DeleteTodo: vi.fn(),
   DetectTerminalShell: vi.fn(),
+  GetCompletedTodoProjectMergeStatuses: vi.fn(),
   GetProjectGitStatus: vi.fn(),
   ImportProjectsFromParentDirectoryDialog: vi.fn(),
   InitializeGitRepositoryAndImportProject: vi.fn(),
@@ -190,7 +192,7 @@ describe('App project terminal tree', () => {
     appApiMock.CreateTodo.mockResolvedValue(projectState({ todos: [todo({ id: 'todo-a' }), todo({ id: 'todo-b', title: 'Write tests' })] }))
     appApiMock.AddProjectToTodo.mockResolvedValue(projectState())
     appApiMock.AddProjectsToTodo.mockResolvedValue(projectState())
-    appApiMock.AddProjectsToTodoWithBranches.mockResolvedValue(projectState())
+    appApiMock.AddProjectSelectionsToTodo.mockResolvedValue(projectState())
     appApiMock.CreateTaskTerminal.mockResolvedValue(
       inProgressProjectState({
         terminals: [
@@ -251,6 +253,7 @@ describe('App project terminal tree', () => {
     appApiMock.GetProjectGitStatus.mockResolvedValue(gitStatus())
     appApiMock.CreateProjectFromDialog.mockResolvedValue(projectImportResult(projectState()))
     appApiMock.InitializeGitRepositoryAndImportProject.mockResolvedValue(projectState())
+    appApiMock.GetCompletedTodoProjectMergeStatuses.mockResolvedValue([])
     appApiMock.InitializeProjectGitRepository.mockResolvedValue()
     appApiMock.ListProjectBranches.mockResolvedValue([])
     appApiMock.StartShell.mockResolvedValue({ projectId: 'project-a', terminalId: 'terminal-a', state: 'running' })
@@ -939,13 +942,47 @@ describe('App project terminal tree', () => {
       title: 'Write tests',
       description: 'Cover login flow',
       priority: 'high',
-      projectIds: ['project-b', 'project-c'],
-      projectBranches: {}
+      projects: [
+        { projectId: 'project-b', baseBranch: '' },
+        { projectId: 'project-c', baseBranch: '' }
+      ]
     })
     expect(wrapper.text()).toContain('Write tests')
   })
 
-  it('sends selected project branches when creating a TODO', async () => {
+  it('defaults selected project base branch from the active project git branch when available', async () => {
+    appApiMock.GetProjectGitStatus.mockResolvedValue(gitStatus({ branch: 'develop' }))
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'frontend-app', path: '/work/frontend-app', available: true },
+          { id: 'project-b', name: 'api-service', path: '/work/api-service', available: true }
+        ],
+        activeProjectId: 'project-a'
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="new-todo"]').trigger('click')
+    await nextTick()
+    await wrapper.find('[data-testid="todo-name-input"]').setValue('Write tests')
+    await wrapper.find('[data-testid="todo-project-option-project-a"]').trigger('click')
+    await wrapper.find('[data-testid="todo-project-option-project-b"]').trigger('click')
+    await wrapper.find('[data-testid="todo-create-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(CreateTodo).toHaveBeenCalledWith({
+      title: 'Write tests',
+      description: '',
+      priority: 'medium',
+      projects: [
+        { projectId: 'project-a', baseBranch: 'develop' },
+        { projectId: 'project-b', baseBranch: '' }
+      ]
+    })
+  })
+
+  it('creates TODOs with selected project base branches', async () => {
     appApiMock.ListProjects.mockResolvedValue(
       projectState({
         projects: [
@@ -970,8 +1007,10 @@ describe('App project terminal tree', () => {
       title: 'Write tests',
       description: '',
       priority: 'medium',
-      projectIds: ['project-a', 'project-b'],
-      projectBranches: { 'project-a': 'develop' }
+      projects: [
+        { projectId: 'project-a', baseBranch: 'develop' },
+        { projectId: 'project-b', baseBranch: '' }
+      ]
     })
   })
 
@@ -1039,8 +1078,7 @@ describe('App project terminal tree', () => {
       title: 'Write tests',
       description: '',
       priority: 'medium',
-      projectIds: ['project-c'],
-      projectBranches: {}
+      projects: [{ projectId: 'project-c', baseBranch: '' }]
     })
   })
 
@@ -1085,8 +1123,7 @@ describe('App project terminal tree', () => {
       title: 'Write docs',
       description: '',
       priority: 'medium',
-      projectIds: [],
-      projectBranches: {}
+      projects: []
     })
   })
 
@@ -1202,7 +1239,7 @@ describe('App project terminal tree', () => {
         activeTerminalId: ''
       })
     )
-    appApiMock.AddProjectsToTodoWithBranches.mockResolvedValue(
+    appApiMock.AddProjectSelectionsToTodo.mockResolvedValue(
       projectState({
         projects: [
           { id: 'project-a', name: 'frontend-app', path: '/work/frontend-app', available: true },
@@ -1232,12 +1269,15 @@ describe('App project terminal tree', () => {
     await wrapper.find('[data-testid="todo-project-picker-submit"]').trigger('click')
     await flushPromises()
 
-    expect(AddProjectsToTodoWithBranches).toHaveBeenCalledWith('todo-a', ['project-b', 'project-c'], {})
+    expect(AddProjectSelectionsToTodo).toHaveBeenCalledWith('todo-a', [
+      { projectId: 'project-b', baseBranch: '' },
+      { projectId: 'project-c', baseBranch: '' }
+    ])
     expect(wrapper.find('[data-testid="todo-project-todo-project-b"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="todo-project-todo-project-c"]').exists()).toBe(true)
   })
 
-  it('sends selected branches when adding projects to a TODO', async () => {
+  it('adds selected projects to existing TODOs with base branches', async () => {
     appApiMock.ListProjects.mockResolvedValue(
       projectState({
         projects: [
@@ -1259,11 +1299,9 @@ describe('App project terminal tree', () => {
     await wrapper.find('[data-testid="todo-project-picker-submit"]').trigger('click')
     await flushPromises()
 
-    expect(AddProjectsToTodoWithBranches).toHaveBeenCalledWith(
-      'todo-a',
-      ['project-b'],
-      { 'project-b': 'feature/login-fix' }
-    )
+    expect(AddProjectSelectionsToTodo).toHaveBeenCalledWith('todo-a', [
+      { projectId: 'project-b', baseBranch: 'feature/login-fix' }
+    ])
   })
 
   it('offers local and remote branches when adding projects to a TODO', async () => {
@@ -1320,7 +1358,7 @@ describe('App project terminal tree', () => {
         activeTerminalId: ''
       })
     )
-    appApiMock.AddProjectsToTodoWithBranches.mockResolvedValue(
+    appApiMock.AddProjectSelectionsToTodo.mockResolvedValue(
       projectState({
         projects: [
           { id: 'project-a', name: 'frontend-app', path: '/work/frontend-app', available: true },
@@ -1349,7 +1387,9 @@ describe('App project terminal tree', () => {
     await wrapper.find('[data-testid="todo-project-picker-submit"]').trigger('click')
     await flushPromises()
 
-    expect(AddProjectsToTodoWithBranches).toHaveBeenCalledWith('todo-a', ['project-b'], {})
+    expect(AddProjectSelectionsToTodo).toHaveBeenCalledWith('todo-a', [
+      { projectId: 'project-b', baseBranch: '' }
+    ])
     expect(wrapper.find('.app-shell').attributes('style')).toContain('--sidebar-width: 360px')
   })
 
@@ -1390,7 +1430,9 @@ describe('App project terminal tree', () => {
     await wrapper.find('[data-testid="todo-project-picker-submit"]').trigger('click')
     await flushPromises()
 
-    expect(AddProjectsToTodoWithBranches).toHaveBeenCalledWith('todo-a', ['project-b'], {})
+    expect(AddProjectSelectionsToTodo).toHaveBeenCalledWith('todo-a', [
+      { projectId: 'project-b', baseBranch: '' }
+    ])
   })
 
   it('edits TODO details and confirms project removals that close terminals', async () => {
@@ -1444,10 +1486,43 @@ describe('App project terminal tree', () => {
       title: 'Fix login redirect',
       description: '登录后跳回首页',
       priority: 'high',
-      projectIds: ['project-b'],
-      projectBranches: {}
+      projects: [{ projectId: 'project-b', baseBranch: '' }]
     })
     expect(wrapper.find('[data-testid="todo-detail-dialog"]').exists()).toBe(false)
+  })
+
+  it('updates TODO details with selected project base branches', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'frontend-app', path: '/work/frontend-app', available: true },
+          { id: 'project-b', name: 'api-service', path: '/work/api-service', available: true }
+        ],
+        todos: [todo({ title: 'Fix login', description: 'Old description', priority: 'medium' })],
+        todoProjects: [todoProject({ projectId: 'project-a', baseBranch: 'main' })],
+        terminals: []
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await selectTodoMenuAction(wrapper, 'edit', 'todo-a')
+    await nextTick()
+    await wrapper.find('[data-testid="todo-detail-selected-project-branch-project-a"]').setValue('release')
+    await wrapper.find('[data-testid="todo-detail-project-option-project-b"]').trigger('click')
+    await wrapper.find('[data-testid="todo-detail-selected-project-branch-project-b"]').setValue('develop')
+    await wrapper.find('[data-testid="todo-detail-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(UpdateTodo).toHaveBeenCalledWith({
+      id: 'todo-a',
+      title: 'Fix login',
+      description: 'Old description',
+      priority: 'medium',
+      projects: [
+        { projectId: 'project-a', baseBranch: 'release' },
+        { projectId: 'project-b', baseBranch: 'develop' }
+      ]
+    })
   })
 
   it('opens completed TODO details in read-only mode with project snapshots', async () => {
@@ -1463,7 +1538,13 @@ describe('App project terminal tree', () => {
             description: '登录后跳回首页',
             priority: 'high',
             projectSnapshots: [
-              { projectId: 'project-a', name: 'frontend-app', path: '/work/frontend-app' }
+              {
+                projectId: 'project-a',
+                name: 'frontend-app',
+                path: '/work/frontend-app',
+                worktreeBranch: 'feature/login',
+                baseBranch: 'main'
+              }
             ]
           })
         ],
@@ -1491,7 +1572,7 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="todo-detail-project-filter"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="todo-detail-selected-project-remove-project-a"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="todo-detail-project-snapshot-project-a"]').text()).toContain('frontend-app')
-    expect(wrapper.find('[data-testid="todo-detail-project-snapshot-project-a"]').text()).toContain('/work/frontend-app')
+    expect(wrapper.find('[data-testid="todo-detail-project-snapshot-project-a"]').text()).toContain('feature/login -> main')
 
     await wrapper.find('[data-testid="todo-detail-name-input"]').setValue('Changed')
     expect(UpdateTodo).not.toHaveBeenCalled()
@@ -1843,7 +1924,309 @@ describe('App project terminal tree', () => {
     expect(CompleteTodo).toHaveBeenCalledWith('todo-a')
     expect(wrapper.find('[data-testid="terminal-terminal-a"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="completed-todos"]').text()).toContain('completed')
-    expect(wrapper.find('[data-testid="completed-todos"]').text()).toContain('/work/alpha')
+    expect(wrapper.find('[data-testid="completed-todos"]').text()).toContain('feature/alpha -> main')
+  })
+
+  it('checks completed snapshot merge status asynchronously when the completed view opens', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        todos: [
+          completedTodo({
+            projectSnapshots: [
+              {
+                projectId: 'project-a',
+                name: 'alpha',
+                path: '/work/alpha',
+                worktreeBranch: 'feature/login',
+                baseBranch: 'main'
+              }
+            ]
+          })
+        ],
+        todoProjects: [],
+        terminals: [],
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      })
+    )
+    appApiMock.GetCompletedTodoProjectMergeStatuses.mockResolvedValue([
+      { id: 'todo-a::project-a::/work/alpha::0', status: 'merged' }
+    ])
+    const wrapper = await mountReadyApp()
+
+    expect(GetCompletedTodoProjectMergeStatuses).not.toHaveBeenCalled()
+
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
+    await flushPromises()
+
+    expect(GetCompletedTodoProjectMergeStatuses).toHaveBeenCalledWith([
+      {
+        id: 'todo-a::project-a::/work/alpha::0',
+        path: '/work/alpha',
+        worktreeBranch: 'feature/login',
+        baseBranch: 'main'
+      }
+    ])
+    expect(wrapper.find('[data-testid="completed-project-merge-status-todo-a-project-a-0"]').classes()).toContain('merged')
+  })
+
+  it('rechecks completed snapshot merge status when returning to the completed view', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        todos: [
+          completedTodo({
+            projectSnapshots: [
+              {
+                projectId: 'project-a',
+                name: 'alpha',
+                path: '/work/alpha',
+                worktreeBranch: 'feature/login',
+                baseBranch: 'main'
+              }
+            ]
+          })
+        ],
+        todoProjects: [],
+        terminals: [],
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      })
+    )
+    appApiMock.GetCompletedTodoProjectMergeStatuses
+      .mockResolvedValueOnce([{ id: 'todo-a::project-a::/work/alpha::0', status: 'unmerged' }])
+      .mockResolvedValueOnce([{ id: 'todo-a::project-a::/work/alpha::0', status: 'merged' }])
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="completed-project-merge-status-todo-a-project-a-0"]').classes()).toContain('unmerged')
+
+    await wrapper.find('[data-testid="todo-view-not-started"]').trigger('click')
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
+    await flushPromises()
+
+    expect(GetCompletedTodoProjectMergeStatuses).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('[data-testid="completed-project-merge-status-todo-a-project-a-0"]').classes()).toContain('merged')
+  })
+
+  it('keeps stale completed merge-status responses from replacing newer results', async () => {
+    const staleRequest = deferred()
+    const freshRequest = deferred()
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        todos: [
+          completedTodo({
+            projectSnapshots: [
+              {
+                projectId: 'project-a',
+                name: 'alpha',
+                path: '/work/alpha',
+                worktreeBranch: 'feature/login',
+                baseBranch: 'main'
+              }
+            ]
+          })
+        ],
+        todoProjects: [],
+        terminals: [],
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      })
+    )
+    appApiMock.GetCompletedTodoProjectMergeStatuses
+      .mockReturnValueOnce(staleRequest.promise)
+      .mockReturnValueOnce(freshRequest.promise)
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
+    runtimeMock.handlers['workspace-state'](
+      projectState({
+        todos: [
+          completedTodo({
+            projectSnapshots: [
+              {
+                projectId: 'project-a',
+                name: 'alpha',
+                path: '/work/alpha',
+                worktreeBranch: 'feature/login',
+                baseBranch: 'main'
+              },
+              {
+                projectId: 'project-b',
+                name: 'beta',
+                path: '/work/beta',
+                worktreeBranch: 'feature/beta',
+                baseBranch: 'main'
+              }
+            ]
+          })
+        ],
+        todoProjects: [],
+        terminals: [],
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      })
+    )
+    await flushPromises()
+
+    expect(GetCompletedTodoProjectMergeStatuses).toHaveBeenCalledTimes(2)
+
+    freshRequest.resolve([
+      { id: 'todo-a::project-a::/work/alpha::0', status: 'merged' },
+      { id: 'todo-a::project-b::/work/beta::1', status: 'unmerged' }
+    ])
+    await flushPromises()
+    staleRequest.resolve([{ id: 'todo-a::project-a::/work/alpha::0', status: 'unmerged' }])
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="completed-project-merge-status-todo-a-project-a-0"]').classes()).toContain('merged')
+    expect(wrapper.find('[data-testid="completed-project-merge-status-todo-a-project-b-1"]').classes()).toContain('unmerged')
+  })
+
+  it('reuses cached completed merge statuses and only requests new completed snapshots', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        todos: [
+          completedTodo({
+            projectSnapshots: [
+              {
+                projectId: 'project-a',
+                name: 'alpha',
+                path: '/work/alpha',
+                worktreeBranch: 'feature/login',
+                baseBranch: 'main'
+              }
+            ]
+          })
+        ],
+        todoProjects: [],
+        terminals: [],
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      })
+    )
+    appApiMock.GetCompletedTodoProjectMergeStatuses
+      .mockResolvedValueOnce([{ id: 'todo-a::project-a::/work/alpha::0', status: 'merged' }])
+      .mockResolvedValueOnce([{ id: 'todo-a::project-b::/work/beta::1', status: 'unmerged' }])
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
+    await flushPromises()
+
+    runtimeMock.handlers['workspace-state'](
+      projectState({
+        todos: [
+          completedTodo({
+            projectSnapshots: [
+              {
+                projectId: 'project-a',
+                name: 'alpha',
+                path: '/work/alpha',
+                worktreeBranch: 'feature/login',
+                baseBranch: 'main'
+              },
+              {
+                projectId: 'project-b',
+                name: 'beta',
+                path: '/work/beta',
+                worktreeBranch: 'feature/beta',
+                baseBranch: 'main'
+              }
+            ]
+          })
+        ],
+        todoProjects: [],
+        terminals: [],
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      })
+    )
+    await flushPromises()
+
+    expect(GetCompletedTodoProjectMergeStatuses).toHaveBeenCalledTimes(2)
+    expect(GetCompletedTodoProjectMergeStatuses).toHaveBeenLastCalledWith([
+      {
+        id: 'todo-a::project-b::/work/beta::1',
+        path: '/work/beta',
+        worktreeBranch: 'feature/beta',
+        baseBranch: 'main'
+      }
+    ])
+    expect(wrapper.find('[data-testid="completed-project-merge-status-todo-a-project-a-0"]').classes()).toContain('merged')
+    expect(wrapper.find('[data-testid="completed-project-merge-status-todo-a-project-b-1"]').classes()).toContain('unmerged')
+  })
+
+  it('rechecks a cached completed snapshot when its branch pair changes', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        todos: [
+          completedTodo({
+            projectSnapshots: [
+              {
+                projectId: 'project-a',
+                name: 'alpha',
+                path: '/work/alpha',
+                worktreeBranch: 'feature/login',
+                baseBranch: 'main'
+              }
+            ]
+          })
+        ],
+        todoProjects: [],
+        terminals: [],
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      })
+    )
+    appApiMock.GetCompletedTodoProjectMergeStatuses
+      .mockResolvedValueOnce([{ id: 'todo-a::project-a::/work/alpha::0', status: 'merged' }])
+      .mockResolvedValueOnce([{ id: 'todo-a::project-a::/work/alpha::0', status: 'unmerged' }])
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
+    await flushPromises()
+
+    runtimeMock.handlers['workspace-state'](
+      projectState({
+        todos: [
+          completedTodo({
+            projectSnapshots: [
+              {
+                projectId: 'project-a',
+                name: 'alpha',
+                path: '/work/alpha',
+                worktreeBranch: 'feature/login',
+                baseBranch: 'release/2026'
+              }
+            ]
+          })
+        ],
+        todoProjects: [],
+        terminals: [],
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      })
+    )
+    await flushPromises()
+
+    expect(GetCompletedTodoProjectMergeStatuses).toHaveBeenCalledTimes(2)
+    expect(GetCompletedTodoProjectMergeStatuses).toHaveBeenLastCalledWith([
+      {
+        id: 'todo-a::project-a::/work/alpha::0',
+        path: '/work/alpha',
+        worktreeBranch: 'feature/login',
+        baseBranch: 'release/2026'
+      }
+    ])
+    expect(wrapper.find('[data-testid="completed-project-merge-status-todo-a-project-a-0"]').classes()).toContain('unmerged')
   })
 
   it('deletes a completed TODO after completed-view confirmation', async () => {
@@ -2249,8 +2632,7 @@ describe('App project terminal tree', () => {
       title: 'New task',
       description: '',
       priority: 'medium',
-      projectIds: [],
-      projectBranches: {}
+      projects: []
     })
   })
 
@@ -3579,6 +3961,16 @@ async function flushPromises() {
   await nextTick()
 }
 
+function deferred() {
+  let resolve
+  let reject
+  const promise = new Promise((promiseResolve, promiseReject) => {
+    resolve = promiseResolve
+    reject = promiseReject
+  })
+  return { promise, resolve, reject }
+}
+
 function projectState(overrides = {}) {
   return {
     currentWorkspace: workspace(),
@@ -3662,7 +4054,15 @@ function completedTodo(overrides = {}) {
     ...todo({
       status: 'completed',
       completedAt: '2026-06-10T10:00:00Z',
-      projectSnapshots: [{ projectId: 'project-a', name: 'alpha', path: '/work/alpha' }]
+      projectSnapshots: [
+        {
+          projectId: 'project-a',
+          name: 'alpha',
+          path: '/work/alpha',
+          worktreeBranch: 'feature/alpha',
+          baseBranch: 'main'
+        }
+      ]
     }),
     ...overrides
   }

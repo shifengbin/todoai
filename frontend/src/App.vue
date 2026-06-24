@@ -12,7 +12,7 @@ import {
 import { TerminalSessionManager } from './terminalManager'
 import { createXtermSession } from './xtermFactory'
 import {
-  AddProjectsToTodoWithBranches,
+  AddProjectSelectionsToTodo,
   ChangeTodoStatus,
   CompleteTodo,
   CreateProjectFromDialog,
@@ -26,6 +26,7 @@ import {
   DeleteTerminal,
   DeleteTodo,
   DetectTerminalShell,
+  GetCompletedTodoProjectMergeStatuses,
   GetProjectGitStatus,
   ImportProjectsFromParentDirectoryDialog,
   InitializeGitRepositoryAndImportProject,
@@ -73,6 +74,7 @@ const errorMessage = ref('')
 let gitStatusRequestId = 0
 let gitStatusInFlightProjectId = ''
 let gitStatusInFlightRequestId = 0
+let completedMergeStatusRequestGeneration = 0
 let lastFocusGitRefreshProjectId = ''
 let lastFocusGitRefreshAt = 0
 const focusGitRefreshDedupeMs = 500
@@ -98,6 +100,7 @@ const sidebarMaxWidth = 520
 const currentTodoView = ref('not-started')
 const todoProjectUIStates = ref({})
 const todoSidebarWidthState = ref(0)
+const completedMergeStatuses = ref({})
 const todoProjectUIStateSaveQueues = new Map()
 const todoSidebarWidthSaveQueue = {
   saving: false,
@@ -137,8 +140,7 @@ const todoForm = reactive({
   title: '',
   description: '',
   priority: 'medium',
-  projectIds: [],
-  projectBranches: {},
+  projectSelections: [],
   projectSearch: '',
   saving: false
 })
@@ -148,8 +150,7 @@ const todoDetail = reactive({
   title: '',
   description: '',
   priority: 'medium',
-  projectIds: [],
-  projectBranches: {},
+  projectSelections: [],
   projectSnapshots: [],
   projectSearch: '',
   readOnly: false,
@@ -159,8 +160,7 @@ const projectPicker = reactive({
   visible: false,
   todoId: '',
   query: '',
-  projectIds: [],
-  projectBranches: {},
+  projectSelections: [],
   saving: false
 })
 const recentWorkspacePicker = reactive({
@@ -355,7 +355,7 @@ const terminalSettingsDetected = computed(() => {
 const terminalSettingsFallback = computed(() => terminalSettings.value?.fallback || null)
 
 const selectedTodoFormProjects = computed(() => {
-  const selectedProjectIds = new Set(todoForm.projectIds)
+  const selectedProjectIds = new Set(todoForm.projectSelections.map((selection) => selection.projectId))
   return projects.value.filter((project) => selectedProjectIds.has(project.id))
 })
 
@@ -367,7 +367,7 @@ const selectedTodoDetailProjects = computed(() => {
   if (todoDetail.readOnly) {
     return []
   }
-  const selectedProjectIds = new Set(todoDetail.projectIds)
+  const selectedProjectIds = new Set(todoDetail.projectSelections.map((selection) => selection.projectId))
   const selected = []
   const seenProjectIds = new Set()
   for (const project of projects.value) {
@@ -400,7 +400,7 @@ const removedTodoDetailProjectsWithTerminals = computed(() => {
     return []
   }
 
-  const selectedProjectIds = new Set(todoDetail.projectIds)
+  const selectedProjectIds = new Set(todoDetail.projectSelections.map((selection) => selection.projectId))
   return todoProjects.value.filter((todoProject) => {
     return (
       todoProject.todoId === todoDetail.todoId &&
@@ -432,7 +432,7 @@ const projectPickerOptions = computed(() => {
 })
 
 const selectedProjectPickerProjects = computed(() => {
-  const selectedProjectIds = new Set(projectPicker.projectIds)
+  const selectedProjectIds = new Set(projectPicker.projectSelections.map((selection) => selection.projectId))
   return projects.value.filter((project) => selectedProjectIds.has(project.id))
 })
 
@@ -546,6 +546,7 @@ function applyState(state, options = {}) {
     dedupePending: options.dedupeGitStatus === true,
     force: options.forceGitStatusRefresh === true
   })
+  scheduleCompletedMergeStatusRefresh()
 }
 
 async function applyWorkspaceProjectState(state, options = {}) {
@@ -698,8 +699,7 @@ function createTodo() {
   todoForm.title = ''
   todoForm.description = ''
   todoForm.priority = 'medium'
-  todoForm.projectIds = []
-  todoForm.projectBranches = {}
+  todoForm.projectSelections = []
   todoForm.projectSearch = ''
   todoForm.saving = false
   errorMessage.value = ''
@@ -707,7 +707,7 @@ function createTodo() {
 
 function closeTodoForm() {
   todoForm.visible = false
-  todoForm.projectBranches = {}
+  todoForm.projectSelections = []
   todoForm.saving = false
 }
 
@@ -725,8 +725,7 @@ async function submitTodoForm() {
         title,
         description: todoForm.description.trim(),
         priority: normalizedTodoPriority(todoForm.priority),
-        projectIds: [...todoForm.projectIds],
-        projectBranches: normalizedProjectBranches(todoForm.projectBranches, todoForm.projectIds)
+        projects: todoProjectSelectionPayload(todoForm.projectSelections)
       })
     )
     closeTodoForm()
@@ -745,20 +744,19 @@ function editTodo(todoId) {
   }
 
   const linkedTodoProjects = todoProjects.value.filter((todoProject) => todoProject.todoId === todo.id)
-  const branchSeed = {}
-  for (const todoProject of linkedTodoProjects) {
-    if (todoProject.baseBranch) {
-      branchSeed[todoProject.projectId] = todoProject.baseBranch
-    }
-  }
 
   todoDetail.visible = true
   todoDetail.todoId = todo.id
   todoDetail.title = todo.title || ''
   todoDetail.description = todo.description || ''
   todoDetail.priority = normalizedTodoPriority(todo.priority)
-  todoDetail.projectIds = linkedTodoProjects.map((todoProject) => todoProject.projectId)
-  todoDetail.projectBranches = branchSeed
+  todoDetail.projectSelections = linkedTodoProjects.map((todoProject) => ({
+    projectId: todoProject.projectId,
+    baseBranch: todoProject.baseBranch || defaultBaseBranch(todoProject.projectId)
+  }))
+  for (const selection of todoDetail.projectSelections) {
+    void ensureProjectBranchesLoaded(selection.projectId)
+  }
   todoDetail.projectSnapshots = Array.isArray(todo.projectSnapshots) ? todo.projectSnapshots : []
   todoDetail.projectSearch = ''
   todoDetail.readOnly = todo.status === 'completed'
@@ -772,8 +770,7 @@ function closeTodoDetail() {
   todoDetail.title = ''
   todoDetail.description = ''
   todoDetail.priority = 'medium'
-  todoDetail.projectIds = []
-  todoDetail.projectBranches = {}
+  todoDetail.projectSelections = []
   todoDetail.projectSnapshots = []
   todoDetail.projectSearch = ''
   todoDetail.readOnly = false
@@ -784,8 +781,8 @@ async function toggleTodoDetailProject(project) {
   if (todoDetail.readOnly || !project?.id) {
     return
   }
-  todoDetail.projectIds = toggleProjectId(todoDetail.projectIds, project.id)
-  if (todoDetail.projectIds.includes(project.id)) {
+  todoDetail.projectSelections = toggleProjectSelection(todoDetail.projectSelections, project.id)
+  if (hasProjectSelection(todoDetail.projectSelections, project.id)) {
     await ensureProjectBranchesLoaded(project.id)
   }
 }
@@ -794,7 +791,7 @@ function removeTodoDetailProject(projectId) {
   if (todoDetail.readOnly) {
     return
   }
-  todoDetail.projectIds = todoDetail.projectIds.filter((selectedProjectId) => selectedProjectId !== projectId)
+  todoDetail.projectSelections = removeProjectSelection(todoDetail.projectSelections, projectId)
 }
 
 async function submitTodoDetail() {
@@ -822,8 +819,7 @@ async function submitTodoDetail() {
         title,
         description: todoDetail.description.trim(),
         priority: normalizedTodoPriority(todoDetail.priority),
-        projectIds: [...todoDetail.projectIds],
-        projectBranches: normalizedProjectBranches(todoDetail.projectBranches, todoDetail.projectIds)
+        projects: todoProjectSelectionPayload(todoDetail.projectSelections)
       })
     )
     closeTodoDetail()
@@ -838,8 +834,7 @@ async function submitTodoDetail() {
 async function addProjectToTodo(todoId) {
   projectPicker.todoId = todoId
   projectPicker.query = ''
-  projectPicker.projectIds = []
-  projectPicker.projectBranches = {}
+  projectPicker.projectSelections = []
   projectPicker.saving = false
   projectPicker.visible = true
   errorMessage.value = ''
@@ -849,8 +844,7 @@ function closeProjectPicker() {
   projectPicker.visible = false
   projectPicker.todoId = ''
   projectPicker.query = ''
-  projectPicker.projectIds = []
-  projectPicker.projectBranches = {}
+  projectPicker.projectSelections = []
   projectPicker.saving = false
 }
 
@@ -858,29 +852,23 @@ async function toggleProjectForTodo(project) {
   if (!project?.id) {
     return
   }
-  projectPicker.projectIds = toggleProjectId(projectPicker.projectIds, project.id)
-  if (projectPicker.projectIds.includes(project.id)) {
+  projectPicker.projectSelections = toggleProjectSelection(projectPicker.projectSelections, project.id)
+  if (hasProjectSelection(projectPicker.projectSelections, project.id)) {
     await ensureProjectBranchesLoaded(project.id)
   }
 }
 
 function removeProjectPickerProject(projectId) {
-  projectPicker.projectIds = projectPicker.projectIds.filter((selectedProjectId) => selectedProjectId !== projectId)
+  projectPicker.projectSelections = removeProjectSelection(projectPicker.projectSelections, projectId)
 }
 
 async function submitProjectPicker() {
-  if (!projectPicker.todoId || projectPicker.projectIds.length === 0) {
+  if (!projectPicker.todoId || projectPicker.projectSelections.length === 0) {
     return
   }
   projectPicker.saving = true
   try {
-    applyState(
-      await AddProjectsToTodoWithBranches(
-        projectPicker.todoId,
-        [...projectPicker.projectIds],
-        normalizedProjectBranches(projectPicker.projectBranches, projectPicker.projectIds)
-      )
-    )
+    applyState(await AddProjectSelectionsToTodo(projectPicker.todoId, todoProjectSelectionPayload(projectPicker.projectSelections)))
     closeProjectPicker()
     await activateActiveTerminal()
   } catch (error) {
@@ -894,14 +882,14 @@ async function toggleTodoFormProject(project) {
   if (!project?.id) {
     return
   }
-  todoForm.projectIds = toggleProjectId(todoForm.projectIds, project.id)
-  if (todoForm.projectIds.includes(project.id)) {
+  todoForm.projectSelections = toggleProjectSelection(todoForm.projectSelections, project.id)
+  if (hasProjectSelection(todoForm.projectSelections, project.id)) {
     await ensureProjectBranchesLoaded(project.id)
   }
 }
 
 function removeTodoFormProject(projectId) {
-  todoForm.projectIds = todoForm.projectIds.filter((selectedProjectId) => selectedProjectId !== projectId)
+  todoForm.projectSelections = removeProjectSelection(todoForm.projectSelections, projectId)
 }
 
 async function selectTodoProject(todoProjectId) {
@@ -1591,25 +1579,198 @@ function selectImportedProjectCandidate(projectId) {
     return
   }
   if (todoForm.visible) {
-    todoForm.projectIds = appendProjectId(todoForm.projectIds, projectId)
+    todoForm.projectSelections = appendProjectSelection(todoForm.projectSelections, projectId)
   }
   if (todoDetail.visible && !todoDetail.readOnly) {
-    todoDetail.projectIds = appendProjectId(todoDetail.projectIds, projectId)
+    todoDetail.projectSelections = appendProjectSelection(todoDetail.projectSelections, projectId)
   }
   if (projectPicker.visible) {
-    projectPicker.projectIds = appendProjectId(projectPicker.projectIds, projectId)
+    projectPicker.projectSelections = appendProjectSelection(projectPicker.projectSelections, projectId)
   }
 }
 
-function appendProjectId(projectIds, projectId) {
-  return projectIds.includes(projectId) ? projectIds : [...projectIds, projectId]
+function defaultBaseBranch(projectId = '') {
+  if (projectId && gitStatus.value?.projectId === projectId && gitStatus.value?.isRepo && gitStatus.value?.branch) {
+    return gitStatus.value.branch === '(detached)' ? '' : gitStatus.value.branch
+  }
+  return ''
 }
 
-function toggleProjectId(projectIds, projectId) {
-  if (projectIds.includes(projectId)) {
-    return projectIds.filter((candidate) => candidate !== projectId)
+function appendProjectSelection(projectSelections, projectId) {
+  if (projectSelections.some((selection) => selection.projectId === projectId)) {
+    return projectSelections
   }
-  return [...projectIds, projectId]
+  return [...projectSelections, { projectId, baseBranch: defaultBaseBranch(projectId) }]
+}
+
+function hasProjectSelection(projectSelections, projectId) {
+  return projectSelections.some((selection) => selection.projectId === projectId)
+}
+
+function toggleProjectSelection(projectSelections, projectId) {
+  if (projectSelections.some((selection) => selection.projectId === projectId)) {
+    return removeProjectSelection(projectSelections, projectId)
+  }
+  return appendProjectSelection(projectSelections, projectId)
+}
+
+function removeProjectSelection(projectSelections, projectId) {
+  return projectSelections.filter((selection) => selection.projectId !== projectId)
+}
+
+function selectedProjectBaseBranch(projectSelections, projectId) {
+  return projectSelections.find((selection) => selection.projectId === projectId)?.baseBranch || ''
+}
+
+function updateProjectBaseBranch(projectSelections, projectId, baseBranch) {
+  return projectSelections.map((selection) =>
+    selection.projectId === projectId ? { ...selection, baseBranch } : selection
+  )
+}
+
+function setTodoFormProjectBaseBranch(projectId, baseBranch) {
+  todoForm.projectSelections = updateProjectBaseBranch(todoForm.projectSelections, projectId, baseBranch)
+}
+
+function setTodoDetailProjectBaseBranch(projectId, baseBranch) {
+  todoDetail.projectSelections = updateProjectBaseBranch(todoDetail.projectSelections, projectId, baseBranch)
+}
+
+function setProjectPickerBaseBranch(projectId, baseBranch) {
+  projectPicker.projectSelections = updateProjectBaseBranch(projectPicker.projectSelections, projectId, baseBranch)
+}
+
+function todoProjectSelectionPayload(projectSelections) {
+  return projectSelections.map((selection) => ({
+    projectId: selection.projectId,
+    baseBranch: (selection.baseBranch || '').trim()
+  }))
+}
+
+function completedTodosWithSnapshots() {
+  return todos.value.filter((todo) => normalizeTodoStatus(todo) === 'completed' && Array.isArray(todo.projectSnapshots))
+}
+
+function normalizeTodoStatus(todo) {
+  if (todo?.status === 'active') {
+    return 'not-started'
+  }
+  return todo?.status || 'not-started'
+}
+
+function completedSnapshotKey(todo, snapshot, index) {
+  return [todo?.id || '', snapshot?.projectId || '', snapshot?.path || '', index].join('::')
+}
+
+function completedSnapshotBranchLabel(snapshot) {
+  const worktreeBranch = (snapshot?.worktreeBranch || '').trim() || 'Unknown branch'
+  const baseBranch = (snapshot?.baseBranch || '').trim() || 'Unknown base'
+  return `${worktreeBranch} -> ${baseBranch}`
+}
+
+function completedMergeStatusRequestFor(todo, snapshot, index) {
+  return {
+    id: completedSnapshotKey(todo, snapshot, index),
+    path: (snapshot?.path || '').trim(),
+    worktreeBranch: (snapshot?.worktreeBranch || '').trim(),
+    baseBranch: (snapshot?.baseBranch || '').trim()
+  }
+}
+
+function completedMergeStatusFingerprint(request) {
+  return [request.path, request.worktreeBranch, request.baseBranch].join('::')
+}
+
+function completedMergeStatusEntries() {
+  const entries = []
+  for (const todo of completedTodosWithSnapshots()) {
+    for (const [index, snapshot] of todo.projectSnapshots.entries()) {
+      const request = completedMergeStatusRequestFor(todo, snapshot, index)
+      entries.push({
+        key: completedSnapshotKey(todo, snapshot, index),
+        request,
+        fingerprint: completedMergeStatusFingerprint(request)
+      })
+    }
+  }
+  return entries
+}
+
+function scheduleCompletedMergeStatusRefresh(options = {}) {
+  nextTick(() => {
+    void refreshCompletedMergeStatuses(options)
+  })
+}
+
+async function refreshCompletedMergeStatuses(options = {}) {
+  if (options.force === true) {
+    completedMergeStatuses.value = {}
+  }
+  const entries = completedMergeStatusEntries()
+  const entryKeys = new Set(entries.map((entry) => entry.key))
+  const nextStatuses = {}
+  const requests = []
+
+  for (const entry of entries) {
+    const existing = completedMergeStatuses.value[entry.key]
+    if (existing?.fingerprint === entry.fingerprint) {
+      nextStatuses[entry.key] = existing
+      continue
+    }
+    if (!entry.request.path || !entry.request.worktreeBranch || !entry.request.baseBranch) {
+      nextStatuses[entry.key] = {
+        id: entry.key,
+        status: 'unknown',
+        reason: 'missing snapshot branch information',
+        fingerprint: entry.fingerprint
+      }
+      continue
+    }
+    requests.push(entry.request)
+  }
+
+  for (const [key, value] of Object.entries(completedMergeStatuses.value)) {
+    if (entryKeys.has(key) && nextStatuses[key] === undefined) {
+      nextStatuses[key] = value
+    }
+  }
+
+  completedMergeStatuses.value = nextStatuses
+
+  if (!hasWorkspace.value || currentTodoView.value !== 'completed') {
+    completedMergeStatusRequestGeneration += 1
+    return
+  }
+  if (requests.length === 0) {
+    return
+  }
+
+  const generation = ++completedMergeStatusRequestGeneration
+  try {
+    const statuses = await GetCompletedTodoProjectMergeStatuses(requests)
+    if (generation !== completedMergeStatusRequestGeneration) {
+      return
+    }
+    const latestEntries = completedMergeStatusEntries()
+    const latestFingerprintsByKey = new Map(latestEntries.map((entry) => [entry.key, entry.fingerprint]))
+    const mergedStatuses = {}
+    for (const [key, value] of Object.entries(completedMergeStatuses.value)) {
+      if (latestFingerprintsByKey.get(key) === value?.fingerprint) {
+        mergedStatuses[key] = value
+      }
+    }
+    for (const status of statuses || []) {
+      const fingerprint = latestFingerprintsByKey.get(status?.id)
+      if (status?.id && fingerprint) {
+        mergedStatuses[status.id] = { ...status, fingerprint }
+      }
+    }
+    completedMergeStatuses.value = mergedStatuses
+  } catch (error) {
+    if (generation === completedMergeStatusRequestGeneration) {
+      showError(error)
+    }
+  }
 }
 
 function addCountChip(chips, id, count, label) {
@@ -1653,13 +1814,16 @@ function stopSidebarResize() {
 }
 
 function handleTodoViewChange(view) {
+  const previousView = currentTodoView.value
   currentTodoView.value = normalizeTodoView(view)
   persistActiveTodoProjectUIState()
+  scheduleCompletedMergeStatusRefresh({ force: currentTodoView.value === 'completed' && previousView !== 'completed' })
 }
 
 function applyTodoProjectUIState(todoProjectId) {
   const state = todoProjectId ? todoProjectUIStates.value[todoProjectId] : null
   currentTodoView.value = normalizeTodoView(state?.todoView)
+  scheduleCompletedMergeStatusRefresh()
 }
 
 function applyTodoWorkspaceUIState(todoProjectId) {
@@ -1967,6 +2131,7 @@ function clearToastTimer() {
       :import-summary="importSummary"
       :has-workspace="hasWorkspace"
       :todo-view="currentTodoView"
+      :completed-merge-statuses="completedMergeStatuses"
       @create-project="createProject"
       @import-projects="importProjectsFromParentDirectory"
       @select-project="selectProject"
@@ -2280,12 +2445,14 @@ function clearToastTimer() {
               >
                 <span class="project-name">{{ project.name }}</span>
                 <input
-                  v-model="todoForm.projectBranches[project.id]"
+                  :value="selectedProjectBaseBranch(todoForm.projectSelections, project.id)"
                   type="text"
-                  class="todo-selected-project-branch"
+                  class="todo-branch-input"
                   placeholder="base 分支 (留空使用默认)"
                   :list="projectBranchOptionsId('todo-create', project.id)"
                   :data-testid="`todo-selected-project-branch-${project.id}`"
+                  aria-label="Base branch"
+                  @input="setTodoFormProjectBaseBranch(project.id, $event.target.value)"
                 />
                 <datalist
                   :id="projectBranchOptionsId('todo-create', project.id)"
@@ -2321,9 +2488,9 @@ function clearToastTimer() {
                 :key="project.id"
                 type="button"
                 class="todo-project-option"
-                :class="{ selected: todoForm.projectIds.includes(project.id) }"
+                :class="{ selected: todoForm.projectSelections.some((selection) => selection.projectId === project.id) }"
                 :data-testid="`todo-project-option-${project.id}`"
-                :aria-pressed="todoForm.projectIds.includes(project.id)"
+                :aria-pressed="todoForm.projectSelections.some((selection) => selection.projectId === project.id)"
                 @click="toggleTodoFormProject(project)"
               >
                 <span class="project-name">{{ project.name }}</span>
@@ -2425,7 +2592,7 @@ function clearToastTimer() {
                 :data-testid="`todo-detail-project-snapshot-${snapshot.projectId}`"
               >
                 <span class="project-name">{{ snapshot.name }}</span>
-                <span class="project-path">{{ snapshot.path }}</span>
+                <span class="project-path">{{ completedSnapshotBranchLabel(snapshot) }}</span>
               </span>
             </div>
             <span
@@ -2489,13 +2656,15 @@ function clearToastTimer() {
               >
                 <span class="project-name">{{ project.name }}</span>
                 <input
-                  v-model="todoDetail.projectBranches[project.id]"
+                  :value="selectedProjectBaseBranch(todoDetail.projectSelections, project.id)"
                   type="text"
-                  class="todo-selected-project-branch"
+                  class="todo-branch-input"
                   placeholder="base 分支 (留空使用默认)"
                   :disabled="todoDetail.saving"
                   :list="projectBranchOptionsId('todo-detail', project.id)"
                   :data-testid="`todo-detail-selected-project-branch-${project.id}`"
+                  aria-label="Base branch"
+                  @input="setTodoDetailProjectBaseBranch(project.id, $event.target.value)"
                 />
                 <datalist
                   :id="projectBranchOptionsId('todo-detail', project.id)"
@@ -2533,9 +2702,9 @@ function clearToastTimer() {
                 :key="project.id"
                 type="button"
                 class="todo-project-option"
-                :class="{ selected: todoDetail.projectIds.includes(project.id) }"
+                :class="{ selected: todoDetail.projectSelections.some((selection) => selection.projectId === project.id) }"
                 :data-testid="`todo-detail-project-option-${project.id}`"
-                :aria-pressed="todoDetail.projectIds.includes(project.id)"
+                :aria-pressed="todoDetail.projectSelections.some((selection) => selection.projectId === project.id)"
                 :disabled="todoDetail.saving"
                 @click="toggleTodoDetailProject(project)"
               >
@@ -2632,13 +2801,15 @@ function clearToastTimer() {
             >
               <span class="project-name">{{ project.name }}</span>
               <input
-                v-model="projectPicker.projectBranches[project.id]"
+                :value="selectedProjectBaseBranch(projectPicker.projectSelections, project.id)"
                 type="text"
-                class="todo-selected-project-branch"
+                class="todo-branch-input"
                 placeholder="base 分支 (留空使用默认)"
                 :disabled="projectPicker.saving"
                 :list="projectBranchOptionsId('project-picker', project.id)"
                 :data-testid="`todo-project-picker-branch-${project.id}`"
+                aria-label="Base branch"
+                @input="setProjectPickerBaseBranch(project.id, $event.target.value)"
               />
               <datalist
                 :id="projectBranchOptionsId('project-picker', project.id)"
@@ -2678,9 +2849,9 @@ function clearToastTimer() {
               :key="project.id"
               type="button"
               class="todo-project-option"
-              :class="{ selected: projectPicker.projectIds.includes(project.id) }"
+              :class="{ selected: projectPicker.projectSelections.some((selection) => selection.projectId === project.id) }"
               :data-testid="`todo-project-picker-option-${project.id}`"
-              :aria-pressed="projectPicker.projectIds.includes(project.id)"
+              :aria-pressed="projectPicker.projectSelections.some((selection) => selection.projectId === project.id)"
               :disabled="projectPicker.saving"
               @click="toggleProjectForTodo(project)"
             >
@@ -2697,7 +2868,7 @@ function clearToastTimer() {
             type="button"
             class="toolbar-button primary"
             data-testid="todo-project-picker-submit"
-            :disabled="projectPicker.saving || projectPicker.projectIds.length === 0"
+            :disabled="projectPicker.saving || projectPicker.projectSelections.length === 0"
             @click="submitProjectPicker"
           >
             Add

@@ -35,6 +35,12 @@ const (
 	WorktreeStatusFailed  = "failed"
 )
 
+const (
+	CompletedTodoProjectMergeStatusMerged   = "merged"
+	CompletedTodoProjectMergeStatusUnmerged = "unmerged"
+	CompletedTodoProjectMergeStatusUnknown  = "unknown"
+)
+
 type Project struct {
 	ID             string `json:"id"`
 	Name           string `json:"name"`
@@ -60,20 +66,27 @@ type Todo struct {
 }
 
 type CreateTodoRequest struct {
-	Title           string            `json:"title"`
-	Description     string            `json:"description,omitempty"`
-	Priority        string            `json:"priority,omitempty"`
-	ProjectIDs      []string          `json:"projectIds,omitempty"`
-	ProjectBranches map[string]string `json:"projectBranches,omitempty"`
+	Title           string                 `json:"title"`
+	Description     string                 `json:"description,omitempty"`
+	Priority        string                 `json:"priority,omitempty"`
+	ProjectIDs      []string               `json:"projectIds,omitempty"`
+	ProjectBranches map[string]string      `json:"projectBranches,omitempty"`
+	Projects        []TodoProjectSelection `json:"projects,omitempty"`
 }
 
 type UpdateTodoRequest struct {
-	ID              string            `json:"id"`
-	Title           string            `json:"title"`
-	Description     string            `json:"description,omitempty"`
-	Priority        string            `json:"priority,omitempty"`
-	ProjectIDs      []string          `json:"projectIds,omitempty"`
-	ProjectBranches map[string]string `json:"projectBranches,omitempty"`
+	ID              string                 `json:"id"`
+	Title           string                 `json:"title"`
+	Description     string                 `json:"description,omitempty"`
+	Priority        string                 `json:"priority,omitempty"`
+	ProjectIDs      []string               `json:"projectIds,omitempty"`
+	ProjectBranches map[string]string      `json:"projectBranches,omitempty"`
+	Projects        []TodoProjectSelection `json:"projects,omitempty"`
+}
+
+type TodoProjectSelection struct {
+	ProjectID  string `json:"projectId"`
+	BaseBranch string `json:"baseBranch,omitempty"`
 }
 
 type TodoProject struct {
@@ -94,9 +107,24 @@ type TodoProject struct {
 }
 
 type TodoProjectSnapshot struct {
-	ProjectID string `json:"projectId"`
-	Name      string `json:"name"`
-	Path      string `json:"path"`
+	ProjectID      string `json:"projectId"`
+	Name           string `json:"name"`
+	Path           string `json:"path"`
+	BaseBranch     string `json:"baseBranch,omitempty"`
+	WorktreeBranch string `json:"worktreeBranch,omitempty"`
+}
+
+type CompletedTodoProjectMergeStatusRequest struct {
+	ID             string `json:"id"`
+	Path           string `json:"path,omitempty"`
+	WorktreeBranch string `json:"worktreeBranch,omitempty"`
+	BaseBranch     string `json:"baseBranch,omitempty"`
+}
+
+type CompletedTodoProjectMergeStatus struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
+	Reason string `json:"reason,omitempty"`
 }
 
 type ProjectImportSummary struct {
@@ -139,6 +167,7 @@ type ProjectManager struct {
 	globalCandidatesPath string
 	newID                func() string
 	now                  func() time.Time
+	gitBranch            func(path string) (string, error)
 }
 
 type ProjectManagerOption func(*ProjectManager)
@@ -148,6 +177,7 @@ func NewProjectManager(configPath string, opts ...ProjectManagerOption) *Project
 		configPath: configPath,
 		newID:      uuid.NewString,
 		now:        time.Now,
+		gitBranch:  queryGitBranch,
 	}
 	for _, opt := range opts {
 		opt(manager)
@@ -164,6 +194,12 @@ func WithProjectIDGenerator(newID func() string) ProjectManagerOption {
 func WithProjectClock(now func() time.Time) ProjectManagerOption {
 	return func(manager *ProjectManager) {
 		manager.now = now
+	}
+}
+
+func WithProjectGitBranch(gitBranch func(path string) (string, error)) ProjectManagerOption {
+	return func(manager *ProjectManager) {
+		manager.gitBranch = gitBranch
 	}
 }
 
@@ -328,7 +364,8 @@ func (manager *ProjectManager) CreateTodo(request CreateTodoRequest) (ProjectSta
 	}
 	normalizedPriority := normalizeTodoPriority(request.Priority)
 	normalizedDescription := strings.TrimSpace(request.Description)
-	projectIDs := normalizeProjectIDs(request.ProjectIDs)
+	projectSelections := normalizeProjectSelections(request.Projects, request.ProjectIDs, request.ProjectBranches)
+	projectIDs := projectIDsFromSelections(projectSelections)
 
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
@@ -350,10 +387,9 @@ func (manager *ProjectManager) CreateTodo(request CreateTodoRequest) (ProjectSta
 		CreatedAt:   now,
 	}
 	state.Todos = append(state.Todos, todo)
-	for _, projectID := range projectIDs {
-		project, _ := projectByIDFromProjects(state.Projects, projectID)
-		branch := branchForProject(request.ProjectBranches, projectID)
-		state.TodoProjects = append(state.TodoProjects, todoProjectFromProject(manager.newID, todo.ID, project, branch, now))
+	for _, selection := range projectSelections {
+		project, _ := projectByIDFromProjects(state.Projects, selection.ProjectID)
+		state.TodoProjects = append(state.TodoProjects, todoProjectFromProject(manager.newID, todo.ID, project, selection.BaseBranch, now))
 	}
 	if err := manager.saveLocked(state); err != nil {
 		return ProjectState{}, err
@@ -366,7 +402,7 @@ func (manager *ProjectManager) AssociateProjectWithTodo(todoID string, projectID
 }
 
 func (manager *ProjectManager) AssociateProjectsWithTodo(todoID string, projectIDs []string) (ProjectState, error) {
-	return manager.associateProjects(todoID, projectIDs, nil)
+	return manager.associateProjectSelections(todoID, normalizeProjectSelections(nil, projectIDs, nil))
 }
 
 // AssociateProjectsWithBranches links projects to a TODO in the given order
@@ -375,11 +411,15 @@ func (manager *ProjectManager) AssociateProjectsWithTodo(todoID string, projectI
 // branch means the repository default branch will be used at worktree
 // preparation time.
 func (manager *ProjectManager) AssociateProjectsWithBranches(todoID string, projectIDs []string, projectBranches map[string]string) (ProjectState, error) {
-	return manager.associateProjects(todoID, projectIDs, projectBranches)
+	return manager.associateProjectSelections(todoID, normalizeProjectSelections(nil, projectIDs, projectBranches))
 }
 
-func (manager *ProjectManager) associateProjects(todoID string, projectIDs []string, branches map[string]string) (ProjectState, error) {
-	projectIDs = normalizeProjectIDs(projectIDs)
+func (manager *ProjectManager) AssociateProjectSelectionsWithTodo(todoID string, projectSelections []TodoProjectSelection) (ProjectState, error) {
+	return manager.associateProjectSelections(todoID, normalizeProjectSelections(projectSelections, nil, nil))
+}
+
+func (manager *ProjectManager) associateProjectSelections(todoID string, projectSelections []TodoProjectSelection) (ProjectState, error) {
+	projectIDs := projectIDsFromSelections(projectSelections)
 
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
@@ -400,16 +440,13 @@ func (manager *ProjectManager) associateProjects(todoID string, projectIDs []str
 	selectedAt := manager.now().UTC().Format(time.RFC3339)
 	activeTodoProjectID := ""
 	activeProjectID := ""
-	for _, projectID := range projectIDs {
-		project, _ := projectByIDFromProjects(state.Projects, projectID)
-		branch := branchForProject(branches, projectID)
+	for _, selection := range projectSelections {
+		project, _ := projectByIDFromProjects(state.Projects, selection.ProjectID)
 		found := false
 		for index := range state.TodoProjects {
 			if state.TodoProjects[index].TodoID == todoID && sameTodoProjectPath(state.TodoProjects[index], project) {
 				state.TodoProjects[index].LastSelectedAt = selectedAt
-				if branch != "" {
-					state.TodoProjects[index].BaseBranch = branch
-				}
+				state.TodoProjects[index].BaseBranch = selection.BaseBranch
 				if activeTodoProjectID == "" {
 					activeTodoProjectID = state.TodoProjects[index].ID
 					activeProjectID = state.TodoProjects[index].ProjectID
@@ -421,7 +458,7 @@ func (manager *ProjectManager) associateProjects(todoID string, projectIDs []str
 		if found {
 			continue
 		}
-		todoProject := todoProjectFromProject(manager.newID, todoID, project, branch, selectedAt)
+		todoProject := todoProjectFromProject(manager.newID, todoID, project, selection.BaseBranch, selectedAt)
 		state.TodoProjects = append(state.TodoProjects, todoProject)
 		if activeTodoProjectID == "" {
 			activeTodoProjectID = todoProject.ID
@@ -444,10 +481,11 @@ func (manager *ProjectManager) UpdateTodo(request UpdateTodoRequest) (ProjectSta
 	}
 	normalizedDescription := strings.TrimSpace(request.Description)
 	normalizedPriority := normalizeTodoPriority(request.Priority)
-	projectIDs, err := normalizeProjectIDsForUpdate(request.ProjectIDs)
+	projectSelections, err := normalizeProjectSelectionsForUpdate(request.Projects, request.ProjectIDs, request.ProjectBranches)
 	if err != nil {
 		return ProjectState{}, nil, err
 	}
+	projectIDs := projectIDsFromSelections(projectSelections)
 
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
@@ -492,18 +530,14 @@ func (manager *ProjectManager) UpdateTodo(request UpdateTodoRequest) (ProjectSta
 
 	now := manager.now().UTC().Format(time.RFC3339)
 	updatedTodoProjects := make([]TodoProject, 0, len(projectIDs))
-	for _, projectID := range projectIDs {
-		project, _ := projectByIDFromProjects(state.Projects, projectID)
+	for _, selection := range projectSelections {
+		project, _ := projectByIDFromProjects(state.Projects, selection.ProjectID)
 		if todoProject, ok := existingTodoProjectByPath(existingByProjectID, project); ok {
-			branch := branchForProject(request.ProjectBranches, projectID)
-			if branch != "" {
-				todoProject.BaseBranch = branch
-			}
+			todoProject.BaseBranch = selection.BaseBranch
 			updatedTodoProjects = append(updatedTodoProjects, todoProject)
 			continue
 		}
-		branch := branchForProject(request.ProjectBranches, projectID)
-		updatedTodoProjects = append(updatedTodoProjects, todoProjectFromProject(manager.newID, request.ID, project, branch, now))
+		updatedTodoProjects = append(updatedTodoProjects, todoProjectFromProject(manager.newID, request.ID, project, selection.BaseBranch, now))
 	}
 	state.TodoProjects = replaceTodoProjectsForTodo(state.TodoProjects, request.ID, updatedTodoProjects)
 	updateActiveContextAfterTodoProjectRemoval(&state, request.ID, removedTodoProjectIDs, updatedTodoProjects)
@@ -610,6 +644,73 @@ func (manager *ProjectManager) CompleteTodo(todoID string) (ProjectState, error)
 	clearActiveTodoContext(&state, todoID)
 	if err := manager.saveLocked(state); err != nil {
 		return ProjectState{}, err
+	}
+	return state, nil
+}
+
+func (manager *ProjectManager) FillCompletedTodoSnapshotBranches(todoID string) (ProjectState, error) {
+	if manager.gitBranch == nil {
+		return manager.Load()
+	}
+
+	state, err := manager.Load()
+	if err != nil {
+		return ProjectState{}, err
+	}
+	todo := Todo{}
+	found := false
+	for _, candidate := range state.Todos {
+		if candidate.ID == todoID {
+			todo = candidate
+			found = true
+			break
+		}
+	}
+	if !found || todo.Status != TodoStatusCompleted {
+		return state, nil
+	}
+
+	branches := make([]string, len(todo.ProjectSnapshots))
+	changed := false
+	for index, snapshot := range todo.ProjectSnapshots {
+		if snapshot.WorktreeBranch != "" || snapshot.Path == "" {
+			continue
+		}
+		branch, err := manager.gitBranch(snapshot.Path)
+		if err != nil || branch == "" {
+			continue
+		}
+		branches[index] = branch
+		changed = true
+	}
+	if !changed {
+		return state, nil
+	}
+
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	state, err = manager.loadLocked()
+	if err != nil {
+		return ProjectState{}, err
+	}
+	for todoIndex := range state.Todos {
+		if state.Todos[todoIndex].ID != todoID || state.Todos[todoIndex].Status != TodoStatusCompleted {
+			return state, nil
+		}
+		for index, branch := range branches {
+			if branch == "" || index >= len(state.Todos[todoIndex].ProjectSnapshots) {
+				continue
+			}
+			if state.Todos[todoIndex].ProjectSnapshots[index].WorktreeBranch == "" &&
+				state.Todos[todoIndex].ProjectSnapshots[index].Path == todo.ProjectSnapshots[index].Path {
+				state.Todos[todoIndex].ProjectSnapshots[index].WorktreeBranch = branch
+			}
+		}
+		if err := manager.saveLocked(state); err != nil {
+			return ProjectState{}, err
+		}
+		return state, nil
 	}
 	return state, nil
 }
@@ -1315,7 +1416,7 @@ func projectFromTodoProject(todoProject TodoProject) (Project, bool) {
 	return project, true
 }
 
-func todoProjectFromProject(newID func() string, todoID string, project Project, branch string, now string) TodoProject {
+func todoProjectFromProject(newID func() string, todoID string, project Project, baseBranch string, now string) TodoProject {
 	return TodoProject{
 		ID:              newID(),
 		TodoID:          todoID,
@@ -1323,7 +1424,7 @@ func todoProjectFromProject(newID func() string, todoID string, project Project,
 		SourceProjectID: project.ID,
 		Name:            project.Name,
 		Path:            project.Path,
-		BaseBranch:      strings.TrimSpace(branch),
+		BaseBranch:      strings.TrimSpace(baseBranch),
 		Available:       directoryAvailable(project.Path),
 		CreatedAt:       now,
 		LastSelectedAt:  now,
@@ -1475,10 +1576,16 @@ func todoProjectSnapshots(projects []Project, todoProjects []TodoProject, todoID
 				continue
 			}
 		}
+		snapshotPath := project.Path
+		if todoProject.WorktreePath != "" {
+			snapshotPath = todoProject.WorktreePath
+		}
 		snapshots = append(snapshots, TodoProjectSnapshot{
-			ProjectID: todoProject.SourceProjectID,
-			Name:      project.Name,
-			Path:      project.Path,
+			ProjectID:      todoProject.SourceProjectID,
+			Name:           project.Name,
+			Path:           snapshotPath,
+			BaseBranch:     todoProject.BaseBranch,
+			WorktreeBranch: todoProject.WorktreeBranch,
 		})
 	}
 	return snapshots
@@ -1510,6 +1617,45 @@ func normalizeProjectIDs(projectIDs []string) []string {
 	return normalized
 }
 
+func normalizeProjectSelections(selections []TodoProjectSelection, projectIDs []string, branches map[string]string) []TodoProjectSelection {
+	normalized := []TodoProjectSelection{}
+	seen := map[string]bool{}
+	for _, selection := range selections {
+		projectID := strings.TrimSpace(selection.ProjectID)
+		if projectID == "" || seen[projectID] {
+			continue
+		}
+		seen[projectID] = true
+		normalized = append(normalized, TodoProjectSelection{
+			ProjectID:  projectID,
+			BaseBranch: strings.TrimSpace(selection.BaseBranch),
+		})
+	}
+	if len(normalized) > 0 || len(selections) > 0 {
+		return normalized
+	}
+	for _, projectID := range projectIDs {
+		projectID = strings.TrimSpace(projectID)
+		if projectID == "" || seen[projectID] {
+			continue
+		}
+		seen[projectID] = true
+		normalized = append(normalized, TodoProjectSelection{
+			ProjectID:  projectID,
+			BaseBranch: branchForProject(branches, projectID),
+		})
+	}
+	return normalized
+}
+
+func projectIDsFromSelections(selections []TodoProjectSelection) []string {
+	projectIDs := make([]string, 0, len(selections))
+	for _, selection := range selections {
+		projectIDs = append(projectIDs, selection.ProjectID)
+	}
+	return projectIDs
+}
+
 func normalizeTodoIDs(todoIDs []string) []string {
 	normalized := []string{}
 	seen := map[string]bool{}
@@ -1524,9 +1670,27 @@ func normalizeTodoIDs(todoIDs []string) []string {
 	return normalized
 }
 
-func normalizeProjectIDsForUpdate(projectIDs []string) ([]string, error) {
-	normalized := []string{}
+func normalizeProjectSelectionsForUpdate(selections []TodoProjectSelection, projectIDs []string, branches map[string]string) ([]TodoProjectSelection, error) {
+	normalized := []TodoProjectSelection{}
 	seen := map[string]bool{}
+	useSelections := len(selections) > 0
+	if useSelections {
+		for _, selection := range selections {
+			projectID := strings.TrimSpace(selection.ProjectID)
+			if projectID == "" {
+				continue
+			}
+			if seen[projectID] {
+				return nil, errors.New("duplicate project")
+			}
+			seen[projectID] = true
+			normalized = append(normalized, TodoProjectSelection{
+				ProjectID:  projectID,
+				BaseBranch: strings.TrimSpace(selection.BaseBranch),
+			})
+		}
+		return normalized, nil
+	}
 	for _, projectID := range projectIDs {
 		projectID = strings.TrimSpace(projectID)
 		if projectID == "" {
@@ -1536,7 +1700,10 @@ func normalizeProjectIDsForUpdate(projectIDs []string) ([]string, error) {
 			return nil, errors.New("duplicate project")
 		}
 		seen[projectID] = true
-		normalized = append(normalized, projectID)
+		normalized = append(normalized, TodoProjectSelection{
+			ProjectID:  projectID,
+			BaseBranch: branchForProject(branches, projectID),
+		})
 	}
 	return normalized, nil
 }

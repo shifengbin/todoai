@@ -69,6 +69,10 @@ const props = defineProps({
   todoView: {
     type: String,
     default: ''
+  },
+  completedMergeStatuses: {
+    type: Object,
+    default: () => ({})
   }
 })
 
@@ -1013,6 +1017,42 @@ function formatDuration(durationMs) {
   return `${seconds}s`
 }
 
+function completedSnapshotKey(todo, snapshot, index) {
+  return [todo?.id || '', snapshot?.projectId || '', snapshot?.path || '', index].join('::')
+}
+
+function completedSnapshotTestId(todo, snapshot, index) {
+  return `${todo?.id || 'todo'}-${snapshot?.projectId || 'project'}-${index}`
+}
+
+function completedSnapshotBranchLabel(snapshot) {
+  const worktreeBranch = (snapshot?.worktreeBranch || '').trim() || 'Unknown branch'
+  const baseBranch = (snapshot?.baseBranch || '').trim() || 'Unknown base'
+  return `${worktreeBranch} -> ${baseBranch}`
+}
+
+function completedMergeStatus(todo, snapshot, index) {
+  const key = completedSnapshotKey(todo, snapshot, index)
+  const status = props.completedMergeStatuses[key]?.status || ''
+  if (!snapshot?.worktreeBranch || !snapshot?.baseBranch) {
+    return 'unknown'
+  }
+  return ['merged', 'unmerged', 'unknown'].includes(status) ? status : 'checking'
+}
+
+function completedMergeStatusTitle(status) {
+  if (status === 'merged') {
+    return 'Merged'
+  }
+  if (status === 'unmerged') {
+    return 'Not merged'
+  }
+  if (status === 'checking') {
+    return 'Checking merge status'
+  }
+  return 'Merge status unknown'
+}
+
 onMounted(() => {
   window.addEventListener('click', closeFloatingMenus)
 })
@@ -1885,12 +1925,23 @@ watch(
           </div>
           <div v-if="todo.projectSnapshots?.length" class="archived-projects">
             <div
-              v-for="snapshot in todo.projectSnapshots"
-              :key="`${todo.id}-${snapshot.projectId}`"
+              v-for="(snapshot, snapshotIndex) in todo.projectSnapshots"
+              :key="completedSnapshotKey(todo, snapshot, snapshotIndex)"
               class="archived-project"
             >
+              <span
+                class="completed-project-merge-status"
+                :class="completedMergeStatus(todo, snapshot, snapshotIndex)"
+                :data-testid="`completed-project-merge-status-${completedSnapshotTestId(todo, snapshot, snapshotIndex)}`"
+                :title="completedMergeStatusTitle(completedMergeStatus(todo, snapshot, snapshotIndex))"
+                aria-hidden="true"
+              >
+                <Check v-if="completedMergeStatus(todo, snapshot, snapshotIndex) === 'merged'" :size="14" />
+                <LoaderCircle v-else-if="completedMergeStatus(todo, snapshot, snapshotIndex) === 'checking'" :size="14" />
+                <TriangleAlert v-else :size="14" />
+              </span>
               <span class="project-name">{{ snapshot.name }}</span>
-              <span class="project-path">{{ snapshot.path }}</span>
+              <span class="project-path">{{ completedSnapshotBranchLabel(snapshot) }}</span>
             </div>
           </div>
         </div>
