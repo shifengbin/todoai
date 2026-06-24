@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -2559,15 +2560,22 @@ describe('App project terminal tree', () => {
         }
       })
     )
-    window.confirm.mockReturnValueOnce(true)
     const wrapper = await mountReadyApp()
 
     await selectTodoMenuAction(wrapper, 'add-project', 'todo-a')
     await wrapper.find('[data-testid="import-single-project-candidate"]').trigger('click')
     await flushPromises()
 
-    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('初始化 Git 仓库'))
+    expect(window.confirm).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="git-init-confirm-dialog"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="git-init-confirm-path"]').text()).toBe('/work/beta')
+    expect(InitializeGitRepositoryAndImportProject).not.toHaveBeenCalled()
+
+    await wrapper.find('[data-testid="git-init-confirm-submit"]').trigger('click')
+    await flushPromises()
+
     expect(InitializeGitRepositoryAndImportProject).toHaveBeenCalledWith('/work/beta')
+    expect(wrapper.find('[data-testid="git-init-confirm-dialog"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="todo-project-picker-tag-project-b"]').exists()).toBe(true)
   })
 
@@ -2578,14 +2586,20 @@ describe('App project terminal tree', () => {
         requiresGitInitialization: true,
         path: '/work/beta'
       })
-      window.confirm.mockReturnValueOnce(false)
       const wrapper = await mountReadyApp()
 
       await selectTodoMenuAction(wrapper, 'add-project', 'todo-a')
       await wrapper.find('[data-testid="import-single-project-candidate"]').trigger('click')
       await flushPromises()
 
+      expect(window.confirm).not.toHaveBeenCalled()
+      expect(wrapper.find('[data-testid="git-init-confirm-dialog"]').exists()).toBe(true)
+
+      await wrapper.find('[data-testid="git-init-confirm-cancel"]').trigger('click')
+      await flushPromises()
+
       expect(InitializeGitRepositoryAndImportProject).not.toHaveBeenCalled()
+      expect(wrapper.find('[data-testid="git-init-confirm-dialog"]').exists()).toBe(false)
       expect(wrapper.find('[data-testid="app-toast"]').text()).toContain('只能导入 Git 仓库')
 
       vi.advanceTimersByTime(1999)
@@ -2598,6 +2612,31 @@ describe('App project terminal tree', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('renders import toast above modal overlays', async () => {
+    appApiMock.CreateProjectFromDialog.mockResolvedValue({
+      requiresGitInitialization: true,
+      path: '/work/beta'
+    })
+    const wrapper = await mountReadyApp()
+
+    await selectTodoMenuAction(wrapper, 'add-project', 'todo-a')
+    await wrapper.find('[data-testid="import-single-project-candidate"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="git-init-confirm-cancel"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="app-toast"]').exists()).toBe(true)
+
+    const styles = readFileSync('src/style.css', 'utf8')
+    const toastRule = styles.match(/\.app-toast\s*{([^}]*)}/s)?.[1] || ''
+    const settingsOverlayRule = styles.match(/\.settings-overlay\s*{([^}]*)}/s)?.[1] || ''
+    const gitInitOverlayRule = styles.match(/\.git-init-confirm-overlay\s*{([^}]*)}/s)?.[1] || ''
+    const zIndexFromRule = (rule) => Number(rule.match(/z-index:\s*(\d+);/)?.[1])
+
+    expect(zIndexFromRule(toastRule)).toBeGreaterThan(zIndexFromRule(settingsOverlayRule))
+    expect(zIndexFromRule(toastRule)).toBeGreaterThan(zIndexFromRule(gitInitOverlayRule))
   })
 
   it('selects a single imported project in the create TODO form only after import', async () => {

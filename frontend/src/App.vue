@@ -82,6 +82,11 @@ const gitOnlyImportToastText = '只能导入 Git 仓库'
 const bulkGitImportTooltip = '仅导入一级子目录中的 Git 仓库'
 const toastDurationMs = 2000
 let toastTimer = null
+const gitInitializationPrompt = reactive({
+  visible: false,
+  path: ''
+})
+let gitInitializationPromptResolve = null
 const terminalMenu = reactive({
   visible: false,
   terminalId: '',
@@ -491,6 +496,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('mouseup', stopSidebarResize)
   clearAllTitleActivityTimers()
   clearToastTimer()
+  resolveGitInitializationPrompt(false)
 })
 
 function applyState(state, options = {}) {
@@ -657,7 +663,7 @@ async function importSingleProjectCandidate() {
 async function resolveProjectImportResult(result, previousProjectIds) {
   if (result?.requiresGitInitialization) {
     const path = result.path || ''
-    if (!window.confirm('所选目录不是 Git 仓库，是否初始化 Git 仓库后导入？')) {
+    if (!await requestGitInitializationConfirmation(path)) {
       showToast(gitOnlyImportToastText)
       return null
     }
@@ -675,6 +681,27 @@ async function resolveProjectImportResult(result, previousProjectIds) {
   return {
     state,
     projectId: importedSingleProjectId(state, previousProjectIds)
+  }
+}
+
+function requestGitInitializationConfirmation(path) {
+  if (gitInitializationPromptResolve) {
+    gitInitializationPromptResolve(false)
+  }
+  gitInitializationPrompt.visible = true
+  gitInitializationPrompt.path = path
+  return new Promise((resolve) => {
+    gitInitializationPromptResolve = resolve
+  })
+}
+
+function resolveGitInitializationPrompt(confirmed) {
+  const resolve = gitInitializationPromptResolve
+  gitInitializationPromptResolve = null
+  gitInitializationPrompt.visible = false
+  gitInitializationPrompt.path = ''
+  if (resolve) {
+    resolve(confirmed)
   }
 }
 
@@ -2167,6 +2194,48 @@ function clearToastTimer() {
 
     <div v-if="toastMessage" class="app-toast" data-testid="app-toast" role="status">
       {{ toastMessage }}
+    </div>
+
+    <div
+      v-if="gitInitializationPrompt.visible"
+      class="git-init-confirm-overlay"
+      data-testid="git-init-confirm-overlay"
+      @click="resolveGitInitializationPrompt(false)"
+    >
+      <section
+        class="git-init-confirm-dialog"
+        data-testid="git-init-confirm-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="git-init-confirm-title"
+        @click.stop
+      >
+        <header class="git-init-confirm-header">
+          <h2 id="git-init-confirm-title">初始化 Git 仓库</h2>
+          <p>所选目录不是 Git 仓库。初始化后再导入项目？</p>
+        </header>
+        <div class="git-init-confirm-path" data-testid="git-init-confirm-path">
+          {{ gitInitializationPrompt.path }}
+        </div>
+        <footer class="git-init-confirm-actions">
+          <button
+            type="button"
+            class="toolbar-button"
+            data-testid="git-init-confirm-cancel"
+            @click="resolveGitInitializationPrompt(false)"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            class="toolbar-button primary"
+            data-testid="git-init-confirm-submit"
+            @click="resolveGitInitializationPrompt(true)"
+          >
+            初始化并导入
+          </button>
+        </footer>
+      </section>
     </div>
 
     <section class="workspace">
