@@ -1567,12 +1567,15 @@ function projectBranchPickerKey(scope, projectId) {
   return `${scope}:${projectId}`
 }
 
-function openProjectBranchPicker(scope, projectId) {
+function openProjectBranchPicker(scope, projectId, { resetQuery = true } = {}) {
   if (!projectId) {
     return
   }
-  projectBranchPickerQueries[projectBranchPickerKey(scope, projectId)] = ''
-  openProjectBranchPickerKey.value = projectBranchPickerKey(scope, projectId)
+  const key = projectBranchPickerKey(scope, projectId)
+  if (resetQuery) {
+    projectBranchPickerQueries[key] = ''
+  }
+  openProjectBranchPickerKey.value = key
   void ensureProjectBranchesLoaded(projectId)
 }
 
@@ -1751,7 +1754,7 @@ function setProjectBaseBranchForScope(scope, projectId, baseBranch) {
 function updateProjectBranchInput(scope, projectId, baseBranch) {
   projectBranchPickerQueries[projectBranchPickerKey(scope, projectId)] = baseBranch
   setProjectBaseBranchForScope(scope, projectId, baseBranch)
-  openProjectBranchPicker(scope, projectId)
+  openProjectBranchPicker(scope, projectId, { resetQuery: false })
 }
 
 function selectProjectBranchCandidate(scope, projectId, branch) {

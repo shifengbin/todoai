@@ -2215,7 +2215,7 @@ button {
     height: 22px;
     border: 1px solid var(--border);
     border-radius: 4px;
-    background: var(--panel);
+    background: var(--surface-bg);
     color: var(--text-primary);
     font-size: 12px;
     line-height: 1;
@@ -2245,7 +2245,7 @@ button {
     padding: 4px;
     border: 1px solid var(--control-border);
     border-radius: 6px;
-    background: var(--panel);
+    background: var(--surface-bg);
     box-shadow: 0 12px 24px rgba(15, 23, 42, 0.18);
 }
 
