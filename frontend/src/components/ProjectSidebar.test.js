@@ -61,6 +61,17 @@ describe('ProjectSidebar', () => {
     expect(wrapper.emitted('delete-todo')[0]).toEqual(['todo-a'])
   })
 
+  it('keeps TODO project rows free of project folder menus', async () => {
+    const wrapper = mountInProgressSidebar()
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+
+    expect(wrapper.find('[data-testid="todo-project-menu-button-todo-project-a"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="todo-project-menu-todo-project-a"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="todo-project-menu-open-folder-todo-project-a"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="remove-todo-project-todo-project-a"]').exists()).toBe(true)
+  })
+
   it('hides disabled launch profiles while keeping Terminal available', async () => {
     const wrapper = mountInProgressSidebar({
       props: {
@@ -83,6 +94,31 @@ describe('ProjectSidebar', () => {
     await wrapper.find('[data-testid="terminal-launch-option-todo-project-a-1"]').trigger('click')
 
     expect(wrapper.emitted('create-terminal')[0]).toEqual(['todo-project-a', { name: 'codex', command: 'codex', enabled: true }])
+  })
+
+  it('uses the terminal launch menu when creating task terminals', async () => {
+    const wrapper = mountInProgressSidebar({
+      props: {
+        launchProfiles: [
+          { name: 'codex', command: 'codex', enabled: true },
+          { name: 'claude', command: 'claude', enabled: false }
+        ]
+      }
+    })
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+    await wrapper.find('[data-testid="add-task-terminal-todo-a"]').trigger('click')
+    await nextTick()
+
+    const menu = wrapper.find('[data-testid="terminal-launch-menu-task-todo-a"]')
+    expect(menu.exists()).toBe(true)
+    expect(menu.text()).toContain('Terminal')
+    expect(menu.text()).toContain('codex')
+    expect(menu.text()).not.toContain('claude')
+
+    await wrapper.find('[data-testid="terminal-launch-option-task-todo-a-1"]').trigger('click')
+
+    expect(wrapper.emitted('create-task-terminal')[0]).toEqual(['todo-a', { name: 'codex', command: 'codex', enabled: true }])
   })
 
   it('shows only Terminal when all custom launch profiles are disabled', async () => {
@@ -308,6 +344,47 @@ describe('ProjectSidebar', () => {
     expect(tabsRule).toContain('grid-template-columns: repeat(3, minmax(0, 1fr));')
     expect(actionsRule).toContain('display: inline-flex;')
     expect(actionsRule).toContain('flex-wrap: nowrap;')
+  })
+
+  it('places task terminal creation on TODO rows and hides empty task terminal groups', async () => {
+    const wrapper = mountInProgressSidebar()
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+
+    const actionGroup = wrapper.find('[data-testid="todo-actions-todo-a"]')
+    const actionTestIds = Array.from(actionGroup.element.children).map((node) => {
+      return node.getAttribute('data-testid') || node.querySelector('[data-testid]')?.getAttribute('data-testid')
+    })
+    expect(actionTestIds).toEqual(['todo-menu-button-todo-a', 'add-task-terminal-todo-a', 'complete-todo-todo-a'])
+    expect(wrapper.find('[data-testid="task-terminal-list-todo-a"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="add-task-terminal-todo-a"]').trigger('click')
+    await wrapper.find('[data-testid="terminal-launch-option-task-todo-a-0"]').trigger('click')
+
+    expect(wrapper.emitted('create-task-terminal')[0]).toEqual(['todo-a', null])
+  })
+
+  it('shows task terminal groups only when task terminals exist', async () => {
+    const wrapper = mountInProgressSidebar({
+      props: {
+        terminals: [
+          {
+            id: 'task-terminal-a',
+            todoId: 'todo-a',
+            shellName: 'bash',
+            currentCommand: '',
+            state: 'running'
+          }
+        ],
+        activeTerminalId: 'task-terminal-a'
+      }
+    })
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+
+    expect(wrapper.find('[data-testid="task-terminal-list-todo-a"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="task-terminal-task-terminal-a"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="task-terminal-list-todo-a"]').find('[data-testid="add-task-terminal-todo-a"]').exists()).toBe(false)
   })
 
   it('uses the top toolbar for completed bulk deletion without open TODO controls', async () => {
@@ -1681,9 +1758,16 @@ describe('ProjectSidebar', () => {
     const styles = readFileSync('src/style.css', 'utf8')
     const ackRule = styles.slice(styles.indexOf('.todo-header-row.todo-activity-needs-ack {'), styles.indexOf('@keyframes todo-activity-busy-breathe'))
     const reducedMotionRule = styles.slice(styles.indexOf('@media (prefers-reduced-motion: reduce)'), styles.indexOf('.todo-title-line {'))
+    const taskTerminalGroupRule = styles.slice(styles.indexOf('.task-terminal-group {'), styles.indexOf('.terminal-list {'))
+    const terminalRowRule = styles.slice(styles.indexOf('.terminal-row {'), styles.indexOf('.terminal-row::before'))
+    const taskTerminalRowRule = styles.slice(styles.indexOf('.task-terminal-row {'), styles.indexOf('.task-terminal-row:hover'))
 
     expect(styles).toContain('.terminal-row.activity-needs-ack')
     expect(styles).toContain('.terminal-activity.needs-ack')
+    expect(taskTerminalGroupRule).not.toContain('.task-terminal-header')
+    expect(terminalRowRule).toContain('min-height: 30px;')
+    expect(taskTerminalRowRule).toContain('min-height: 30px;')
+    expect(taskTerminalRowRule).not.toContain('background:')
     expect(styles).toContain('.todo-header-row.todo-activity-needs-ack')
     expect(ackRule).toContain('animation: todo-activity-needs-ack-breathe')
     expect(ackRule).toContain('0.9s')
@@ -1875,7 +1959,15 @@ function mountSidebar(options = {}) {
           projectSnapshots: [{ projectId: 'project-a', name: 'archived-alpha', path: '/work/archived-alpha' }]
         }
       ],
-      todoProjects: [{ id: 'todo-project-a', todoId: 'todo-a', projectId: 'project-a' }],
+      todoProjects: [
+        {
+          id: 'todo-project-a',
+          todoId: 'todo-a',
+          projectId: 'project-a',
+          worktreeStatus: 'ready',
+          worktreePath: '/work/customer-a/tasks/abc123/alpha'
+        }
+      ],
       terminals: [
         {
           id: 'terminal-a',

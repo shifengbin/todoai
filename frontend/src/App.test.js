@@ -5,11 +5,13 @@ import App from './App.vue'
 import {
   AddProjectToTodo,
   AddProjectsToTodo,
+  AddProjectsToTodoWithBranches,
   ChangeTodoStatus,
   ClearRecentWorkspaces,
   CloseWorkspace,
   CompleteTodo,
   CreateTodo,
+  CreateTaskTerminal,
   CreateTodoTerminal,
   CreateWorkspaceTerminal,
   CreateProjectFromDialog,
@@ -22,8 +24,10 @@ import {
   GetProjectGitStatus,
   ImportProjectsFromParentDirectoryDialog,
   InitializeProjectGitRepository,
+  ListProjectBranches,
   LoadTerminalSettings,
   LoadTodoProjectUIState,
+  OpenTodoFolder,
   OpenRecentWorkspace,
   OpenWorkspaceFromDialog,
   OpenWorkspaceFromPath,
@@ -44,11 +48,13 @@ import { ClipboardGetText, ClipboardSetText } from '../wailsjs/runtime/runtime'
 const appApiMock = vi.hoisted(() => ({
   AddProjectToTodo: vi.fn(),
   AddProjectsToTodo: vi.fn(),
+  AddProjectsToTodoWithBranches: vi.fn(),
   ChangeTodoStatus: vi.fn(),
   ClearRecentWorkspaces: vi.fn(),
   CloseWorkspace: vi.fn(),
   CompleteTodo: vi.fn(),
   CreateTodo: vi.fn(),
+  CreateTaskTerminal: vi.fn(),
   CreateTodoTerminal: vi.fn(),
   CreateWorkspaceTerminal: vi.fn(),
   CreateProjectFromDialog: vi.fn(),
@@ -61,9 +67,11 @@ const appApiMock = vi.hoisted(() => ({
   GetProjectGitStatus: vi.fn(),
   ImportProjectsFromParentDirectoryDialog: vi.fn(),
   InitializeProjectGitRepository: vi.fn(),
+  ListProjectBranches: vi.fn(),
   ListProjects: vi.fn(),
   LoadTerminalSettings: vi.fn(),
   LoadTodoProjectUIState: vi.fn(),
+  OpenTodoFolder: vi.fn(),
   OpenRecentWorkspace: vi.fn(),
   OpenWorkspaceFromDialog: vi.fn(),
   OpenWorkspaceFromPath: vi.fn(),
@@ -180,6 +188,17 @@ describe('App project terminal tree', () => {
     appApiMock.CreateTodo.mockResolvedValue(projectState({ todos: [todo({ id: 'todo-a' }), todo({ id: 'todo-b', title: 'Write tests' })] }))
     appApiMock.AddProjectToTodo.mockResolvedValue(projectState())
     appApiMock.AddProjectsToTodo.mockResolvedValue(projectState())
+    appApiMock.AddProjectsToTodoWithBranches.mockResolvedValue(projectState())
+    appApiMock.CreateTaskTerminal.mockResolvedValue(
+      inProgressProjectState({
+        terminals: [
+          terminal({ id: 'terminal-a' }),
+          taskTerminal({ id: 'task-terminal-a', shellName: 'bash', state: 'running' })
+        ],
+        activeTerminalId: 'task-terminal-a'
+      })
+    )
+    appApiMock.OpenTodoFolder.mockResolvedValue()
     appApiMock.ChangeTodoStatus.mockResolvedValue(projectState({ todos: [todo({ status: 'in-progress' })] }))
     appApiMock.CompleteTodo.mockResolvedValue(projectState({ todos: [completedTodo()], todoProjects: [], terminals: [], activeTodoId: '', activeTodoProjectId: '', activeTerminalId: '' }))
     appApiMock.DeleteTodo.mockResolvedValue(projectState({ todos: [], todoProjects: [], terminals: [], activeTodoId: '', activeTodoProjectId: '', activeTerminalId: '' }))
@@ -229,6 +248,7 @@ describe('App project terminal tree', () => {
     appApiMock.ClearRecentWorkspaces.mockResolvedValue(workspaceState({ recentWorkspaces: [] }))
     appApiMock.GetProjectGitStatus.mockResolvedValue(gitStatus())
     appApiMock.InitializeProjectGitRepository.mockResolvedValue()
+    appApiMock.ListProjectBranches.mockResolvedValue([])
     appApiMock.StartShell.mockResolvedValue({ projectId: 'project-a', terminalId: 'terminal-a', state: 'running' })
     appApiMock.SendTerminalInput.mockResolvedValue()
     runtimeMock.ClipboardGetText.mockResolvedValue('')
@@ -511,6 +531,32 @@ describe('App project terminal tree', () => {
     expect(SendTerminalInput).not.toHaveBeenCalled()
     expect(xtermMock.sessions.has('terminal-b')).toBe(true)
     expect(wrapper.find('[data-testid="terminal-terminal-b"]').classes()).toContain('active')
+  })
+
+  it('creates a terminal for available TODO projects without loaded worktree metadata', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      inProgressProjectState({
+        todoProjects: [
+          todoProject({
+            id: 'todo-project-a',
+            worktreeStatus: undefined,
+            worktreePath: undefined
+          })
+        ]
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+    const addTerminalButton = wrapper.find('[data-testid="add-terminal-todo-project-a"]')
+
+    expect(addTerminalButton.attributes('disabled')).toBeUndefined()
+
+    await addTerminalButton.trigger('click')
+    await wrapper.find('[data-testid="terminal-launch-option-todo-project-a-0"]').trigger('click')
+    await flushPromises()
+
+    expect(CreateTodoTerminal).toHaveBeenCalledWith('todo-project-a', 100, 32)
   })
 
   it('preserves current TODO view and sidebar width when creating a terminal', async () => {
@@ -889,9 +935,66 @@ describe('App project terminal tree', () => {
       title: 'Write tests',
       description: 'Cover login flow',
       priority: 'high',
-      projectIds: ['project-b', 'project-c']
+      projectIds: ['project-b', 'project-c'],
+      projectBranches: {}
     })
     expect(wrapper.text()).toContain('Write tests')
+  })
+
+  it('sends selected project branches when creating a TODO', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'frontend-app', path: '/work/frontend-app', available: true },
+          { id: 'project-b', name: 'api-service', path: '/work/api-service', available: true }
+        ]
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="new-todo"]').trigger('click')
+    await nextTick()
+    await wrapper.find('[data-testid="todo-name-input"]').setValue('Write tests')
+    await wrapper.find('[data-testid="todo-project-option-project-a"]').trigger('click')
+    await wrapper.find('[data-testid="todo-project-option-project-b"]').trigger('click')
+    await wrapper.find('[data-testid="todo-selected-project-branch-project-a"]').setValue(' develop ')
+    await wrapper.find('[data-testid="todo-selected-project-branch-project-b"]').setValue(' ')
+    await wrapper.find('[data-testid="todo-create-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(CreateTodo).toHaveBeenCalledWith({
+      title: 'Write tests',
+      description: '',
+      priority: 'medium',
+      projectIds: ['project-a', 'project-b'],
+      projectBranches: { 'project-a': 'develop' }
+    })
+  })
+
+  it('offers local and remote project branches when creating a TODO', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'frontend-app', path: '/work/frontend-app', available: true }
+        ]
+      })
+    )
+    appApiMock.ListProjectBranches.mockResolvedValue(['main', 'origin/main', 'origin/feature/login'])
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="new-todo"]').trigger('click')
+    await nextTick()
+    await wrapper.find('[data-testid="todo-project-option-project-a"]').trigger('click')
+    await flushPromises()
+
+    expect(ListProjectBranches).toHaveBeenCalledWith('project-a')
+    const input = wrapper.find('[data-testid="todo-selected-project-branch-project-a"]')
+    expect(input.attributes('list')).toBe('project-branch-options-todo-create-project-a')
+    const options = wrapper
+      .find('[data-testid="project-branch-options-todo-create-project-a"]')
+      .findAll('option')
+      .map((option) => option.attributes('value'))
+    expect(options).toEqual(['main', 'origin/main', 'origin/feature/login'])
   })
 
   it('removes selected project tags before creating a TODO', async () => {
@@ -932,7 +1035,8 @@ describe('App project terminal tree', () => {
       title: 'Write tests',
       description: '',
       priority: 'medium',
-      projectIds: ['project-c']
+      projectIds: ['project-c'],
+      projectBranches: {}
     })
   })
 
@@ -977,7 +1081,8 @@ describe('App project terminal tree', () => {
       title: 'Write docs',
       description: '',
       priority: 'medium',
-      projectIds: []
+      projectIds: [],
+      projectBranches: {}
     })
   })
 
@@ -1093,7 +1198,7 @@ describe('App project terminal tree', () => {
         activeTerminalId: ''
       })
     )
-    appApiMock.AddProjectsToTodo.mockResolvedValue(
+    appApiMock.AddProjectsToTodoWithBranches.mockResolvedValue(
       projectState({
         projects: [
           { id: 'project-a', name: 'frontend-app', path: '/work/frontend-app', available: true },
@@ -1123,9 +1228,69 @@ describe('App project terminal tree', () => {
     await wrapper.find('[data-testid="todo-project-picker-submit"]').trigger('click')
     await flushPromises()
 
-    expect(AddProjectsToTodo).toHaveBeenCalledWith('todo-a', ['project-b', 'project-c'])
+    expect(AddProjectsToTodoWithBranches).toHaveBeenCalledWith('todo-a', ['project-b', 'project-c'], {})
     expect(wrapper.find('[data-testid="todo-project-todo-project-b"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="todo-project-todo-project-c"]').exists()).toBe(true)
+  })
+
+  it('sends selected branches when adding projects to a TODO', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'frontend-app', path: '/work/frontend-app', available: true },
+          { id: 'project-b', name: 'api-service', path: '/work/api-service', available: true }
+        ],
+        todoProjects: [todoProject({ projectId: 'project-a' })],
+        terminals: [],
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await selectTodoMenuAction(wrapper, 'add-project', 'todo-a')
+    await nextTick()
+    await wrapper.find('[data-testid="todo-project-picker-option-project-b"]').trigger('click')
+    await wrapper.find('[data-testid="todo-project-picker-branch-project-b"]').setValue('feature/login-fix')
+    await wrapper.find('[data-testid="todo-project-picker-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(AddProjectsToTodoWithBranches).toHaveBeenCalledWith(
+      'todo-a',
+      ['project-b'],
+      { 'project-b': 'feature/login-fix' }
+    )
+  })
+
+  it('offers local and remote branches when adding projects to a TODO', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'frontend-app', path: '/work/frontend-app', available: true },
+          { id: 'project-b', name: 'api-service', path: '/work/api-service', available: true }
+        ],
+        todoProjects: [todoProject({ projectId: 'project-a' })],
+        terminals: [],
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      })
+    )
+    appApiMock.ListProjectBranches.mockResolvedValue(['develop', 'origin/develop', 'origin/release'])
+    const wrapper = await mountReadyApp()
+
+    await selectTodoMenuAction(wrapper, 'add-project', 'todo-a')
+    await nextTick()
+    await wrapper.find('[data-testid="todo-project-picker-option-project-b"]').trigger('click')
+    await flushPromises()
+
+    expect(ListProjectBranches).toHaveBeenCalledWith('project-b')
+    const input = wrapper.find('[data-testid="todo-project-picker-branch-project-b"]')
+    expect(input.attributes('list')).toBe('project-branch-options-project-picker-project-b')
+    const options = wrapper
+      .find('[data-testid="project-branch-options-project-picker-project-b"]')
+      .findAll('option')
+      .map((option) => option.attributes('value'))
+    expect(options).toEqual(['develop', 'origin/develop', 'origin/release'])
   })
 
   it('preserves workspace sidebar width after adding projects to a TODO', async () => {
@@ -1151,7 +1316,7 @@ describe('App project terminal tree', () => {
         activeTerminalId: ''
       })
     )
-    appApiMock.AddProjectsToTodo.mockResolvedValue(
+    appApiMock.AddProjectsToTodoWithBranches.mockResolvedValue(
       projectState({
         projects: [
           { id: 'project-a', name: 'frontend-app', path: '/work/frontend-app', available: true },
@@ -1180,7 +1345,7 @@ describe('App project terminal tree', () => {
     await wrapper.find('[data-testid="todo-project-picker-submit"]').trigger('click')
     await flushPromises()
 
-    expect(AddProjectsToTodo).toHaveBeenCalledWith('todo-a', ['project-b'])
+    expect(AddProjectsToTodoWithBranches).toHaveBeenCalledWith('todo-a', ['project-b'], {})
     expect(wrapper.find('.app-shell').attributes('style')).toContain('--sidebar-width: 360px')
   })
 
@@ -1221,7 +1386,7 @@ describe('App project terminal tree', () => {
     await wrapper.find('[data-testid="todo-project-picker-submit"]').trigger('click')
     await flushPromises()
 
-    expect(AddProjectsToTodo).toHaveBeenCalledWith('todo-a', ['project-b'])
+    expect(AddProjectsToTodoWithBranches).toHaveBeenCalledWith('todo-a', ['project-b'], {})
   })
 
   it('edits TODO details and confirms project removals that close terminals', async () => {
@@ -1275,7 +1440,8 @@ describe('App project terminal tree', () => {
       title: 'Fix login redirect',
       description: '登录后跳回首页',
       priority: 'high',
-      projectIds: ['project-b']
+      projectIds: ['project-b'],
+      projectBranches: {}
     })
     expect(wrapper.find('[data-testid="todo-detail-dialog"]').exists()).toBe(false)
   })
@@ -1790,6 +1956,103 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="todo-menu-delete-todo-a"]').exists()).toBe(true)
   })
 
+  it('shows task terminals before project rows and creates task terminals from the TODO tree', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      inProgressProjectState({
+        terminals: [
+          taskTerminal({ id: 'task-terminal-a', shellName: 'bash' }),
+          terminal({ id: 'terminal-a', shellName: 'zsh' })
+        ],
+        activeTerminalId: 'task-terminal-a'
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+    await flushPromises()
+
+    const taskTerminalRow = wrapper.find('[data-testid="task-terminal-task-terminal-a"]')
+    const projectRow = wrapper.find('[data-testid="todo-project-todo-project-a"]')
+    expect(taskTerminalRow.exists()).toBe(true)
+    expect(projectRow.exists()).toBe(true)
+    expect(taskTerminalRow.element.compareDocumentPosition(projectRow.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(wrapper.find('[data-testid="terminal-task-terminal-a"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="add-task-terminal-todo-a"]').trigger('click')
+    await wrapper.find('[data-testid="terminal-launch-option-task-todo-a-0"]').trigger('click')
+    await flushPromises()
+
+    expect(CreateTaskTerminal).toHaveBeenCalledWith('todo-a', 100, 32)
+  })
+
+  it('creates a task terminal from a custom launch profile and submits its command', async () => {
+    appApiMock.LoadTerminalSettings.mockResolvedValue(
+      settingsState({ launchProfiles: [{ name: 'Codex GPT-5', command: 'codex --model gpt-5', enabled: true }] })
+    )
+    appApiMock.ListProjects.mockResolvedValue(
+      inProgressProjectState({
+        terminals: [],
+        activeTerminalId: ''
+      })
+    )
+    appApiMock.CreateTaskTerminal.mockResolvedValue(
+      inProgressProjectState({
+        terminals: [taskTerminal({ id: 'task-terminal-b', shellName: 'bash', state: 'running' })],
+        activeTerminalId: 'task-terminal-b'
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+    await wrapper.find('[data-testid="add-task-terminal-todo-a"]').trigger('click')
+    await wrapper.find('[data-testid="terminal-launch-option-task-todo-a-1"]').trigger('click')
+    await flushPromises()
+
+    expect(CreateTaskTerminal).toHaveBeenCalledWith('todo-a', 80, 24)
+    expect(SendTerminalInput).toHaveBeenCalledWith('task-terminal-b', 'codex --model gpt-5\r')
+    expect(wrapper.find('[data-testid="task-terminal-task-terminal-b"]').text()).toContain('codex --model gpt-5')
+  })
+
+  it('opens task folders from the TODO row menu', async () => {
+    appApiMock.ListProjects.mockResolvedValue(inProgressProjectState())
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+    await openTodoContextMenu(wrapper, 'todo-a')
+    await wrapper.find('[data-testid="todo-menu-open-folder-todo-a"]').trigger('click')
+    await flushPromises()
+
+    expect(OpenTodoFolder).toHaveBeenCalledWith('todo-a')
+  })
+
+  it('shows failed worktree status and blocks project terminal creation', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      inProgressProjectState({
+        todoProjects: [
+          todoProject({
+            id: 'todo-project-a',
+            worktreeStatus: 'failed',
+            worktreeError: 'branch is already checked out'
+          })
+        ]
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+
+    expect(wrapper.find('[data-testid="todo-project-worktree-error-todo-project-a"]').text()).toContain(
+      'branch is already checked out'
+    )
+    expect(wrapper.find('[data-testid="add-terminal-todo-project-a"]').attributes('disabled')).toBeDefined()
+
+    CreateTodoTerminal.mockClear()
+    await wrapper.find('[data-testid="add-terminal-todo-project-a"]').trigger('click')
+    await flushPromises()
+
+    expect(CreateTodoTerminal).not.toHaveBeenCalled()
+  })
+
   it('changes TODO workflow status from the sidebar', async () => {
     const wrapper = await mountReadyApp()
 
@@ -1922,7 +2185,8 @@ describe('App project terminal tree', () => {
       title: 'New task',
       description: '',
       priority: 'medium',
-      projectIds: []
+      projectIds: [],
+      projectBranches: {}
     })
   })
 
@@ -3312,6 +3576,8 @@ function todoProject(overrides = {}) {
     id: 'todo-project-a',
     todoId: 'todo-a',
     projectId: 'project-a',
+    worktreeStatus: 'ready',
+    worktreePath: '/work/customer-a/tasks/abc123/alpha',
     ...overrides
   }
 }
@@ -3368,6 +3634,17 @@ function workspaceTerminal(overrides = {}) {
     todoId: '',
     todoProjectId: '',
     workspaceTerminal: true,
+    ...overrides
+  })
+}
+
+function taskTerminal(overrides = {}) {
+  return terminal({
+    id: 'task-terminal-a',
+    projectId: '',
+    todoProjectId: '',
+    todoId: 'todo-a',
+    taskTerminal: true,
     ...overrides
   })
 }

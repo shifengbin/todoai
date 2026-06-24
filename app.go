@@ -36,7 +36,9 @@ type App struct {
 	starter                       ShellStarter
 	shellOpts                     []ShellSessionManagerOption
 	gitStatus                     func(path string) (GitStatus, error)
+	gitBranches                   func(path string) ([]string, error)
 	gitInit                       func(path string) error
+	worktreePreparer              TodoWorktreePreparer
 	claudeStatusDir               string
 	claudeStatusWatcher           *ClaudeStatusWatcher
 	claudeStatusStop              chan struct{}
@@ -78,7 +80,9 @@ func NewAppWithConfigAndShellStarter(configPath string, starter ShellStarter, op
 		todoProjectUIState: NewTodoProjectUIStateStore(configDir),
 		starter:            starter,
 		gitStatus:          queryGitStatus,
+		gitBranches:        queryGitBranches,
 		gitInit:            initializeGitRepository,
+		worktreePreparer:   NewGitWorktreeService(),
 		claudeStatusDir:    defaultClaudeStatusDir,
 	}
 	var shellOpts []ShellSessionManagerOption
@@ -137,6 +141,14 @@ func WithClaudeStatusDir(dir string) AppOption {
 func WithTerminalAgentStatusEmitter(emit func(TerminalAgentStatusEvent)) AppOption {
 	return func(app *App) {
 		app.terminalAgentStatusEmitter = emit
+	}
+}
+
+// WithWorktreePreparer overrides the Git worktree preparer used when a TODO
+// enters progress. Primarily used in tests to avoid real git operations.
+func WithWorktreePreparer(preparer TodoWorktreePreparer) AppOption {
+	return func(app *App) {
+		app.worktreePreparer = preparer
 	}
 }
 
@@ -404,27 +416,38 @@ func (a *App) UpdateTodo(request UpdateTodoRequest) (ProjectState, error) {
 	for _, todoProjectID := range removedTodoProjectIDs {
 		a.shells.DeleteTodoProjectTerminals(todoProjectID)
 	}
+	a.refreshTodoReadme(request.ID)
 	return a.withShellState(state), nil
 }
 
 func (a *App) AddProjectToTodo(todoID string, projectID string) (ProjectState, error) {
-	if !a.hasWorkspace() {
-		return a.currentProjectStateWithError(ErrWorkspaceRequired)
-	}
-	state, err := a.projects.AssociateProjectWithTodo(todoID, projectID)
-	if err != nil {
-		return ProjectState{}, err
-	}
-	return a.withShellState(state), nil
+	return a.AddProjectsToTodoWithBranches(todoID, []string{projectID}, map[string]string{projectID: ""})
 }
 
 func (a *App) AddProjectsToTodo(todoID string, projectIDs []string) (ProjectState, error) {
+	return a.AddProjectsToTodoWithBranches(todoID, projectIDs, map[string]string{})
+}
+
+// AddProjectsToTodoWithBranches links projects to a TODO in the given order,
+// recording the selected branch for each project. projectIDs defines the
+// association order; projectBranches maps project ID to branch and is used only
+// for lookup (an empty value means use the repository default branch). When the
+// TODO is already in progress, the newly linked projects have their worktrees
+// prepared immediately.
+func (a *App) AddProjectsToTodoWithBranches(todoID string, projectIDs []string, projectBranches map[string]string) (ProjectState, error) {
 	if !a.hasWorkspace() {
 		return a.currentProjectStateWithError(ErrWorkspaceRequired)
 	}
-	state, err := a.projects.AssociateProjectsWithTodo(todoID, projectIDs)
+	state, err := a.projects.AssociateProjectsWithBranches(todoID, projectIDs, projectBranches)
 	if err != nil {
 		return ProjectState{}, err
+	}
+	if todo, ok := openTodoByID(state.Todos, todoID); ok && todo.Status == TodoStatusInProgress {
+		a.prepareTodoWorkspace(todoID)
+		state, err = a.projects.Load()
+		if err != nil {
+			return ProjectState{}, err
+		}
 	}
 	return a.withShellState(state), nil
 }
@@ -433,6 +456,11 @@ func (a *App) RemoveTodoProject(todoProjectID string) (ProjectState, error) {
 	if !a.hasWorkspace() {
 		return a.currentProjectStateWithError(ErrWorkspaceRequired)
 	}
+	previous, err := a.projects.Load()
+	if err != nil {
+		return ProjectState{}, err
+	}
+	removedTodoProject, hadTodoProject := todoProjectByID(previous.TodoProjects, todoProjectID)
 	state, removedTodoProjectIDs, err := a.projects.RemoveTodoProject(todoProjectID)
 	if err != nil {
 		return ProjectState{}, err
@@ -442,6 +470,9 @@ func (a *App) RemoveTodoProject(todoProjectID string) (ProjectState, error) {
 	}
 	if len(removedTodoProjectIDs) > 0 {
 		_ = a.deleteTodoProjectUIState(removedTodoProjectIDs)
+		if hadTodoProject {
+			a.refreshTodoReadme(removedTodoProject.TodoID)
+		}
 	}
 	return a.withShellState(state), nil
 }
@@ -496,9 +527,15 @@ func (a *App) CreateTodoTerminal(todoProjectID string, cols int, rows int) (Proj
 	if todo.Status != TodoStatusInProgress {
 		return ProjectState{}, fmt.Errorf("todo is not in progress")
 	}
+	if err := a.ensureTodoProjectWorktreeReady(terminalTodoProject); err != nil {
+		return ProjectState{}, err
+	}
 
 	state, todoProject, project, err := a.projects.SelectTodoProject(todoProjectID)
 	if err != nil {
+		return ProjectState{}, err
+	}
+	if err := requireReadyTodoProjectTerminal(todoProject); err != nil {
 		return ProjectState{}, err
 	}
 	if _, err := a.shells.CreateTodoProjectTerminal(todoProject, project, normalizeTerminalSize(cols, rows)); err != nil {
@@ -506,6 +543,43 @@ func (a *App) CreateTodoTerminal(todoProjectID string, cols int, rows int) (Proj
 	}
 	a.activeTerminalID = ""
 	return a.withShellState(state), nil
+}
+
+func (a *App) ensureTodoProjectWorktreeReady(todoProject TodoProject) error {
+	if todoProject.WorktreeStatus == WorktreeStatusReady {
+		return nil
+	}
+	if todoProject.WorktreeStatus == WorktreeStatusFailed {
+		return requireReadyTodoProjectTerminal(todoProject)
+	}
+	a.prepareTodoWorkspace(todoProject.TodoID)
+	state, err := a.projects.Load()
+	if err != nil {
+		return err
+	}
+	refreshedTodoProject, ok := todoProjectByID(state.TodoProjects, todoProject.ID)
+	if !ok {
+		return os.ErrNotExist
+	}
+	return requireReadyTodoProjectTerminal(refreshedTodoProject)
+}
+
+// requireReadyTodoProjectTerminal enforces the worktree-isolation contract: a
+// TODO project terminal may only start when the project has a prepared (ready)
+// worktree whose directory still exists on disk. Pending or failed worktrees
+// are rejected so terminal file changes never leak into the original project
+// checkout.
+func requireReadyTodoProjectTerminal(todoProject TodoProject) error {
+	if todoProject.WorktreeStatus != WorktreeStatusReady {
+		if todoProject.WorktreeStatus == WorktreeStatusFailed && todoProject.WorktreeError != "" {
+			return fmt.Errorf("project worktree preparation failed: %s", todoProject.WorktreeError)
+		}
+		return errors.New("project worktree is not ready")
+	}
+	if !directoryAvailable(todoProject.WorktreePath) {
+		return errors.New("project worktree path is unavailable")
+	}
+	return nil
 }
 
 func (a *App) CreateWorkspaceTerminal(cols int, rows int) (ProjectState, error) {
@@ -526,6 +600,78 @@ func (a *App) CreateWorkspaceTerminal(cols int, rows int) (ProjectState, error) 
 	}
 	a.activeTerminalID = terminal.ID
 	return a.withShellStateForActiveTerminal(state, terminal.ID), nil
+}
+
+// CreateTaskTerminal opens a task-level terminal rooted at a TODO's task
+// workspace directory. The TODO must be in progress and the task workspace
+// directory is ensured to exist before the terminal is started.
+func (a *App) CreateTaskTerminal(todoID string, cols int, rows int) (ProjectState, error) {
+	if !a.hasWorkspace() {
+		return a.currentProjectStateWithError(ErrWorkspaceRequired)
+	}
+	workspacePath, state, todo, ok := a.loadTodoForWorkspace(todoID)
+	if !ok {
+		return ProjectState{}, os.ErrNotExist
+	}
+	if todo.Status != TodoStatusInProgress {
+		return ProjectState{}, fmt.Errorf("todo is not in progress")
+	}
+	taskDir, err := a.ensureTaskWorkspaceDir(todo, workspacePath)
+	if err != nil {
+		return ProjectState{}, err
+	}
+	state, err = a.projects.Load()
+	if err != nil {
+		return ProjectState{}, err
+	}
+	terminal, err := a.shells.CreateTaskTerminal(todoID, taskDir, normalizeTerminalSize(cols, rows))
+	if err != nil {
+		return ProjectState{}, err
+	}
+	a.activeTerminalID = terminal.ID
+	return a.withShellStateForActiveTerminal(state, terminal.ID), nil
+}
+
+// OpenTodoFolder reveals a TODO's task workspace directory in the host file
+// manager. For an in-progress TODO the directory is ensured; otherwise the
+// existing persisted directory is opened or an error is returned.
+func (a *App) OpenTodoFolder(todoID string) error {
+	workspacePath, _, todo, ok := a.loadTodoForWorkspace(todoID)
+	if !ok {
+		return os.ErrNotExist
+	}
+	taskDir, err := a.ensureTaskWorkspaceDir(todo, workspacePath)
+	if err != nil {
+		return err
+	}
+	return openFolderInFileManager(taskDir)
+}
+
+// OpenTodoProjectFolder reveals a TODO project's prepared worktree directory in
+// the host file manager. The project must have a ready worktree; a pending or
+// failed worktree (or a missing path) is rejected.
+func (a *App) OpenTodoProjectFolder(todoProjectID string) error {
+	if !a.hasWorkspace() {
+		return ErrWorkspaceRequired
+	}
+	state, err := a.projects.Load()
+	if err != nil {
+		return err
+	}
+	todoProject, ok := todoProjectByID(state.TodoProjects, todoProjectID)
+	if !ok {
+		return os.ErrNotExist
+	}
+	if todoProject.WorktreeStatus != WorktreeStatusReady {
+		if todoProject.WorktreeStatus == WorktreeStatusFailed && todoProject.WorktreeError != "" {
+			return fmt.Errorf("project worktree preparation failed: %s", todoProject.WorktreeError)
+		}
+		return errors.New("project worktree is not ready")
+	}
+	if !directoryAvailable(todoProject.WorktreePath) {
+		return errors.New("project worktree path is unavailable")
+	}
+	return openFolderInFileManager(todoProject.WorktreePath)
 }
 
 func (a *App) DeleteProject(projectID string) (ProjectState, error) {
@@ -567,6 +713,16 @@ func (a *App) SelectTerminal(terminalID string) (ProjectState, error) {
 		return a.withShellState(state), nil
 	}
 	if terminal.WorkspaceTerminal {
+		state, err := a.projects.Load()
+		if err != nil {
+			return ProjectState{}, err
+		}
+		a.activeTerminalID = terminal.ID
+		return a.withShellStateForActiveTerminal(state, terminal.ID), nil
+	}
+	if terminal.TodoID != "" && terminal.TodoProjectID == "" {
+		// Task-level terminal: no project to select, just surface the
+		// current workspace state.
 		state, err := a.projects.Load()
 		if err != nil {
 			return ProjectState{}, err
@@ -692,6 +848,13 @@ func (a *App) ChangeTodoStatus(todoID string, status string) (ProjectState, erro
 	if err != nil {
 		return ProjectState{}, err
 	}
+	if status == TodoStatusInProgress {
+		a.prepareTodoWorkspace(todoID)
+		state, err = a.projects.Load()
+		if err != nil {
+			return ProjectState{}, err
+		}
+	}
 	return a.withShellState(state), nil
 }
 
@@ -740,6 +903,20 @@ func (a *App) GetProjectGitStatus(projectID string) (GitStatus, error) {
 	}
 	status.ProjectID = projectID
 	return status, nil
+}
+
+func (a *App) ListProjectBranches(projectID string) ([]string, error) {
+	if !a.hasWorkspace() {
+		return nil, ErrWorkspaceRequired
+	}
+	project, err := a.projects.GetProject(projectID)
+	if err != nil {
+		return nil, err
+	}
+	if !project.Available {
+		return nil, fmt.Errorf("project path unavailable")
+	}
+	return a.gitBranches(project.Path)
 }
 
 func (a *App) InitializeProjectGitRepository(projectID string) error {

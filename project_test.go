@@ -562,6 +562,120 @@ func TestProjectManagerLoadsLegacyTodoWithoutPriorityAsMedium(t *testing.T) {
 	}
 }
 
+func TestProjectManagerPersistsTodoWorkspaceAndWorktreeMetadata(t *testing.T) {
+	projectDir := t.TempDir()
+	worktreeDir := filepath.Join(t.TempDir(), "tasks", "abc123", "frontend-app")
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	configJSON := `{
+  "version": 1,
+  "projects": [
+    {
+      "id": "project-a",
+      "name": "frontend-app",
+      "path": "` + filepath.ToSlash(projectDir) + `",
+      "available": true,
+      "createdAt": "2026-06-10T09:00:00Z",
+      "lastSelectedAt": "2026-06-10T09:00:00Z"
+    }
+  ],
+  "todos": [
+    {
+      "id": "todo-a",
+      "title": "修复登录问题",
+      "description": "登录后跳回首页",
+      "priority": "high",
+      "status": "in-progress",
+      "workspaceDirName": "abc123",
+      "createdAt": "2026-06-10T09:00:00Z",
+      "startedAt": "2026-06-10T10:00:00Z"
+    }
+  ],
+  "todoProjects": [
+    {
+      "id": "todo-project-a",
+      "todoId": "todo-a",
+      "projectId": "project-a",
+      "sourceProjectId": "project-a",
+      "name": "frontend-app",
+      "path": "` + filepath.ToSlash(projectDir) + `",
+      "available": true,
+      "baseBranch": "main",
+      "worktreeBranch": "feature/login-fix",
+      "worktreePath": "` + filepath.ToSlash(worktreeDir) + `",
+      "worktreeStatus": "ready",
+      "worktreeError": "",
+      "createdAt": "2026-06-10T09:00:00Z",
+      "lastSelectedAt": "2026-06-10T09:00:00Z"
+    }
+  ],
+  "activeTodoId": "todo-a",
+  "activeTodoProjectId": "todo-project-a"
+}`
+	if err := os.WriteFile(configPath, []byte(configJSON), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	manager := NewProjectManager(configPath)
+	state, err := manager.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	todo := findTodo(state.Todos, "todo-a")
+	if todo == nil {
+		t.Fatal("todo-a not found")
+	}
+	if todo.WorkspaceDirName != "abc123" {
+		t.Fatalf("WorkspaceDirName = %q, want abc123", todo.WorkspaceDirName)
+	}
+	if len(state.TodoProjects) != 1 {
+		t.Fatalf("TodoProjects length = %d, want 1", len(state.TodoProjects))
+	}
+	todoProject := state.TodoProjects[0]
+	if todoProject.BaseBranch != "main" {
+		t.Fatalf("BaseBranch = %q, want main", todoProject.BaseBranch)
+	}
+	if todoProject.WorktreeBranch != "feature/login-fix" {
+		t.Fatalf("WorktreeBranch = %q, want feature/login-fix", todoProject.WorktreeBranch)
+	}
+	if todoProject.WorktreePath != worktreeDir {
+		t.Fatalf("WorktreePath = %q, want %q", todoProject.WorktreePath, worktreeDir)
+	}
+	if todoProject.WorktreeStatus != "ready" {
+		t.Fatalf("WorktreeStatus = %q, want ready", todoProject.WorktreeStatus)
+	}
+	if todoProject.WorktreeError != "" {
+		t.Fatalf("WorktreeError = %q, want empty", todoProject.WorktreeError)
+	}
+
+	if err := manager.saveLocked(state); err != nil {
+		t.Fatalf("saveLocked() error = %v", err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	var persisted map[string]any
+	if err := json.Unmarshal(data, &persisted); err != nil {
+		t.Fatalf("unmarshal persisted config: %v", err)
+	}
+	todos := persisted["todos"].([]any)
+	if got := todos[0].(map[string]any)["workspaceDirName"]; got != "abc123" {
+		t.Fatalf("persisted workspaceDirName = %#v, want abc123", got)
+	}
+	todoProjects := persisted["todoProjects"].([]any)
+	persistedTodoProject := todoProjects[0].(map[string]any)
+	if got := persistedTodoProject["baseBranch"]; got != "main" {
+		t.Fatalf("persisted baseBranch = %#v, want main", got)
+	}
+	if got := persistedTodoProject["worktreeBranch"]; got != "feature/login-fix" {
+		t.Fatalf("persisted worktreeBranch = %#v, want feature/login-fix", got)
+	}
+	if got := persistedTodoProject["worktreeStatus"]; got != "ready" {
+		t.Fatalf("persisted worktreeStatus = %#v, want ready", got)
+	}
+}
+
 func TestProjectManagerUpdatesTodoDetailsAndProjectAssociations(t *testing.T) {
 	projectDir := t.TempDir()
 	otherProjectDir := t.TempDir()
