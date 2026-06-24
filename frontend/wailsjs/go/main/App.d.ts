@@ -4,6 +4,8 @@ import {main} from '../models';
 
 export function AddProjectFromPath(arg1:string):Promise<main.ProjectState>;
 
+export function AddProjectSelectionsToTodo(arg1:string,arg2:Array<main.TodoProjectSelection>):Promise<main.ProjectState>;
+
 export function AddProjectToTodo(arg1:string,arg2:string):Promise<main.ProjectState>;
 
 export function AddProjectsToTodo(arg1:string,arg2:Array<string>):Promise<main.ProjectState>;
@@ -39,6 +41,8 @@ export function DeleteTodo(arg1:string):Promise<main.ProjectState>;
 export function DeleteTodoProjectUIState(arg1:Array<string>):Promise<void>;
 
 export function DetectTerminalShell():Promise<main.TerminalShellSetting>;
+
+export function GetCompletedTodoProjectMergeStatuses(arg1:Array<main.CompletedTodoProjectMergeStatusRequest>):Promise<Array<main.CompletedTodoProjectMergeStatus>>;
 
 export function GetProjectGitStatus(arg1:string):Promise<main.GitStatus>;
 

@@ -17,6 +17,8 @@ var errGitUnavailable = errors.New("Git is not installed")
 type gitCommandChecker func() error
 type gitStatusRunner func(context.Context, string) ([]byte, error)
 type gitInitRunner func(context.Context, string) ([]byte, error)
+type gitBranchRunner func(context.Context, string) ([]byte, error)
+type gitBranchMergedRunner func(context.Context, string, string, string) ([]byte, error)
 
 type GitStatus struct {
 	ProjectID       string `json:"projectId,omitempty"`
@@ -76,6 +78,14 @@ func initializeGitRepository(path string) error {
 	return initializeGitRepositoryForPath(path, gitCommandAvailable, runGitInitCommand)
 }
 
+func queryGitBranch(path string) (string, error) {
+	return gitBranchForPath(path, gitCommandAvailable, runGitBranchCommand)
+}
+
+func queryGitBranchMerged(path string, worktreeBranch string, baseBranch string) (bool, error) {
+	return gitBranchMergedForPath(path, worktreeBranch, baseBranch, gitCommandAvailable, runGitBranchMergedCommand)
+}
+
 func gitStatusForPath(path string, checker gitCommandChecker, runner gitStatusRunner) (GitStatus, error) {
 	if err := checker(); err != nil {
 		return GitStatus{GitUnavailable: true}, nil
@@ -95,6 +105,54 @@ func gitStatusForPath(path string, checker gitCommandChecker, runner gitStatusRu
 		return GitStatus{}, fmt.Errorf("git status failed: %w", err)
 	}
 	return parseGitStatusPorcelainV2(string(output)), nil
+}
+
+func gitBranchForPath(path string, checker gitCommandChecker, runner gitBranchRunner) (string, error) {
+	if err := checker(); err != nil {
+		return "", gitUnavailableError(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), gitStatusTimeout)
+	defer cancel()
+
+	output, err := runner(ctx, path)
+	if err != nil {
+		if errorsIsDeadlineExceeded(ctx.Err()) {
+			return "", fmt.Errorf("git branch timed out")
+		}
+		return "", fmt.Errorf("git branch failed: %w", err)
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+func gitBranchMergedForPath(path string, worktreeBranch string, baseBranch string, checker gitCommandChecker, runner gitBranchMergedRunner) (bool, error) {
+	worktreeBranch = strings.TrimSpace(worktreeBranch)
+	baseBranch = strings.TrimSpace(baseBranch)
+	if worktreeBranch == "" || baseBranch == "" {
+		return false, errors.New("missing branch")
+	}
+	if err := checker(); err != nil {
+		return false, gitUnavailableError(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), gitStatusTimeout)
+	defer cancel()
+
+	output, err := runner(ctx, path, worktreeBranch, baseBranch)
+	if err == nil {
+		return true, nil
+	}
+	if errorsIsDeadlineExceeded(ctx.Err()) {
+		return false, fmt.Errorf("git merge-base timed out")
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 && len(output) == 0 {
+		return false, nil
+	}
+	if message := strings.TrimSpace(string(output)); message != "" {
+		return false, fmt.Errorf("git merge-base failed: %w: %s", err, message)
+	}
+	return false, fmt.Errorf("git merge-base failed: %w", err)
 }
 
 func initializeGitRepositoryForPath(path string, checker gitCommandChecker, runner gitInitRunner) error {
@@ -137,6 +195,16 @@ func runGitStatusCommand(ctx context.Context, path string) ([]byte, error) {
 
 func runGitInitCommand(ctx context.Context, path string) ([]byte, error) {
 	cmd := newBackgroundCommand(ctx, "git", "-C", path, "init")
+	return cmd.CombinedOutput()
+}
+
+func runGitBranchCommand(ctx context.Context, path string) ([]byte, error) {
+	cmd := newBackgroundCommand(ctx, "git", "-C", path, "branch", "--show-current")
+	return cmd.CombinedOutput()
+}
+
+func runGitBranchMergedCommand(ctx context.Context, path string, worktreeBranch string, baseBranch string) ([]byte, error) {
+	cmd := newBackgroundCommand(ctx, "git", "-C", path, "merge-base", "--is-ancestor", worktreeBranch, baseBranch)
 	return cmd.CombinedOutput()
 }
 

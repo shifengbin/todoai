@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,6 +38,7 @@ type App struct {
 	shellOpts                     []ShellSessionManagerOption
 	gitStatus                     func(path string) (GitStatus, error)
 	gitInit                       func(path string) error
+	gitBranchMerged               func(path string, worktreeBranch string, baseBranch string) (bool, error)
 	claudeStatusDir               string
 	claudeStatusWatcher           *ClaudeStatusWatcher
 	claudeStatusStop              chan struct{}
@@ -79,6 +81,7 @@ func NewAppWithConfigAndShellStarter(configPath string, starter ShellStarter, op
 		starter:            starter,
 		gitStatus:          queryGitStatus,
 		gitInit:            initializeGitRepository,
+		gitBranchMerged:    queryGitBranchMerged,
 		claudeStatusDir:    defaultClaudeStatusDir,
 	}
 	var shellOpts []ShellSessionManagerOption
@@ -429,6 +432,17 @@ func (a *App) AddProjectsToTodo(todoID string, projectIDs []string) (ProjectStat
 	return a.withShellState(state), nil
 }
 
+func (a *App) AddProjectSelectionsToTodo(todoID string, projectSelections []TodoProjectSelection) (ProjectState, error) {
+	if !a.hasWorkspace() {
+		return a.currentProjectStateWithError(ErrWorkspaceRequired)
+	}
+	state, err := a.projects.AssociateProjectSelectionsWithTodo(todoID, projectSelections)
+	if err != nil {
+		return ProjectState{}, err
+	}
+	return a.withShellState(state), nil
+}
+
 func (a *App) RemoveTodoProject(todoProjectID string) (ProjectState, error) {
 	if !a.hasWorkspace() {
 		return a.currentProjectStateWithError(ErrWorkspaceRequired)
@@ -608,6 +622,10 @@ func (a *App) CompleteTodo(todoID string) (ProjectState, error) {
 		return ProjectState{}, err
 	}
 	a.shells.DeleteTodoTerminals(todoID)
+	state, err = a.projects.FillCompletedTodoSnapshotBranches(todoID)
+	if err != nil {
+		return ProjectState{}, err
+	}
 	return a.withShellState(state), nil
 }
 
@@ -740,6 +758,49 @@ func (a *App) GetProjectGitStatus(projectID string) (GitStatus, error) {
 	}
 	status.ProjectID = projectID
 	return status, nil
+}
+
+func (a *App) GetCompletedTodoProjectMergeStatuses(requests []CompletedTodoProjectMergeStatusRequest) ([]CompletedTodoProjectMergeStatus, error) {
+	if !a.hasWorkspace() {
+		return nil, ErrWorkspaceRequired
+	}
+	statuses := make([]CompletedTodoProjectMergeStatus, 0, len(requests))
+	for _, request := range requests {
+		statuses = append(statuses, a.completedTodoProjectMergeStatus(request))
+	}
+	return statuses, nil
+}
+
+func (a *App) completedTodoProjectMergeStatus(request CompletedTodoProjectMergeStatusRequest) CompletedTodoProjectMergeStatus {
+	status := CompletedTodoProjectMergeStatus{
+		ID:     strings.TrimSpace(request.ID),
+		Status: CompletedTodoProjectMergeStatusUnknown,
+	}
+	path := strings.TrimSpace(request.Path)
+	worktreeBranch := strings.TrimSpace(request.WorktreeBranch)
+	baseBranch := strings.TrimSpace(request.BaseBranch)
+	switch {
+	case path == "":
+		status.Reason = "path unavailable"
+		return status
+	case worktreeBranch == "":
+		status.Reason = "missing worktree branch"
+		return status
+	case baseBranch == "":
+		status.Reason = "missing base branch"
+		return status
+	}
+	merged, err := a.gitBranchMerged(path, worktreeBranch, baseBranch)
+	if err != nil {
+		status.Reason = err.Error()
+		return status
+	}
+	if merged {
+		status.Status = CompletedTodoProjectMergeStatusMerged
+		return status
+	}
+	status.Status = CompletedTodoProjectMergeStatusUnmerged
+	return status
 }
 
 func (a *App) InitializeProjectGitRepository(projectID string) error {
