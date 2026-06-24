@@ -21,6 +21,7 @@ import {
   DetectTerminalShell,
   GetProjectGitStatus,
   ImportProjectsFromParentDirectoryDialog,
+  InitializeGitRepositoryAndImportProject,
   InitializeProjectGitRepository,
   LoadTerminalSettings,
   LoadTodoProjectUIState,
@@ -60,6 +61,7 @@ const appApiMock = vi.hoisted(() => ({
   DetectTerminalShell: vi.fn(),
   GetProjectGitStatus: vi.fn(),
   ImportProjectsFromParentDirectoryDialog: vi.fn(),
+  InitializeGitRepositoryAndImportProject: vi.fn(),
   InitializeProjectGitRepository: vi.fn(),
   ListProjects: vi.fn(),
   LoadTerminalSettings: vi.fn(),
@@ -228,6 +230,8 @@ describe('App project terminal tree', () => {
     appApiMock.CloseWorkspace.mockResolvedValue(noWorkspaceState())
     appApiMock.ClearRecentWorkspaces.mockResolvedValue(workspaceState({ recentWorkspaces: [] }))
     appApiMock.GetProjectGitStatus.mockResolvedValue(gitStatus())
+    appApiMock.CreateProjectFromDialog.mockResolvedValue(projectImportResult(projectState()))
+    appApiMock.InitializeGitRepositoryAndImportProject.mockResolvedValue(projectState())
     appApiMock.InitializeProjectGitRepository.mockResolvedValue()
     appApiMock.StartShell.mockResolvedValue({ projectId: 'project-a', terminalId: 'terminal-a', state: 'running' })
     appApiMock.SendTerminalInput.mockResolvedValue()
@@ -1870,14 +1874,14 @@ describe('App project terminal tree', () => {
   })
 
   it('imports a single project candidate without refreshing git status immediately', async () => {
-    appApiMock.CreateProjectFromDialog.mockResolvedValue(
+    appApiMock.CreateProjectFromDialog.mockResolvedValue(projectImportResult(
       projectState({
         projects: [
           { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
           { id: 'project-b', name: 'beta', path: '/work/beta', available: true }
         ]
       })
-    )
+    ))
     const wrapper = await mountReadyApp()
     GetProjectGitStatus.mockClear()
 
@@ -1890,8 +1894,12 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="todo-project-picker-option-project-b"]').exists()).toBe(true)
   })
 
-  it('selects a single imported project in the create TODO form only after import', async () => {
-    appApiMock.CreateProjectFromDialog.mockResolvedValue(
+  it('initializes a non-Git single project after confirmation and selects it', async () => {
+    appApiMock.CreateProjectFromDialog.mockResolvedValue({
+      requiresGitInitialization: true,
+      path: '/work/beta'
+    })
+    appApiMock.InitializeGitRepositoryAndImportProject.mockResolvedValue(
       projectState({
         projects: [
           { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
@@ -1905,6 +1913,62 @@ describe('App project terminal tree', () => {
         }
       })
     )
+    window.confirm.mockReturnValueOnce(true)
+    const wrapper = await mountReadyApp()
+
+    await selectTodoMenuAction(wrapper, 'add-project', 'todo-a')
+    await wrapper.find('[data-testid="import-single-project-candidate"]').trigger('click')
+    await flushPromises()
+
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('初始化 Git 仓库'))
+    expect(InitializeGitRepositoryAndImportProject).toHaveBeenCalledWith('/work/beta')
+    expect(wrapper.find('[data-testid="todo-project-picker-tag-project-b"]').exists()).toBe(true)
+  })
+
+  it('shows a temporary toast when non-Git single project initialization is declined', async () => {
+    vi.useFakeTimers()
+    try {
+      appApiMock.CreateProjectFromDialog.mockResolvedValue({
+        requiresGitInitialization: true,
+        path: '/work/beta'
+      })
+      window.confirm.mockReturnValueOnce(false)
+      const wrapper = await mountReadyApp()
+
+      await selectTodoMenuAction(wrapper, 'add-project', 'todo-a')
+      await wrapper.find('[data-testid="import-single-project-candidate"]').trigger('click')
+      await flushPromises()
+
+      expect(InitializeGitRepositoryAndImportProject).not.toHaveBeenCalled()
+      expect(wrapper.find('[data-testid="app-toast"]').text()).toContain('只能导入 Git 仓库')
+
+      vi.advanceTimersByTime(1999)
+      await nextTick()
+      expect(wrapper.find('[data-testid="app-toast"]').exists()).toBe(true)
+
+      vi.advanceTimersByTime(1)
+      await nextTick()
+      expect(wrapper.find('[data-testid="app-toast"]').exists()).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('selects a single imported project in the create TODO form only after import', async () => {
+    appApiMock.CreateProjectFromDialog.mockResolvedValue(projectImportResult(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
+          { id: 'project-b', name: 'beta', path: '/work/beta', available: true }
+        ],
+        importSummary: {
+          parentPath: '/work/beta',
+          addedCount: 1,
+          skippedCount: 0,
+          added: [{ id: 'project-b', name: 'beta', path: '/work/beta', available: true }]
+        }
+      })
+    ))
     const wrapper = await mountReadyApp()
 
     await wrapper.find('[data-testid="new-todo"]').trigger('click')
@@ -1935,7 +1999,7 @@ describe('App project terminal tree', () => {
         ]
       })
     )
-    appApiMock.CreateProjectFromDialog.mockResolvedValue(
+    appApiMock.CreateProjectFromDialog.mockResolvedValue(projectImportResult(
       projectState({
         projects: [
           { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
@@ -1948,7 +2012,7 @@ describe('App project terminal tree', () => {
           skippedPaths: ['/work/beta']
         }
       })
-    )
+    ))
     const wrapper = await mountReadyApp()
 
     await wrapper.find('[data-testid="new-todo"]').trigger('click')
@@ -1959,7 +2023,7 @@ describe('App project terminal tree', () => {
   })
 
   it('selects a single imported project in the edit TODO and add-project pickers', async () => {
-    appApiMock.CreateProjectFromDialog.mockResolvedValue(
+    appApiMock.CreateProjectFromDialog.mockResolvedValue(projectImportResult(
       projectState({
         projects: [
           { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
@@ -1972,7 +2036,7 @@ describe('App project terminal tree', () => {
           added: [{ id: 'project-b', name: 'beta', path: '/work/beta', available: true }]
         }
       })
-    )
+    ))
     const wrapper = await mountReadyApp()
 
     await selectTodoMenuAction(wrapper, 'edit', 'todo-a')
@@ -1985,6 +2049,30 @@ describe('App project terminal tree', () => {
     await wrapper.find('[data-testid="import-single-project-candidate"]').trigger('click')
     await flushPromises()
     expect(wrapper.find('[data-testid="todo-project-picker-tag-project-b"]').exists()).toBe(true)
+  })
+
+  it('explains that bulk parent import only imports first-level Git repositories', async () => {
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="new-todo"]').trigger('click')
+    await nextTick()
+    expect(wrapper.find('[data-testid="import-global-project-candidates"]').attributes('title')).toBe(
+      '仅导入一级子目录中的 Git 仓库'
+    )
+
+    await wrapper.find('[data-testid="todo-create-close"]').trigger('click')
+    await selectTodoMenuAction(wrapper, 'edit', 'todo-a')
+    await nextTick()
+    expect(wrapper.find('[data-testid="import-global-project-candidates"]').attributes('title')).toBe(
+      '仅导入一级子目录中的 Git 仓库'
+    )
+
+    await wrapper.find('[data-testid="todo-detail-close"]').trigger('click')
+    await selectTodoMenuAction(wrapper, 'add-project', 'todo-a')
+    await nextTick()
+    expect(wrapper.find('[data-testid="import-global-project-candidates"]').attributes('title')).toBe(
+      '仅导入一级子目录中的 Git 仓库'
+    )
   })
 
   it('does not refresh git status immediately after importing projects', async () => {
@@ -3239,6 +3327,15 @@ function projectState(overrides = {}) {
     activeTodoProjectId: 'todo-project-a',
     terminals: [terminal({ id: 'terminal-a' })],
     activeTerminalId: 'terminal-a',
+    ...overrides
+  }
+}
+
+function projectImportResult(state, overrides = {}) {
+  return {
+    state,
+    requiresGitInitialization: false,
+    path: '',
     ...overrides
   }
 }

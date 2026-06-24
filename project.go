@@ -94,6 +94,12 @@ type ProjectImportSummary struct {
 	SkippedPaths []string  `json:"skippedPaths,omitempty"`
 }
 
+type ProjectImportResult struct {
+	State                     ProjectState `json:"state,omitempty"`
+	RequiresGitInitialization bool         `json:"requiresGitInitialization,omitempty"`
+	Path                      string       `json:"path,omitempty"`
+}
+
 type persistedGlobalProjectCandidates struct {
 	Version  int       `json:"version"`
 	Projects []Project `json:"projects"`
@@ -254,6 +260,11 @@ func (manager *ProjectManager) ImportProjectsFromParentDirectory(parentPath stri
 			continue
 		}
 		if containsProjectAbsolutePath(state.Projects, absoluteChildPath) {
+			summary.SkippedCount++
+			summary.SkippedPaths = append(summary.SkippedPaths, absoluteChildPath)
+			continue
+		}
+		if !pathHasGitRepositoryMetadata(absoluteChildPath) {
 			summary.SkippedCount++
 			summary.SkippedPaths = append(summary.SkippedPaths, absoluteChildPath)
 			continue

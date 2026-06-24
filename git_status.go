@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -74,6 +76,14 @@ func queryGitStatus(path string) (GitStatus, error) {
 
 func initializeGitRepository(path string) error {
 	return initializeGitRepositoryForPath(path, gitCommandAvailable, runGitInitCommand)
+}
+
+func pathHasGitRepositoryMetadata(path string) bool {
+	info, err := os.Stat(filepath.Join(path, ".git"))
+	if err != nil {
+		return false
+	}
+	return info.IsDir() || info.Mode().IsRegular()
 }
 
 func gitStatusForPath(path string, checker gitCommandChecker, runner gitStatusRunner) (GitStatus, error) {

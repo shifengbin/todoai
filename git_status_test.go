@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -109,6 +111,34 @@ func TestGitStatusForPathReturnsCommandFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "git status failed") {
 		t.Fatalf("error = %q, want git status failed", err.Error())
+	}
+}
+
+func TestPathHasGitRepositoryMetadataDetectsGitDirectory(t *testing.T) {
+	repoDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repoDir, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir .git: %v", err)
+	}
+
+	if !pathHasGitRepositoryMetadata(repoDir) {
+		t.Fatal("pathHasGitRepositoryMetadata() = false, want true for .git directory")
+	}
+}
+
+func TestPathHasGitRepositoryMetadataDetectsGitFile(t *testing.T) {
+	repoDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoDir, ".git"), []byte("gitdir: /tmp/worktree.git"), 0o600); err != nil {
+		t.Fatalf("write .git file: %v", err)
+	}
+
+	if !pathHasGitRepositoryMetadata(repoDir) {
+		t.Fatal("pathHasGitRepositoryMetadata() = false, want true for .git file")
+	}
+}
+
+func TestPathHasGitRepositoryMetadataRejectsNonGitDirectory(t *testing.T) {
+	if pathHasGitRepositoryMetadata(t.TempDir()) {
+		t.Fatal("pathHasGitRepositoryMetadata() = true, want false for non-Git directory")
 	}
 }
 

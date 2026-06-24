@@ -16,7 +16,7 @@ export function CloseWorkspace():Promise<main.ProjectState>;
 
 export function CompleteTodo(arg1:string):Promise<main.ProjectState>;
 
-export function CreateProjectFromDialog():Promise<main.ProjectState>;
+export function CreateProjectFromDialog():Promise<main.ProjectImportResult>;
 
 export function CreateTerminal(arg1:string,arg2:number,arg3:number):Promise<main.ProjectState>;
 
@@ -44,9 +44,13 @@ export function GetProjectGitStatus(arg1:string):Promise<main.GitStatus>;
 
 export function GetShellStatus(arg1:string):Promise<main.ShellStatus>;
 
+export function ImportProjectFromPath(arg1:string):Promise<main.ProjectImportResult>;
+
 export function ImportProjectsFromParentDirectory(arg1:string):Promise<main.ProjectState>;
 
 export function ImportProjectsFromParentDirectoryDialog():Promise<main.ProjectState>;
+
+export function InitializeGitRepositoryAndImportProject(arg1:string):Promise<main.ProjectState>;
 
 export function InitializeProjectGitRepository(arg1:string):Promise<void>;
 

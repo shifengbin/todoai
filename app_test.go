@@ -1259,8 +1259,14 @@ func TestAppImportsProjectsFromParentDirectory(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(parentDir, "frontend-app"), 0o755); err != nil {
 		t.Fatalf("mkdir frontend-app: %v", err)
 	}
+	if err := os.Mkdir(filepath.Join(parentDir, "frontend-app", ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir frontend-app .git: %v", err)
+	}
 	if err := os.Mkdir(filepath.Join(parentDir, "api-service"), 0o755); err != nil {
 		t.Fatalf("mkdir api-service: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(parentDir, "api-service", ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir api-service .git: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(parentDir, "README.md"), []byte("ignore"), 0o600); err != nil {
 		t.Fatalf("write README: %v", err)
@@ -1280,6 +1286,87 @@ func TestAppImportsProjectsFromParentDirectory(t *testing.T) {
 	}
 	if state.ImportSummary == nil || state.ImportSummary.AddedCount != 2 || state.ImportSummary.SkippedCount != 0 {
 		t.Fatalf("ImportSummary = %#v, want 2 added", state.ImportSummary)
+	}
+}
+
+func TestAppImportProjectFromPathRequiresGitInitializationForNonGitDirectory(t *testing.T) {
+	projectDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+
+	result, err := app.ImportProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("ImportProjectFromPath() error = %v", err)
+	}
+
+	if !result.RequiresGitInitialization {
+		t.Fatalf("RequiresGitInitialization = false, want true")
+	}
+	if result.Path != mustAbs(t, projectDir) {
+		t.Fatalf("Path = %q, want %q", result.Path, mustAbs(t, projectDir))
+	}
+	state, err := app.ListProjects()
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	if len(state.Projects) != 0 {
+		t.Fatalf("Projects = %#v, want no import before initialization", state.Projects)
+	}
+}
+
+func TestAppImportProjectFromPathImportsGitDirectory(t *testing.T) {
+	projectDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(projectDir, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir .git: %v", err)
+	}
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+
+	result, err := app.ImportProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("ImportProjectFromPath() error = %v", err)
+	}
+
+	if result.RequiresGitInitialization {
+		t.Fatalf("RequiresGitInitialization = true, want false")
+	}
+	if len(result.State.Projects) != 1 || result.State.Projects[0].Path != mustAbs(t, projectDir) {
+		t.Fatalf("State.Projects = %#v, want imported Git directory", result.State.Projects)
+	}
+}
+
+func TestAppInitializeGitRepositoryAndImportProjectInitializesThenAdds(t *testing.T) {
+	projectDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	calls := 0
+	app.gitInit = func(path string) error {
+		calls++
+		if path != mustAbs(t, projectDir) {
+			t.Fatalf("git init path = %q, want %q", path, mustAbs(t, projectDir))
+		}
+		if err := os.WriteFile(filepath.Join(path, ".git"), []byte("gitdir: initialized"), 0o600); err != nil {
+			t.Fatalf("write .git file: %v", err)
+		}
+		return nil
+	}
+
+	state, err := app.InitializeGitRepositoryAndImportProject(projectDir)
+	if err != nil {
+		t.Fatalf("InitializeGitRepositoryAndImportProject() error = %v", err)
+	}
+
+	if calls != 1 {
+		t.Fatalf("git init calls = %d, want 1", calls)
+	}
+	if len(state.Projects) != 1 || state.Projects[0].Path != mustAbs(t, projectDir) {
+		t.Fatalf("Projects = %#v, want initialized project imported", state.Projects)
 	}
 }
 

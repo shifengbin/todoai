@@ -302,19 +302,44 @@ func (a *App) ListProjects() (ProjectState, error) {
 	return a.withShellState(state), nil
 }
 
-func (a *App) CreateProjectFromDialog() (ProjectState, error) {
+func (a *App) CreateProjectFromDialog() (ProjectImportResult, error) {
 	if !a.hasWorkspace() {
-		return a.currentProjectStateWithError(ErrWorkspaceRequired)
+		state, err := a.currentProjectStateWithError(ErrWorkspaceRequired)
+		return ProjectImportResult{State: state}, err
 	}
 	path, err := wailsruntime.OpenDirectoryDialog(a.ctx, wailsruntime.OpenDialogOptions{
 		Title: "Select Project Directory",
 	})
 	if err != nil {
-		return ProjectState{}, err
+		return ProjectImportResult{}, err
 	}
 	if path == "" {
-		return a.ListProjects()
+		state, err := a.ListProjects()
+		return ProjectImportResult{State: state}, err
 	}
+	return a.ImportProjectFromPath(path)
+}
+
+func (a *App) ImportProjectFromPath(path string) (ProjectImportResult, error) {
+	if !a.hasWorkspace() {
+		state, err := a.currentProjectStateWithError(ErrWorkspaceRequired)
+		return ProjectImportResult{State: state}, err
+	}
+	absolutePath, err := normalizeProjectPath(path)
+	if err != nil {
+		return ProjectImportResult{}, err
+	}
+	if !directoryAvailable(absolutePath) {
+		return ProjectImportResult{}, errors.New("project path is not an accessible directory")
+	}
+	if !pathHasGitRepositoryMetadata(absolutePath) {
+		return ProjectImportResult{RequiresGitInitialization: true, Path: absolutePath}, nil
+	}
+	state, err := a.addProjectFromPath(absolutePath)
+	return ProjectImportResult{State: state}, err
+}
+
+func (a *App) addProjectFromPath(path string) (ProjectState, error) {
 	project, added, err := a.projects.AddProjectPath(path)
 	if err != nil {
 		return ProjectState{}, err
@@ -331,16 +356,26 @@ func (a *App) AddProjectFromPath(path string) (ProjectState, error) {
 	if !a.hasWorkspace() {
 		return a.currentProjectStateWithError(ErrWorkspaceRequired)
 	}
-	project, added, err := a.projects.AddProjectPath(path)
+	return a.addProjectFromPath(path)
+}
+
+func (a *App) InitializeGitRepositoryAndImportProject(path string) (ProjectState, error) {
+	if !a.hasWorkspace() {
+		return a.currentProjectStateWithError(ErrWorkspaceRequired)
+	}
+	absolutePath, err := normalizeProjectPath(path)
 	if err != nil {
 		return ProjectState{}, err
 	}
-	state, err := a.ListProjects()
-	if err != nil {
-		return ProjectState{}, err
+	if !directoryAvailable(absolutePath) {
+		return ProjectState{}, errors.New("project path is not an accessible directory")
 	}
-	state.ImportSummary = singleProjectImportSummary(project, added)
-	return state, nil
+	if !pathHasGitRepositoryMetadata(absolutePath) {
+		if err := a.gitInit(absolutePath); err != nil {
+			return ProjectState{}, err
+		}
+	}
+	return a.addProjectFromPath(absolutePath)
 }
 
 func (a *App) ImportProjectsFromParentDirectory(parentPath string) (ProjectState, error) {

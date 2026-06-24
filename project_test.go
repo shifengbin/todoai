@@ -908,11 +908,21 @@ func TestProjectManagerImportsProjectsFromParentDirectory(t *testing.T) {
 	parentDir := t.TempDir()
 	existingDir := filepath.Join(parentDir, "existing")
 	newDir := filepath.Join(parentDir, "new-app")
+	nonGitDir := filepath.Join(parentDir, "docs")
 	if err := os.Mkdir(existingDir, 0o755); err != nil {
 		t.Fatalf("mkdir existing: %v", err)
 	}
+	if err := os.Mkdir(filepath.Join(existingDir, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir existing .git: %v", err)
+	}
 	if err := os.Mkdir(newDir, 0o755); err != nil {
 		t.Fatalf("mkdir new: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(newDir, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir new .git: %v", err)
+	}
+	if err := os.Mkdir(nonGitDir, 0o755); err != nil {
+		t.Fatalf("mkdir non-git: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(parentDir, "README.md"), []byte("not a project"), 0o600); err != nil {
 		t.Fatalf("write file child: %v", err)
@@ -937,11 +947,14 @@ func TestProjectManagerImportsProjectsFromParentDirectory(t *testing.T) {
 	if state.ImportSummary == nil {
 		t.Fatal("ImportSummary = nil, want summary")
 	}
-	if state.ImportSummary.AddedCount != 1 || state.ImportSummary.SkippedCount != 1 {
-		t.Fatalf("ImportSummary = %#v, want 1 added and 1 skipped", state.ImportSummary)
+	if state.ImportSummary.AddedCount != 1 || state.ImportSummary.SkippedCount != 2 {
+		t.Fatalf("ImportSummary = %#v, want 1 added and 2 skipped", state.ImportSummary)
 	}
 	if !containsProjectPath(state.Projects, newDir) {
 		t.Fatalf("Projects = %#v, want imported %q", state.Projects, newDir)
+	}
+	if containsProjectPath(state.Projects, nonGitDir) {
+		t.Fatalf("Projects = %#v, want non-Git directory %q skipped", state.Projects, nonGitDir)
 	}
 }
 

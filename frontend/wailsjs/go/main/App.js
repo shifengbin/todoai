@@ -86,12 +86,20 @@ export function GetShellStatus(arg1) {
   return window['go']['main']['App']['GetShellStatus'](arg1);
 }
 
+export function ImportProjectFromPath(arg1) {
+  return window['go']['main']['App']['ImportProjectFromPath'](arg1);
+}
+
 export function ImportProjectsFromParentDirectory(arg1) {
   return window['go']['main']['App']['ImportProjectsFromParentDirectory'](arg1);
 }
 
 export function ImportProjectsFromParentDirectoryDialog() {
   return window['go']['main']['App']['ImportProjectsFromParentDirectoryDialog']();
+}
+
+export function InitializeGitRepositoryAndImportProject(arg1) {
+  return window['go']['main']['App']['InitializeGitRepositoryAndImportProject'](arg1);
 }
 
 export function InitializeProjectGitRepository(arg1) {

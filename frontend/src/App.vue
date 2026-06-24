@@ -27,6 +27,7 @@ import {
   DetectTerminalShell,
   GetProjectGitStatus,
   ImportProjectsFromParentDirectoryDialog,
+  InitializeGitRepositoryAndImportProject,
   InitializeProjectGitRepository,
   ListProjects,
   LoadTerminalSettings,
@@ -60,6 +61,7 @@ const activeTodoProjectId = ref('')
 const activeTerminalId = ref('')
 const importSummary = ref(null)
 const shellStatuses = reactive({})
+const toastMessage = ref('')
 const terminalContainers = new Map()
 const titleActivityTimers = new Map()
 const autoRestartedTerminals = new Set()
@@ -71,6 +73,10 @@ let gitStatusInFlightRequestId = 0
 let lastFocusGitRefreshProjectId = ''
 let lastFocusGitRefreshAt = 0
 const focusGitRefreshDedupeMs = 500
+const gitOnlyImportToastText = '只能导入 Git 仓库'
+const bulkGitImportTooltip = '仅导入一级子目录中的 Git 仓库'
+const toastDurationMs = 2000
+let toastTimer = null
 const terminalMenu = reactive({
   visible: false,
   terminalId: '',
@@ -462,6 +468,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('mousemove', resizeSidebar)
   window.removeEventListener('mouseup', stopSidebarResize)
   clearAllTitleActivityTimers()
+  clearToastTimer()
 })
 
 function applyState(state, options = {}) {
@@ -599,8 +606,12 @@ async function loadTodoProjectUIStateForCurrentWorkspace(options = {}) {
 }
 
 async function createProject() {
+  const previousProjectIds = new Set(projects.value.map((project) => project.id).filter(Boolean))
   try {
-    applyState(await CreateProjectFromDialog())
+    const imported = await resolveProjectImportResult(await CreateProjectFromDialog(), previousProjectIds)
+    if (imported?.state) {
+      applyState(imported.state)
+    }
   } catch (error) {
     showError(error)
   }
@@ -609,12 +620,38 @@ async function createProject() {
 async function importSingleProjectCandidate() {
   const previousProjectIds = new Set(projects.value.map((project) => project.id).filter(Boolean))
   try {
-    const state = await CreateProjectFromDialog()
-    const projectId = importedSingleProjectId(state, previousProjectIds)
-    applyState(state, { refreshGitStatus: false })
-    selectImportedProjectCandidate(projectId)
+    const imported = await resolveProjectImportResult(await CreateProjectFromDialog(), previousProjectIds)
+    if (!imported?.state) {
+      return
+    }
+    applyState(imported.state, { refreshGitStatus: false })
+    selectImportedProjectCandidate(imported.projectId)
   } catch (error) {
     showError(error)
+  }
+}
+
+async function resolveProjectImportResult(result, previousProjectIds) {
+  if (result?.requiresGitInitialization) {
+    const path = result.path || ''
+    if (!window.confirm('所选目录不是 Git 仓库，是否初始化 Git 仓库后导入？')) {
+      showToast(gitOnlyImportToastText)
+      return null
+    }
+    const state = await InitializeGitRepositoryAndImportProject(path)
+    return {
+      state,
+      projectId: importedSingleProjectId(state, previousProjectIds)
+    }
+  }
+
+  const state = result?.state || result
+  if (!state) {
+    return null
+  }
+  return {
+    state,
+    projectId: importedSingleProjectId(state, previousProjectIds)
   }
 }
 
@@ -1778,6 +1815,23 @@ function exitedAgentStatus() {
 function showError(error) {
   errorMessage.value = errorMessageFrom(error)
 }
+
+function showToast(message) {
+  toastMessage.value = message
+  clearToastTimer()
+  toastTimer = window.setTimeout(() => {
+    toastMessage.value = ''
+    toastTimer = null
+  }, toastDurationMs)
+}
+
+function clearToastTimer() {
+  if (!toastTimer) {
+    return
+  }
+  window.clearTimeout(toastTimer)
+  toastTimer = null
+}
 </script>
 
 <template>
@@ -1825,6 +1879,10 @@ function showError(error) {
       title="Resize sidebar"
       @mousedown="startSidebarResize"
     ></div>
+
+    <div v-if="toastMessage" class="app-toast" data-testid="app-toast" role="status">
+      {{ toastMessage }}
+    </div>
 
     <section class="workspace">
       <header class="workspace-header">
@@ -2067,6 +2125,7 @@ function showError(error) {
                 type="button"
                 class="toolbar-button compact"
                 data-testid="import-global-project-candidates"
+                :title="bulkGitImportTooltip"
                 :disabled="todoForm.saving"
                 @click="importProjectsFromParentDirectory"
               >
@@ -2257,6 +2316,7 @@ function showError(error) {
                 type="button"
                 class="toolbar-button compact"
                 data-testid="import-global-project-candidates"
+                :title="bulkGitImportTooltip"
                 :disabled="todoDetail.saving"
                 @click="importProjectsFromParentDirectory"
               >
@@ -2380,6 +2440,7 @@ function showError(error) {
               type="button"
               class="toolbar-button compact"
               data-testid="import-global-project-candidates"
+              :title="bulkGitImportTooltip"
               :disabled="projectPicker.saving"
               @click="importProjectsFromParentDirectory"
             >
