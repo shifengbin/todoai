@@ -925,7 +925,7 @@ button {
 .todo-project-list::before {
     position: absolute;
     top: -2px;
-    bottom: 22px;
+    bottom: 15px;
     left: 9px;
     width: 1px;
     background: var(--tree-guide);
@@ -1139,6 +1139,35 @@ button {
     border: 1px solid transparent;
 }
 
+.todo-project-header-row .project-row {
+    align-items: center;
+    min-height: 30px;
+    padding: 4px 8px;
+}
+
+.todo-project-header-row .project-icon {
+    align-self: center;
+    margin-top: 0;
+}
+
+.todo-project-node .project-copy {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.todo-project-node .project-name {
+    flex: 1 1 auto;
+}
+
+.todo-project-node .project-status {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .todo-project-header-row:hover {
     background: var(--row-hover);
 }
@@ -1226,6 +1255,11 @@ button {
     min-height: 52px;
 }
 
+.todo-project-header-row .terminal-launch-control,
+.todo-project-header-row .todo-project-remove-control {
+    min-height: 30px;
+}
+
 .add-terminal-button,
 .delete-project-button {
     display: inline-flex;
@@ -1236,6 +1270,24 @@ button {
     background: transparent;
     color: var(--muted-icon);
     cursor: pointer;
+}
+
+.todo-project-header-row .add-terminal-button,
+.todo-project-header-row .delete-project-button,
+.todo-project-header-row .add-terminal-placeholder {
+    min-height: 30px;
+}
+
+.todo-project-header-row .terminal-launch-menu {
+    top: 34px;
+}
+
+.todo-project-header-row .terminal-launch-menu--up {
+    bottom: 34px;
+}
+
+.todo-project-header-row .todo-project-remove-popover {
+    top: 34px;
 }
 
 .add-terminal-button:hover {
@@ -1413,8 +1465,8 @@ button {
     display: grid;
     min-width: 0;
     gap: 1px;
-    margin: 2px 0 4px 12px;
-    padding-left: 22px;
+    margin: 2px 0 4px;
+    padding-left: 20px;
 }
 
 .terminal-list {
@@ -1485,6 +1537,11 @@ button {
     height: 1px;
     background: var(--tree-guide);
     content: "";
+}
+
+.task-terminal-row::before {
+    left: -27px;
+    width: 28px;
 }
 
 .terminal-row:hover {
