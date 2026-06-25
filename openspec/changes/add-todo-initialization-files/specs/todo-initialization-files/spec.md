@@ -2,11 +2,12 @@
 
 ### Requirement: Manage Global Todo Initialization File Templates
 
-系统 SHALL 允许用户在全局设置中维护 TODO 初始化文件模板。每个模板 SHALL 包含名称、描述、文件名、文本内容和是否默认选择。系统 SHALL 持久化这些模板，并在应用重启或 workspace 切换后继续可用。系统 SHALL 拒绝保存空名称、空文件名、重复文件名、绝对路径文件名、包含路径穿越的文件名和包含目录分隔符的文件名。
+系统 SHALL 允许用户通过菜单栏“全局管理 > 文件管理”维护 TODO 初始化文件模板。每个模板 SHALL 包含名称、描述、文件名、文本内容和是否默认选择。系统 SHALL 持久化这些模板，并在应用重启或 workspace 切换后继续可用。系统 SHALL 拒绝保存空名称、空文件名、重复文件名、绝对路径文件名、包含路径穿越的文件名和包含目录分隔符的文件名。系统 SHALL NOT 在终端 Settings 弹窗中展示或保存 TODO 初始化文件模板管理表单。
 
-#### Scenario: User saves initialization file templates
+#### Scenario: User saves initialization file templates from file management
 
-- **WHEN** 用户在全局设置中保存两个初始化文件模板
+- **WHEN** 用户打开菜单栏“全局管理 > 文件管理”
+- **AND** 用户保存两个初始化文件模板
 - **AND** 第一个模板名称为 `Agent Rules`、描述为 `任务执行约束`、文件名为 `AGENTS.md`、内容为 `请先阅读任务说明`、默认选择为 true
 - **AND** 第二个模板名称为 `Prompt`、描述为 `可选提示词`、文件名为 `prompt.md`、内容为 `生成实现计划`、默认选择为 false
 - **THEN** 系统持久化这两个模板
@@ -14,13 +15,13 @@
 
 #### Scenario: Invalid initialization file template filename is rejected
 
-- **WHEN** 用户保存文件名为空、为绝对路径、包含 `..` 路径穿越或包含目录分隔符的初始化文件模板
+- **WHEN** 用户在文件管理中保存文件名为空、为绝对路径、包含 `..` 路径穿越或包含目录分隔符的初始化文件模板
 - **THEN** 系统拒绝保存该配置
 - **AND** 系统返回明确的校验错误
 
 #### Scenario: Duplicate initialization file template filenames are rejected
 
-- **WHEN** 用户保存两个文件名都为 `AGENTS.md` 的初始化文件模板
+- **WHEN** 用户在文件管理中保存两个文件名都为 `AGENTS.md` 的初始化文件模板
 - **THEN** 系统拒绝保存该配置
 - **AND** 系统提示初始化文件名不能重复
 
@@ -30,7 +31,7 @@
 
 #### Scenario: Default templates are preselected in create todo form
 
-- **WHEN** 全局设置中存在一个默认选择的初始化文件模板 `AGENTS.md`
+- **WHEN** 全局文件管理中存在一个默认选择的初始化文件模板 `AGENTS.md`
 - **AND** 存在一个非默认选择的初始化文件模板 `prompt.md`
 - **AND** 用户打开创建 TODO 表单
 - **THEN** 系统展示两个模板的名称、描述和文件名

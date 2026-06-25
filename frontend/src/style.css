@@ -1922,6 +1922,44 @@ button {
     gap: 8px;
 }
 
+.global-management-control {
+    position: relative;
+    display: inline-flex;
+}
+
+.global-management-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    z-index: 40;
+    display: grid;
+    min-width: 160px;
+    padding: 4px;
+    border: 1px solid var(--border);
+    background: var(--surface-bg);
+    box-shadow: 0 10px 26px var(--shadow);
+}
+
+.global-management-menu button {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 30px;
+    padding: 0 10px;
+    border: 0;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font: inherit;
+    font-size: 13px;
+    text-align: left;
+}
+
+.global-management-menu button:hover {
+    background: var(--active-bg);
+    color: var(--accent);
+}
+
 .toolbar-button.primary {
     border-color: var(--accent);
     background: var(--accent);
@@ -2459,6 +2497,114 @@ button {
 .launch-profile-row .icon-button:disabled {
     cursor: default;
     opacity: 0.42;
+}
+
+.initialization-file-management-dialog {
+    width: min(960px, calc(100vw - 40px));
+}
+
+.initialization-file-management-body {
+    gap: 10px;
+}
+
+.initialization-file-empty {
+    padding: 10px 12px;
+    border: 1px dashed var(--border);
+    color: var(--muted-text);
+    font-size: 13px;
+}
+
+.initialization-file-row {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: 64px minmax(120px, 1fr) minmax(140px, 1.2fr) minmax(160px, 1.2fr) minmax(180px, 1.8fr) 32px 32px 32px;
+    gap: 6px;
+    align-items: start;
+}
+
+.initialization-file-default {
+    display: inline-flex;
+    min-width: 0;
+    height: 32px;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    border: 1px solid var(--control-border);
+    background: var(--surface-bg);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.initialization-file-default input {
+    margin: 0;
+}
+
+.initialization-file-row textarea {
+    min-width: 0;
+    min-height: 32px;
+    resize: vertical;
+    padding: 7px 9px;
+    border: 1px solid var(--control-border);
+    background: var(--surface-bg);
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+}
+
+.initialization-file-row input[type="text"] {
+    min-width: 0;
+    height: 32px;
+    padding: 0 9px;
+    border: 1px solid var(--control-border);
+    background: var(--surface-bg);
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+}
+
+.initialization-file-row input[type="text"]:focus,
+.initialization-file-row textarea:focus {
+    border-color: var(--accent);
+    outline: none;
+}
+
+@media (max-width: 920px) {
+    .initialization-file-row {
+        grid-template-columns: 64px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.4fr) 32px 32px 32px;
+    }
+}
+
+@media (max-width: 720px) {
+    .initialization-file-row {
+        grid-template-columns: 64px minmax(0, 1fr) 32px 32px 32px;
+    }
+
+    .initialization-file-name-input {
+        grid-column: 2 / 3;
+    }
+
+    .initialization-file-description-input,
+    .initialization-file-filename-input,
+    .initialization-file-content-input {
+        grid-column: 1 / -1;
+    }
+
+    .initialization-file-move-up {
+        grid-column: 3 / 4;
+        grid-row: 1;
+    }
+
+    .initialization-file-move-down {
+        grid-column: 4 / 5;
+        grid-row: 1;
+    }
+
+    .initialization-file-remove {
+        grid-column: 5 / 6;
+        grid-row: 1;
+    }
 }
 
 @media (max-width: 680px) {
