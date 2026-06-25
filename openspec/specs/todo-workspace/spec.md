@@ -1344,7 +1344,7 @@ TODO 工程 UI 状态和 workspace 级左侧栏宽度 SHALL 按当前 workspace 
 
 ### Requirement: Select Branch For Todo Projects
 
-系统 SHALL 在创建 TODO、编辑 TODO 工程关联和为 TODO 添加项目时，允许用户为每个选中的项目选择或输入用于创建任务 worktree 的分支。分支控件 SHALL 默认使用主分支。用户选择或输入的分支信息 SHALL 保存到 TODO 工程副本中，并 SHALL 用于后续创建任务项目 worktree。分支候选 SHALL 作为输入辅助而不是提交前置条件；当候选数量较多、候选加载失败或候选不可用时，系统 SHALL 保持分支输入和表单提交流程可用。系统 MUST NOT 依赖会一次性渲染全部分支候选的原生下拉控件。
+系统 SHALL 在创建 TODO、编辑 TODO 工程关联和为 TODO 添加项目时，允许用户为每个选中的项目选择或输入用于创建任务 worktree 的分支。分支控件 SHALL 优先默认使用当前 workspace 中该项目上次成功保存的 base 分支选择；当当前 workspace 不存在该项目的上次选择记录时，系统 SHALL 使用既有默认分支规则。用户选择或输入的分支信息 SHALL 保存到 TODO 工程副本中，并 SHALL 用于后续创建任务项目 worktree。系统 SHALL 在创建 TODO、编辑 TODO 或为 TODO 添加项目保存成功后，将每个成功保存的项目 base 分支记录为当前 workspace 中该项目的上次选择。系统 SHALL NOT 在用户取消表单、关闭弹窗或保存失败时更新上次选择记录。分支候选 SHALL 作为输入辅助而不是提交前置条件；当候选数量较多、候选加载失败或候选不可用时，系统 SHALL 保持分支输入和表单提交流程可用。系统 MUST NOT 依赖会一次性渲染全部分支候选的原生下拉控件。
 
 #### Scenario: User selects branch while creating todo with project
 
@@ -1355,14 +1355,40 @@ TODO 工程 UI 状态和 workspace 级左侧栏宽度 SHALL 按当前 workspace 
 - **AND** 用户提交创建 TODO
 - **THEN** TODO 下保存工程副本 `frontend-app`
 - **AND** 该工程副本保存 base 分支选择 `develop`
+- **AND** 当前 workspace 记录 `frontend-app` 的上次 base 分支选择为 `develop`
 
-#### Scenario: Project branch defaults to main branch
+#### Scenario: Project branch defaults to previous workspace selection
 
-- **WHEN** 全局项目候选包含 Git 项目 `frontend-app`
+- **WHEN** 当前 workspace 已记录 `frontend-app` 的上次 base 分支选择为 `release/2026`
+- **AND** 用户打开创建 TODO 表单
+- **AND** 用户选择工程 `frontend-app`
+- **THEN** `frontend-app` 的分支控件默认显示 `release/2026`
+
+#### Scenario: Missing workspace branch preference uses existing default branch rule
+
+- **WHEN** 当前 workspace 没有 `frontend-app` 的上次 base 分支选择记录
 - **AND** 用户创建 TODO 时选择工程 `frontend-app`
 - **AND** 用户未选择或输入分支
 - **THEN** TODO 下保存工程副本 `frontend-app`
-- **AND** 该工程副本保存默认主分支作为 base 分支
+- **AND** 该工程副本保存既有默认分支规则解析出的 base 分支
+
+#### Scenario: Empty workspace branch preference remains empty
+
+- **WHEN** 当前 workspace 已记录 `frontend-app` 的上次 base 分支选择为空
+- **AND** 系统可为 `frontend-app` 解析出非空默认分支 `main`
+- **AND** 用户打开创建 TODO 表单
+- **AND** 用户选择工程 `frontend-app`
+- **THEN** `frontend-app` 的分支控件默认显示为空
+- **AND** 系统不使用 `main` 覆盖该空选择
+
+#### Scenario: Canceled branch edit does not update workspace preference
+
+- **WHEN** 当前 workspace 已记录 `frontend-app` 的上次 base 分支选择为 `develop`
+- **AND** 用户打开创建 TODO 表单
+- **AND** 用户选择工程 `frontend-app`
+- **AND** 用户将 `frontend-app` 的分支控件改为 `release/2026`
+- **AND** 用户关闭创建 TODO 表单且未提交
+- **THEN** 当前 workspace 仍记录 `frontend-app` 的上次 base 分支选择为 `develop`
 
 #### Scenario: User enters new branch while adding project to todo
 
@@ -1372,6 +1398,25 @@ TODO 工程 UI 状态和 workspace 级左侧栏宽度 SHALL 按当前 workspace 
 - **AND** 用户确认添加
 - **THEN** TODO `修复登录问题` 下保存工程副本 `frontend-app`
 - **AND** 该工程副本保存用户输入的分支值 `feature/login-fix`
+- **AND** 当前 workspace 记录 `frontend-app` 的上次 base 分支选择为 `feature/login-fix`
+
+#### Scenario: Existing todo project keeps its own branch while editing
+
+- **WHEN** 当前 workspace 已记录 `frontend-app` 的上次 base 分支选择为 `develop`
+- **AND** TODO `修复登录问题` 已关联 Git 项目 `frontend-app`
+- **AND** 该 TODO 工程副本保存的 base 分支为 `hotfix/login`
+- **WHEN** 用户打开 TODO 详情编辑
+- **THEN** `frontend-app` 的分支控件显示 `hotfix/login`
+- **AND** 系统不使用 workspace 上次选择 `develop` 覆盖该 TODO 工程副本的已保存分支
+
+#### Scenario: Editing todo updates workspace branch preference after save
+
+- **WHEN** TODO `修复登录问题` 已关联 Git 项目 `frontend-app`
+- **AND** 用户打开 TODO 详情编辑
+- **AND** 用户在 `frontend-app` 的分支控件中选择或输入 `release/2026`
+- **AND** 用户保存 TODO 详情
+- **THEN** 该 TODO 工程副本保存 base 分支选择 `release/2026`
+- **AND** 当前 workspace 记录 `frontend-app` 的上次 base 分支选择为 `release/2026`
 
 #### Scenario: Large branch lists remain stable
 
@@ -1430,3 +1475,4 @@ TODO 工程 UI 状态和 workspace 级左侧栏宽度 SHALL 按当前 workspace 
 - **WHEN** TODO `修复登录问题` 下显示项目 `frontend-app`
 - **AND** 用户打开该 TODO 项目的下拉菜单
 - **THEN** 菜单包含 `打开项目文件夹`
+
