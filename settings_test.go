@@ -257,7 +257,7 @@ func TestSettingsManagerSavesTodoInitializationFilesAndPreservesOtherSettings(t 
 
 	files := []TodoInitializationFileTemplate{
 		{Name: "Agent Rules", Description: "任务执行约束", FileName: "AGENTS.md", Content: "请先阅读任务说明", DefaultSelected: true},
-		{Name: "Prompt", Description: "可选提示词", FileName: "prompt.md", Content: "生成实现计划"},
+		{Name: "Agent Rules", Description: "可选提示词", FileName: "prompt.md", Content: "生成实现计划"},
 	}
 	state, err := manager.SaveTodoInitializationFiles(files)
 	if err != nil {
