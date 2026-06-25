@@ -1071,7 +1071,7 @@ describe('App project terminal tree', () => {
     expect(DeleteTerminal).not.toHaveBeenCalled()
     expect(session.terminal.dispose).not.toHaveBeenCalled()
     expect(wrapper.find('[data-testid="todo-project-todo-project-a"]').text()).toContain('alpha-copy')
-    expect(wrapper.find('[data-testid="todo-project-todo-project-a"]').text()).toContain('/work/alpha-copy')
+    expect(wrapper.find('[data-testid="todo-project-todo-project-a"]').text()).not.toContain('/work/alpha-copy')
     expect(wrapper.find('[data-testid="terminal-terminal-a"]').exists()).toBe(true)
   })
 
