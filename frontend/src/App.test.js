@@ -4090,18 +4090,29 @@ describe('App project terminal tree', () => {
     ])
   })
 
-  it('adds edits reorders and saves TODO initialization files from settings', async () => {
-    appApiMock.LoadTerminalSettings.mockResolvedValue(
-      settingsState({
-        todoInitializationFiles: [
-          initializationFile({ name: 'Agent Rules', fileName: 'AGENTS.md', content: 'rules', defaultSelected: true }),
-          initializationFile({ name: 'Prompt', description: '可选提示词', fileName: 'prompt.md', content: 'prompt', defaultSelected: false })
-        ]
-      })
-    )
+  it('keeps TODO initialization file management out of terminal settings', async () => {
     const wrapper = await mountReadyApp()
 
     await openSettings(wrapper)
+
+    expect(wrapper.find('[data-testid="todo-initialization-files-settings"]').exists()).toBe(false)
+    await wrapper.find('[data-testid="terminal-settings-save"]').trigger('click')
+    await flushPromises()
+
+    expect(SaveTodoInitializationFiles).not.toHaveBeenCalled()
+  })
+
+  it('adds edits reorders and saves TODO initialization files from global file management', async () => {
+    appApiMock.LoadTodoInitializationFiles.mockResolvedValue([
+      initializationFile({ name: 'Agent Rules', fileName: 'AGENTS.md', content: 'rules', defaultSelected: true }),
+      initializationFile({ name: 'Prompt', description: '可选提示词', fileName: 'prompt.md', content: 'prompt', defaultSelected: false })
+    ])
+    const wrapper = await mountReadyApp()
+
+    await openFileManagement(wrapper)
+
+    expect(wrapper.find('[data-testid="todo-initialization-file-management-dialog"]').exists()).toBe(true)
+    expect(LoadTodoInitializationFiles).toHaveBeenCalled()
     await wrapper.find('[data-testid="todo-initialization-file-down-0"]').trigger('click')
     await wrapper.find('[data-testid="todo-initialization-file-remove-1"]').trigger('click')
     await wrapper.find('[data-testid="todo-initialization-file-add"]').trigger('click')
@@ -4110,29 +4121,30 @@ describe('App project terminal tree', () => {
     await wrapper.find('[data-testid="todo-initialization-file-filename-1"]').setValue('notes.md')
     await wrapper.find('[data-testid="todo-initialization-file-content-1"]').setValue('notes')
     await wrapper.find('[data-testid="todo-initialization-file-default-1"]').setValue(true)
-    await wrapper.find('[data-testid="terminal-settings-save"]').trigger('click')
+    await wrapper.find('[data-testid="todo-initialization-file-management-save"]').trigger('click')
     await flushPromises()
 
     expect(SaveTodoInitializationFiles).toHaveBeenCalledWith([
       { name: 'Prompt', description: '可选提示词', fileName: 'prompt.md', content: 'prompt', defaultSelected: false },
       { name: 'Notes', description: '记录上下文', fileName: 'notes.md', content: 'notes', defaultSelected: true }
     ])
+    expect(wrapper.find('[data-testid="todo-initialization-file-management-dialog"]').exists()).toBe(false)
   })
 
-  it('shows TODO initialization file save errors without losing edited settings', async () => {
+  it('shows TODO initialization file save errors without losing edited files', async () => {
     appApiMock.SaveTodoInitializationFiles.mockRejectedValue(new Error('initialization file filename is duplicated'))
     const wrapper = await mountReadyApp()
 
-    await openSettings(wrapper)
+    await openFileManagement(wrapper)
     await wrapper.find('[data-testid="todo-initialization-file-add"]').trigger('click')
     await wrapper.find('[data-testid="todo-initialization-file-name-0"]').setValue('Agent Rules')
     await wrapper.find('[data-testid="todo-initialization-file-filename-0"]').setValue('AGENTS.md')
     await wrapper.find('[data-testid="todo-initialization-file-content-0"]').setValue('rules')
-    await wrapper.find('[data-testid="terminal-settings-save"]').trigger('click')
+    await wrapper.find('[data-testid="todo-initialization-file-management-save"]').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('[data-testid="terminal-settings-error"]').text()).toContain('initialization file filename is duplicated')
-    expect(wrapper.find('[data-testid="terminal-settings-dialog"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="todo-initialization-file-management-error"]').text()).toContain('initialization file filename is duplicated')
+    expect(wrapper.find('[data-testid="todo-initialization-file-management-dialog"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="todo-initialization-file-name-0"]').element.value).toBe('Agent Rules')
   })
 
@@ -4216,6 +4228,13 @@ async function mountReadyApp() {
 
 async function openSettings(wrapper) {
   await wrapper.find('[data-testid="settings-toggle"]').trigger('click')
+  await flushPromises()
+}
+
+async function openFileManagement(wrapper) {
+  await wrapper.find('[data-testid="global-management-toggle"]').trigger('click')
+  await nextTick()
+  await wrapper.find('[data-testid="global-file-management"]').trigger('click')
   await flushPromises()
 }
 

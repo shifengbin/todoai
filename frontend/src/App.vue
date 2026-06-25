@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { ChevronDown, ChevronUp, FolderInput, FolderPlus, GitBranch, Plus, RotateCcw, Settings, Trash2, X } from '@lucide/vue'
+import { ChevronDown, ChevronUp, FileText, FolderInput, FolderPlus, GitBranch, Plus, RotateCcw, Settings, Trash2, X } from '@lucide/vue'
 import ProjectSidebar from './components/ProjectSidebar.vue'
 import {
   AGENT_CONFIDENCE,
@@ -95,6 +95,9 @@ const terminalMenu = reactive({
   x: 0,
   y: 0
 })
+const globalManagementMenu = reactive({
+  visible: false
+})
 const sidebarWidth = ref(280)
 const defaultSidebarWidth = 280
 const sidebarResize = reactive({
@@ -143,8 +146,14 @@ const settingsPanel = reactive({
   mode: 'detected',
   manualPath: '',
   launchProfiles: [],
-  todoInitializationFiles: [],
   theme: 'light',
+  error: ''
+})
+const initializationFileManagement = reactive({
+  visible: false,
+  loading: false,
+  saving: false,
+  files: [],
   error: ''
 })
 const todoForm = reactive({
@@ -479,6 +488,7 @@ onMounted(async () => {
   window.addEventListener('resize', fitActiveTerminal)
   window.addEventListener('focus', refreshProjectGitStatusOnFocus)
   window.addEventListener('click', closeTerminalMenu)
+  window.addEventListener('click', closeGlobalManagementMenu)
 
   try {
     applyState(await ListProjects())
@@ -500,6 +510,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', fitActiveTerminal)
   window.removeEventListener('focus', refreshProjectGitStatusOnFocus)
   window.removeEventListener('click', closeTerminalMenu)
+  window.removeEventListener('click', closeGlobalManagementMenu)
   window.removeEventListener('mousemove', resizeSidebar)
   window.removeEventListener('mouseup', stopSidebarResize)
   clearAllTitleActivityTimers()
@@ -1216,6 +1227,15 @@ function closeTerminalMenu() {
   terminalMenu.terminalId = ''
 }
 
+function toggleGlobalManagementMenu() {
+  closeTerminalMenu()
+  globalManagementMenu.visible = !globalManagementMenu.visible
+}
+
+function closeGlobalManagementMenu() {
+  globalManagementMenu.visible = false
+}
+
 async function copyFromTerminalMenu() {
   const terminalId = terminalMenu.terminalId
   await terminalManager.copySelection(terminalId)
@@ -1236,6 +1256,7 @@ function hasTerminalSelection(terminalId) {
 
 async function openTerminalSettings() {
   closeTerminalMenu()
+  closeGlobalManagementMenu()
   settingsPanel.visible = true
   settingsPanel.loading = true
   settingsPanel.error = ''
@@ -1263,7 +1284,6 @@ function applyTerminalSettings(state) {
   detectedTerminalShell.value = state?.detected || state?.fallback || null
   settingsPanel.manualPath = state?.selected?.path || settingsPanel.manualPath || ''
   settingsPanel.launchProfiles = cloneLaunchProfiles(launchProfilesFromState(state))
-  settingsPanel.todoInitializationFiles = cloneTodoInitializationFiles(todoInitializationFilesFromState(state))
   applyAppearanceTheme(state?.theme)
   settingsPanel.theme = currentTheme.value
 }
@@ -1291,13 +1311,6 @@ function cloneLaunchProfiles(profiles) {
   }))
 }
 
-function todoInitializationFilesFromState(state) {
-  if (Array.isArray(state?.todoInitializationFiles)) {
-    return state.todoInitializationFiles
-  }
-  return []
-}
-
 function cloneTodoInitializationFiles(files) {
   return files.map((file) => ({
     name: file.name || '',
@@ -1309,7 +1322,7 @@ function cloneTodoInitializationFiles(files) {
 }
 
 function addTodoInitializationFile() {
-  settingsPanel.todoInitializationFiles.push({
+  initializationFileManagement.files.push({
     name: '',
     description: '',
     fileName: '',
@@ -1319,20 +1332,20 @@ function addTodoInitializationFile() {
 }
 
 function removeTodoInitializationFile(index) {
-  settingsPanel.todoInitializationFiles.splice(index, 1)
+  initializationFileManagement.files.splice(index, 1)
 }
 
 function moveTodoInitializationFile(index, direction) {
   const nextIndex = index + direction
-  if (nextIndex < 0 || nextIndex >= settingsPanel.todoInitializationFiles.length) {
+  if (nextIndex < 0 || nextIndex >= initializationFileManagement.files.length) {
     return
   }
-  const [file] = settingsPanel.todoInitializationFiles.splice(index, 1)
-  settingsPanel.todoInitializationFiles.splice(nextIndex, 0, file)
+  const [file] = initializationFileManagement.files.splice(index, 1)
+  initializationFileManagement.files.splice(nextIndex, 0, file)
 }
 
 function normalizedTodoInitializationFiles() {
-  return settingsPanel.todoInitializationFiles.map((file) => ({
+  return initializationFileManagement.files.map((file) => ({
     name: (file.name || '').trim(),
     description: (file.description || '').trim(),
     fileName: (file.fileName || '').trim(),
@@ -1350,6 +1363,41 @@ function selectedTodoInitializationFileSnapshots(files) {
       fileName: (file.fileName || '').trim(),
       content: file.content || ''
     }))
+}
+
+async function openTodoInitializationFileManagement() {
+  closeGlobalManagementMenu()
+  closeTerminalMenu()
+  closeTerminalSettings()
+  initializationFileManagement.visible = true
+  initializationFileManagement.loading = true
+  initializationFileManagement.error = ''
+  initializationFileManagement.files = []
+  try {
+    initializationFileManagement.files = cloneTodoInitializationFiles(await LoadTodoInitializationFiles())
+  } catch (error) {
+    initializationFileManagement.error = errorMessageFrom(error)
+  } finally {
+    initializationFileManagement.loading = false
+  }
+}
+
+function closeTodoInitializationFileManagement() {
+  initializationFileManagement.visible = false
+  initializationFileManagement.error = ''
+}
+
+async function saveTodoInitializationFileManagement() {
+  initializationFileManagement.saving = true
+  initializationFileManagement.error = ''
+  try {
+    await SaveTodoInitializationFiles(normalizedTodoInitializationFiles())
+    closeTodoInitializationFileManagement()
+  } catch (error) {
+    initializationFileManagement.error = errorMessageFrom(error)
+  } finally {
+    initializationFileManagement.saving = false
+  }
 }
 
 function addTerminalLaunchProfile() {
@@ -1424,14 +1472,12 @@ async function saveTerminalSettings() {
     settingsPanel.error = launchProfileError
     return
   }
-  const todoInitializationFiles = normalizedTodoInitializationFiles()
   settingsPanel.saving = true
   settingsPanel.error = ''
   try {
     await SaveTerminalShell(path, source)
     const profileState = await SaveTerminalLaunchProfiles(launchProfiles)
-    const initializationFileState = await SaveTodoInitializationFiles(todoInitializationFiles)
-    applyTerminalSettings(await SaveTerminalTheme(settingsPanel.theme) || initializationFileState || profileState)
+    applyTerminalSettings(await SaveTerminalTheme(settingsPanel.theme) || profileState)
     closeTerminalSettings()
   } catch (error) {
     settingsPanel.error = errorMessageFrom(error)
@@ -2440,6 +2486,33 @@ function clearToastTimer() {
             <Plus :size="16" />
             <span>Global terminal</span>
           </button>
+          <div class="global-management-control" @click.stop>
+            <button
+              type="button"
+              class="toolbar-button"
+              data-testid="global-management-toggle"
+              title="Global management"
+              @click="toggleGlobalManagementMenu"
+            >
+              <FileText :size="16" />
+              <span>全局管理</span>
+              <ChevronDown :size="14" />
+            </button>
+            <div
+              v-if="globalManagementMenu.visible"
+              class="global-management-menu"
+              data-testid="global-management-menu"
+            >
+              <button
+                type="button"
+                data-testid="global-file-management"
+                @click="openTodoInitializationFileManagement"
+              >
+                <FileText :size="14" />
+                <span>文件管理</span>
+              </button>
+            </div>
+          </div>
           <button
             type="button"
             class="toolbar-button"
@@ -3405,89 +3478,6 @@ function clearToastTimer() {
             </div>
           </div>
 
-          <div class="launch-profile-settings" data-testid="todo-initialization-files-settings">
-            <div class="launch-profile-header">
-              <span class="settings-label">TODO initialization files</span>
-              <button
-                type="button"
-                class="icon-button"
-                data-testid="todo-initialization-file-add"
-                title="Add initialization file"
-                @click="addTodoInitializationFile"
-              >
-                <Plus :size="14" />
-              </button>
-            </div>
-            <div
-              v-for="(file, index) in settingsPanel.todoInitializationFiles"
-              :key="index"
-              class="launch-profile-row todo-initialization-file-row"
-              :data-testid="`todo-initialization-file-setting-${index}`"
-            >
-              <label class="launch-profile-enabled" :title="file.defaultSelected ? 'Selected by default' : 'Optional'">
-                <input
-                  v-model="file.defaultSelected"
-                  type="checkbox"
-                  :data-testid="`todo-initialization-file-default-${index}`"
-                />
-                <span class="visually-hidden">Default selected</span>
-              </label>
-              <input
-                v-model="file.name"
-                type="text"
-                :data-testid="`todo-initialization-file-name-${index}`"
-                placeholder="Agent Rules"
-              />
-              <input
-                v-model="file.description"
-                type="text"
-                :data-testid="`todo-initialization-file-description-${index}`"
-                placeholder="Description"
-              />
-              <input
-                v-model="file.fileName"
-                type="text"
-                :data-testid="`todo-initialization-file-filename-${index}`"
-                placeholder="AGENTS.md"
-              />
-              <textarea
-                v-model="file.content"
-                rows="2"
-                :data-testid="`todo-initialization-file-content-${index}`"
-                placeholder="File content"
-              ></textarea>
-              <button
-                type="button"
-                class="icon-button"
-                :data-testid="`todo-initialization-file-up-${index}`"
-                title="Move up"
-                :disabled="index === 0"
-                @click="moveTodoInitializationFile(index, -1)"
-              >
-                <ChevronUp :size="14" />
-              </button>
-              <button
-                type="button"
-                class="icon-button"
-                :data-testid="`todo-initialization-file-down-${index}`"
-                title="Move down"
-                :disabled="index === settingsPanel.todoInitializationFiles.length - 1"
-                @click="moveTodoInitializationFile(index, 1)"
-              >
-                <ChevronDown :size="14" />
-              </button>
-              <button
-                type="button"
-                class="icon-button"
-                :data-testid="`todo-initialization-file-remove-${index}`"
-                title="Remove initialization file"
-                @click="removeTodoInitializationFile(index)"
-              >
-                <Trash2 :size="14" />
-              </button>
-            </div>
-          </div>
-
           <div v-if="settingsPanel.error" class="settings-error" data-testid="terminal-settings-error">
             {{ settingsPanel.error }}
           </div>
@@ -3510,6 +3500,154 @@ function clearToastTimer() {
             data-testid="terminal-settings-save"
             :disabled="settingsPanel.saving || settingsPanel.loading"
             @click="saveTerminalSettings"
+          >
+            Save
+          </button>
+        </footer>
+      </section>
+    </div>
+
+    <div
+      v-if="initializationFileManagement.visible"
+      class="settings-overlay"
+      @click="closeTodoInitializationFileManagement"
+    >
+      <section
+        class="settings-dialog initialization-file-management-dialog"
+        data-testid="todo-initialization-file-management-dialog"
+        @click.stop
+      >
+        <header class="settings-header">
+          <div>
+            <h2>文件管理</h2>
+            <p>TODO initialization files</p>
+          </div>
+          <button
+            type="button"
+            class="icon-button"
+            title="Close file management"
+            @click="closeTodoInitializationFileManagement"
+          >
+            <X :size="16" />
+          </button>
+        </header>
+
+        <div v-if="initializationFileManagement.loading" class="settings-loading">Loading</div>
+        <div v-else class="settings-body initialization-file-management-body">
+          <div class="launch-profile-settings" data-testid="todo-initialization-files-settings">
+            <div class="launch-profile-header">
+              <span class="settings-label">Files</span>
+              <button
+                type="button"
+                class="icon-button"
+                data-testid="todo-initialization-file-add"
+                title="Add initialization file"
+                @click="addTodoInitializationFile"
+              >
+                <Plus :size="14" />
+              </button>
+            </div>
+            <div
+              v-if="!initializationFileManagement.files.length"
+              class="initialization-file-empty"
+              data-testid="todo-initialization-file-empty"
+            >
+              No files
+            </div>
+            <div
+              v-for="(file, index) in initializationFileManagement.files"
+              :key="index"
+              class="initialization-file-row"
+              :data-testid="`todo-initialization-file-setting-${index}`"
+            >
+              <label
+                class="initialization-file-default"
+                :title="file.defaultSelected ? 'Selected by default' : 'Optional'"
+              >
+                <input
+                  v-model="file.defaultSelected"
+                  type="checkbox"
+                  :data-testid="`todo-initialization-file-default-${index}`"
+                />
+                <span>默认</span>
+              </label>
+              <input
+                v-model="file.name"
+                class="initialization-file-name-input"
+                type="text"
+                :data-testid="`todo-initialization-file-name-${index}`"
+                placeholder="Agent Rules"
+              />
+              <input
+                v-model="file.description"
+                class="initialization-file-description-input"
+                type="text"
+                :data-testid="`todo-initialization-file-description-${index}`"
+                placeholder="Description"
+              />
+              <input
+                v-model="file.fileName"
+                class="initialization-file-filename-input"
+                type="text"
+                :data-testid="`todo-initialization-file-filename-${index}`"
+                placeholder="AGENTS.md"
+              />
+              <textarea
+                v-model="file.content"
+                class="initialization-file-content-input"
+                rows="2"
+                :data-testid="`todo-initialization-file-content-${index}`"
+                placeholder="File content"
+              ></textarea>
+              <button
+                type="button"
+                class="icon-button initialization-file-move-up"
+                :data-testid="`todo-initialization-file-up-${index}`"
+                title="Move up"
+                :disabled="index === 0"
+                @click="moveTodoInitializationFile(index, -1)"
+              >
+                <ChevronUp :size="14" />
+              </button>
+              <button
+                type="button"
+                class="icon-button initialization-file-move-down"
+                :data-testid="`todo-initialization-file-down-${index}`"
+                title="Move down"
+                :disabled="index === initializationFileManagement.files.length - 1"
+                @click="moveTodoInitializationFile(index, 1)"
+              >
+                <ChevronDown :size="14" />
+              </button>
+              <button
+                type="button"
+                class="icon-button initialization-file-remove"
+                :data-testid="`todo-initialization-file-remove-${index}`"
+                title="Remove initialization file"
+                @click="removeTodoInitializationFile(index)"
+              >
+                <Trash2 :size="14" />
+              </button>
+            </div>
+          </div>
+
+          <div
+            v-if="initializationFileManagement.error"
+            class="settings-error"
+            data-testid="todo-initialization-file-management-error"
+          >
+            {{ initializationFileManagement.error }}
+          </div>
+        </div>
+
+        <footer class="settings-actions">
+          <button type="button" class="toolbar-button" @click="closeTodoInitializationFileManagement">Cancel</button>
+          <button
+            type="button"
+            class="toolbar-button primary"
+            data-testid="todo-initialization-file-management-save"
+            :disabled="initializationFileManagement.saving || initializationFileManagement.loading"
+            @click="saveTodoInitializationFileManagement"
           >
             Save
           </button>
