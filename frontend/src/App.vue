@@ -186,6 +186,11 @@ const projectPicker = reactive({
   projectSelections: [],
   saving: false
 })
+const projectCandidateClearPrompt = reactive({
+  visible: false,
+  project: null,
+  clearing: false
+})
 const recentWorkspacePicker = reactive({
   visible: false,
   openingPath: '',
@@ -1161,6 +1166,50 @@ async function clearGlobalProjectCandidates() {
   }
 }
 
+async function clearProjectCandidate(project) {
+  if (!project?.id) {
+    return
+  }
+  projectCandidateClearPrompt.project = { ...project }
+  projectCandidateClearPrompt.visible = true
+  projectCandidateClearPrompt.clearing = false
+}
+
+function closeProjectCandidateClearPrompt(force = false) {
+  if (projectCandidateClearPrompt.clearing && !force) {
+    return
+  }
+  projectCandidateClearPrompt.visible = false
+  projectCandidateClearPrompt.project = null
+  projectCandidateClearPrompt.clearing = false
+}
+
+async function confirmProjectCandidateClear() {
+  const project = projectCandidateClearPrompt.project
+  if (!project?.id) {
+    closeProjectCandidateClearPrompt(true)
+    return
+  }
+  projectCandidateClearPrompt.clearing = true
+  try {
+    applyState(await DeleteProject(project.id), { refreshGitStatus: false })
+    removePendingProjectSelection(project.id)
+    closeProjectCandidateClearPrompt(true)
+  } catch (error) {
+    projectCandidateClearPrompt.clearing = false
+    showError(error)
+  }
+}
+
+function projectCandidateClearLabel() {
+  const project = projectCandidateClearPrompt.project
+  return project?.name || project?.path || project?.id || ''
+}
+
+function projectCandidateClearPath() {
+  return projectCandidateClearPrompt.project?.path || ''
+}
+
 async function deleteTerminal(terminalId) {
   try {
     applyState(await DeleteTerminal(terminalId))
@@ -1907,6 +1956,12 @@ function removeProjectSelection(projectSelections, projectId) {
   return projectSelections.filter((selection) => selection.projectId !== projectId)
 }
 
+function removePendingProjectSelection(projectId) {
+  todoForm.projectSelections = removeProjectSelection(todoForm.projectSelections, projectId)
+  todoDetail.projectSelections = removeProjectSelection(todoDetail.projectSelections, projectId)
+  projectPicker.projectSelections = removeProjectSelection(projectPicker.projectSelections, projectId)
+}
+
 function selectedProjectBaseBranch(projectSelections, projectId) {
   return projectSelections.find((selection) => selection.projectId === projectId)?.baseBranch || ''
 }
@@ -2526,6 +2581,54 @@ function clearToastTimer() {
       </section>
     </div>
 
+    <div
+      v-if="projectCandidateClearPrompt.visible"
+      class="git-init-confirm-overlay project-candidate-clear-overlay"
+      data-testid="project-candidate-clear-overlay"
+      @click="closeProjectCandidateClearPrompt"
+    >
+      <section
+        class="git-init-confirm-dialog project-candidate-clear-dialog"
+        data-testid="project-candidate-clear-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="project-candidate-clear-title"
+        @click.stop
+      >
+        <header class="git-init-confirm-header">
+          <h2 id="project-candidate-clear-title">Clear Project Candidate</h2>
+          <p>This removes the candidate record only. Existing TODO projects and terminals stay unchanged.</p>
+        </header>
+        <div class="git-init-confirm-path project-candidate-clear-target">
+          <strong data-testid="project-candidate-clear-name">{{ projectCandidateClearLabel() }}</strong>
+          <span v-if="projectCandidateClearPath()" data-testid="project-candidate-clear-path">
+            {{ projectCandidateClearPath() }}
+          </span>
+        </div>
+        <footer class="git-init-confirm-actions">
+          <button
+            type="button"
+            class="toolbar-button"
+            data-testid="project-candidate-clear-cancel"
+            :disabled="projectCandidateClearPrompt.clearing"
+            @click="closeProjectCandidateClearPrompt"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="toolbar-button danger"
+            data-testid="project-candidate-clear-confirm"
+            :disabled="projectCandidateClearPrompt.clearing"
+            @click="confirmProjectCandidateClear"
+          >
+            <Trash2 :size="14" />
+            <span>Clear</span>
+          </button>
+        </footer>
+      </section>
+    </div>
+
     <section class="workspace">
       <header class="workspace-header">
         <div v-if="!hasWorkspace" class="project-heading muted">Open a project</div>
@@ -2909,19 +3012,34 @@ function clearToastTimer() {
               data-testid="todo-project-filter"
             />
             <div class="todo-project-options" data-testid="todo-project-options">
-              <button
+              <div
                 v-for="project in todoFormProjectOptions"
                 :key="project.id"
-                type="button"
-                class="todo-project-option"
-                :class="{ selected: todoForm.projectSelections.some((selection) => selection.projectId === project.id) }"
-                :data-testid="`todo-project-option-${project.id}`"
-                :aria-pressed="todoForm.projectSelections.some((selection) => selection.projectId === project.id)"
-                @click="toggleTodoFormProject(project)"
+                class="todo-project-option-row"
               >
-                <span class="project-name">{{ project.name }}</span>
-                <span class="project-path">{{ project.path }}</span>
-              </button>
+                <button
+                  type="button"
+                  class="todo-project-option"
+                  :class="{ selected: todoForm.projectSelections.some((selection) => selection.projectId === project.id) }"
+                  :data-testid="`todo-project-option-${project.id}`"
+                  :aria-pressed="todoForm.projectSelections.some((selection) => selection.projectId === project.id)"
+                  @click="toggleTodoFormProject(project)"
+                >
+                  <span class="project-name">{{ project.name }}</span>
+                  <span class="project-path">{{ project.path }}</span>
+                </button>
+                <button
+                  type="button"
+                  class="todo-project-option-clear"
+                  :title="`Clear project candidate ${project.name}`"
+                  :aria-label="`Clear project candidate ${project.name}`"
+                  :data-testid="`clear-project-candidate-${project.id}`"
+                  :disabled="todoForm.saving"
+                  @click.stop="clearProjectCandidate(project)"
+                >
+                  <Trash2 :size="14" />
+                </button>
+              </div>
               <span v-if="todoFormProjectOptions.length === 0" class="sidebar-empty">No projects selected</span>
             </div>
           </div>
@@ -3142,20 +3260,35 @@ function clearToastTimer() {
               data-testid="todo-detail-project-filter"
             />
             <div v-if="!todoDetail.readOnly" class="todo-project-options" data-testid="todo-detail-project-options">
-              <button
+              <div
                 v-for="project in todoDetailProjectOptions"
                 :key="project.id"
-                type="button"
-                class="todo-project-option"
-                :class="{ selected: todoDetail.projectSelections.some((selection) => selection.projectId === project.id) }"
-                :data-testid="`todo-detail-project-option-${project.id}`"
-                :aria-pressed="todoDetail.projectSelections.some((selection) => selection.projectId === project.id)"
-                :disabled="todoDetail.saving"
-                @click="toggleTodoDetailProject(project)"
+                class="todo-project-option-row"
               >
-                <span class="project-name">{{ project.name }}</span>
-                <span class="project-path">{{ project.path }}</span>
-              </button>
+                <button
+                  type="button"
+                  class="todo-project-option"
+                  :class="{ selected: todoDetail.projectSelections.some((selection) => selection.projectId === project.id) }"
+                  :data-testid="`todo-detail-project-option-${project.id}`"
+                  :aria-pressed="todoDetail.projectSelections.some((selection) => selection.projectId === project.id)"
+                  :disabled="todoDetail.saving"
+                  @click="toggleTodoDetailProject(project)"
+                >
+                  <span class="project-name">{{ project.name }}</span>
+                  <span class="project-path">{{ project.path }}</span>
+                </button>
+                <button
+                  type="button"
+                  class="todo-project-option-clear"
+                  :title="`Clear project candidate ${project.name}`"
+                  :aria-label="`Clear project candidate ${project.name}`"
+                  :data-testid="`clear-project-candidate-${project.id}`"
+                  :disabled="todoDetail.saving"
+                  @click.stop="clearProjectCandidate(project)"
+                >
+                  <Trash2 :size="14" />
+                </button>
+              </div>
               <span v-if="todoDetailProjectOptions.length === 0" class="sidebar-empty">No matching projects</span>
             </div>
           </div>
@@ -3308,20 +3441,35 @@ function clearToastTimer() {
             />
           </label>
           <div class="todo-project-options" data-testid="todo-project-picker-options">
-            <button
+            <div
               v-for="project in projectPickerOptions"
               :key="project.id"
-              type="button"
-              class="todo-project-option"
-              :class="{ selected: projectPicker.projectSelections.some((selection) => selection.projectId === project.id) }"
-              :data-testid="`todo-project-picker-option-${project.id}`"
-              :aria-pressed="projectPicker.projectSelections.some((selection) => selection.projectId === project.id)"
-              :disabled="projectPicker.saving"
-              @click="toggleProjectForTodo(project)"
+              class="todo-project-option-row"
             >
-              <span class="project-name">{{ project.name }}</span>
-              <span class="project-path">{{ project.path }}</span>
-            </button>
+              <button
+                type="button"
+                class="todo-project-option"
+                :class="{ selected: projectPicker.projectSelections.some((selection) => selection.projectId === project.id) }"
+                :data-testid="`todo-project-picker-option-${project.id}`"
+                :aria-pressed="projectPicker.projectSelections.some((selection) => selection.projectId === project.id)"
+                :disabled="projectPicker.saving"
+                @click="toggleProjectForTodo(project)"
+              >
+                <span class="project-name">{{ project.name }}</span>
+                <span class="project-path">{{ project.path }}</span>
+              </button>
+              <button
+                type="button"
+                class="todo-project-option-clear"
+                :title="`Clear project candidate ${project.name}`"
+                :aria-label="`Clear project candidate ${project.name}`"
+                :data-testid="`clear-project-candidate-${project.id}`"
+                :disabled="projectPicker.saving"
+                @click.stop="clearProjectCandidate(project)"
+              >
+                <Trash2 :size="14" />
+              </button>
+            </div>
             <span v-if="projectPickerOptions.length === 0" class="sidebar-empty">No matching projects</span>
           </div>
         </div>

@@ -294,6 +294,24 @@ button {
     white-space: nowrap;
 }
 
+.project-candidate-clear-target {
+    display: grid;
+    gap: 3px;
+    white-space: normal;
+}
+
+.project-candidate-clear-target strong,
+.project-candidate-clear-target span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.project-candidate-clear-target span {
+    color: var(--muted-text);
+}
+
 .git-init-confirm-actions {
     display: flex;
     justify-content: flex-end;
@@ -2359,12 +2377,23 @@ button {
     min-width: 0;
     max-height: 180px;
     overflow-y: auto;
+    padding-right: 10px;
     gap: 4px;
+    scrollbar-gutter: stable;
+}
+
+.todo-project-option-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 32px;
+    min-width: 0;
+    gap: 4px;
+    align-items: stretch;
 }
 
 .todo-project-option {
     display: grid;
     min-width: 0;
+    width: 100%;
     gap: 2px;
     padding: 8px 10px;
     border: 1px solid var(--border);
@@ -2378,6 +2407,31 @@ button {
 .todo-project-option.selected {
     border-color: var(--accent);
     background: var(--active-bg);
+}
+
+.todo-project-option-clear {
+    display: inline-grid;
+    width: 32px;
+    min-width: 32px;
+    height: 100%;
+    min-height: 36px;
+    place-items: center;
+    border: 1px solid var(--border);
+    background: var(--surface-bg);
+    color: var(--delete-text);
+    cursor: pointer;
+}
+
+.todo-project-option-clear:hover,
+.todo-project-option-clear:focus-visible {
+    border-color: var(--accent);
+    color: var(--accent);
+    outline: none;
+}
+
+.todo-project-option-clear:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
 }
 
 .settings-label {

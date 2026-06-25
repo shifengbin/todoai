@@ -902,6 +902,179 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="todo-project-picker-option-project-b"]').exists()).toBe(true)
   })
 
+  it('clears one global project candidate after confirmation', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
+          { id: 'project-b', name: 'beta', path: '/work/beta', available: true }
+        ],
+        todoProjects: [],
+        activeProjectId: '',
+        activeTodoProjectId: '',
+        terminals: [],
+        activeTerminalId: ''
+      })
+    )
+    appApiMock.DeleteProject.mockResolvedValue(
+      projectState({
+        projects: [{ id: 'project-b', name: 'beta', path: '/work/beta', available: true }],
+        todoProjects: [],
+        activeProjectId: 'project-b',
+        activeTodoProjectId: '',
+        terminals: [],
+        activeTerminalId: ''
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await selectTodoMenuAction(wrapper, 'add-project', 'todo-a')
+    await nextTick()
+    await wrapper.find('[data-testid="clear-project-candidate-project-a"]').trigger('click')
+    await flushPromises()
+
+    expect(window.confirm).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="project-candidate-clear-dialog"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="project-candidate-clear-name"]').text()).toContain('alpha')
+    expect(wrapper.find('[data-testid="project-candidate-clear-path"]').text()).toContain('/work/alpha')
+    expect(DeleteProject).not.toHaveBeenCalled()
+
+    await wrapper.find('[data-testid="project-candidate-clear-confirm"]').trigger('click')
+    await flushPromises()
+
+    expect(DeleteProject).toHaveBeenCalledWith('project-a')
+    expect(DeleteProjects).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="project-candidate-clear-dialog"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="todo-project-picker-option-project-a"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="todo-project-picker-option-project-b"]').exists()).toBe(true)
+  })
+
+  it('does not clear one global project candidate when confirmation is cancelled', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
+          { id: 'project-b', name: 'beta', path: '/work/beta', available: true }
+        ],
+        todoProjects: [],
+        activeProjectId: '',
+        activeTodoProjectId: '',
+        terminals: [],
+        activeTerminalId: ''
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await selectTodoMenuAction(wrapper, 'add-project', 'todo-a')
+    await nextTick()
+    await wrapper.find('[data-testid="clear-project-candidate-project-a"]').trigger('click')
+    await flushPromises()
+
+    expect(window.confirm).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="project-candidate-clear-dialog"]').exists()).toBe(true)
+
+    await wrapper.find('[data-testid="project-candidate-clear-cancel"]').trigger('click')
+    await flushPromises()
+
+    expect(DeleteProject).not.toHaveBeenCalled()
+    expect(DeleteProjects).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="project-candidate-clear-dialog"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="todo-project-picker-option-project-a"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="todo-project-picker-option-project-b"]').exists()).toBe(true)
+  })
+
+  it('removes a cleared selected candidate from pending TODO creation', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
+          { id: 'project-b', name: 'beta', path: '/work/beta', available: true }
+        ]
+      })
+    )
+    appApiMock.DeleteProject.mockResolvedValue(
+      projectState({
+        projects: [{ id: 'project-a', name: 'alpha', path: '/work/alpha', available: true }]
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="new-todo"]').trigger('click')
+    await nextTick()
+    await wrapper.find('[data-testid="todo-name-input"]').setValue('Write tests')
+    await wrapper.find('[data-testid="todo-project-option-project-b"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="todo-selected-project-tag-project-b"]').exists()).toBe(true)
+
+    await wrapper.find('[data-testid="clear-project-candidate-project-b"]').trigger('click')
+    await wrapper.find('[data-testid="project-candidate-clear-confirm"]').trigger('click')
+    await flushPromises()
+
+    expect(DeleteProject).toHaveBeenCalledWith('project-b')
+    expect(wrapper.find('[data-testid="todo-selected-project-tag-project-b"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="todo-create-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(CreateTodo).toHaveBeenCalledWith({
+      title: 'Write tests',
+      description: '',
+      priority: 'medium',
+      projects: []
+    })
+  })
+
+  it('keeps TODO project copies and terminals when clearing one candidate', async () => {
+    const todoProjectCopy = todoProject({
+      id: 'todo-project-a',
+      projectId: 'project-a',
+      sourceProjectId: 'project-a',
+      name: 'alpha-copy',
+      path: '/work/alpha-copy',
+      available: true
+    })
+    const runningTerminal = terminal({ id: 'terminal-a', projectId: 'project-a', todoProjectId: 'todo-project-a' })
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
+          { id: 'project-b', name: 'beta', path: '/work/beta', available: true }
+        ],
+        todoProjects: [todoProjectCopy],
+        terminals: [runningTerminal],
+        activeProjectId: 'project-a',
+        activeTodoProjectId: 'todo-project-a',
+        activeTerminalId: 'terminal-a'
+      })
+    )
+    appApiMock.DeleteProject.mockResolvedValue(
+      projectState({
+        projects: [{ id: 'project-b', name: 'beta', path: '/work/beta', available: true }],
+        todoProjects: [todoProjectCopy],
+        terminals: [runningTerminal],
+        activeProjectId: 'project-b',
+        activeTodoProjectId: 'todo-project-a',
+        activeTerminalId: 'terminal-a'
+      })
+    )
+    const wrapper = await mountReadyApp()
+    const session = xtermMock.sessions.get('terminal-a')
+
+    await selectTodoMenuAction(wrapper, 'edit', 'todo-a')
+    await nextTick()
+    await wrapper.find('[data-testid="clear-project-candidate-project-a"]').trigger('click')
+    await wrapper.find('[data-testid="project-candidate-clear-confirm"]').trigger('click')
+    await flushPromises()
+
+    expect(DeleteProject).toHaveBeenCalledWith('project-a')
+    expect(DeleteTerminal).not.toHaveBeenCalled()
+    expect(session.terminal.dispose).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="todo-project-todo-project-a"]').text()).toContain('alpha-copy')
+    expect(wrapper.find('[data-testid="todo-project-todo-project-a"]').text()).toContain('/work/alpha-copy')
+    expect(wrapper.find('[data-testid="terminal-terminal-a"]').exists()).toBe(true)
+  })
+
   it('creates a TODO with details, priority, and searched optional projects', async () => {
     appApiMock.ListProjects.mockResolvedValue(
       projectState({
@@ -1123,6 +1296,14 @@ describe('App project terminal tree', () => {
     expect(menuRule).toContain('background: var(--surface-bg);')
     expect(inputRule).not.toContain('var(--panel)')
     expect(menuRule).not.toContain('var(--panel)')
+  })
+
+  it('keeps project candidate delete buttons away from the scrollbar', () => {
+    const styles = readFileSync('src/style.css', 'utf8')
+    const optionsRule = styles.match(/\.todo-project-options\s*{([^}]*)}/s)?.[1] || ''
+
+    expect(optionsRule).toContain('padding-right: 10px;')
+    expect(optionsRule).toContain('scrollbar-gutter: stable;')
   })
 
   it('limits rendered project branch candidates while creating a TODO', async () => {
