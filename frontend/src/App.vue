@@ -1365,6 +1365,24 @@ function selectedTodoInitializationFileSnapshots(files) {
     }))
 }
 
+async function uploadTodoInitializationFile(index, event) {
+  const file = event?.target?.files?.[0]
+  if (!file || !initializationFileManagement.files[index]) {
+    return
+  }
+  initializationFileManagement.error = ''
+  try {
+    initializationFileManagement.files[index].fileName = file.name
+    initializationFileManagement.files[index].content = await file.text()
+  } catch (error) {
+    initializationFileManagement.error = errorMessageFrom(error)
+  } finally {
+    if (event?.target) {
+      event.target.value = ''
+    }
+  }
+}
+
 async function openTodoInitializationFileManagement() {
   closeGlobalManagementMenu()
   closeTerminalMenu()
@@ -3576,29 +3594,33 @@ function clearToastTimer() {
                 class="initialization-file-name-input"
                 type="text"
                 :data-testid="`todo-initialization-file-name-${index}`"
-                placeholder="Agent Rules"
+                placeholder="显示名称"
               />
               <input
                 v-model="file.description"
                 class="initialization-file-description-input"
                 type="text"
                 :data-testid="`todo-initialization-file-description-${index}`"
-                placeholder="Description"
+                placeholder="描述"
               />
-              <input
-                v-model="file.fileName"
-                class="initialization-file-filename-input"
-                type="text"
-                :data-testid="`todo-initialization-file-filename-${index}`"
-                placeholder="AGENTS.md"
-              />
-              <textarea
-                v-model="file.content"
-                class="initialization-file-content-input"
-                rows="2"
-                :data-testid="`todo-initialization-file-content-${index}`"
-                placeholder="File content"
-              ></textarea>
+              <div class="initialization-file-upload-cell">
+                <label class="toolbar-button compact">
+                  <FileText :size="14" />
+                  <span>{{ file.fileName ? '更换文件' : '上传文件' }}</span>
+                  <input
+                    class="visually-hidden"
+                    type="file"
+                    :data-testid="`todo-initialization-file-upload-${index}`"
+                    @change="uploadTodoInitializationFile(index, $event)"
+                  />
+                </label>
+                <span
+                  class="initialization-file-upload-name"
+                  :data-testid="`todo-initialization-file-uploaded-name-${index}`"
+                >
+                  {{ file.fileName || '未上传文件' }}
+                </span>
+              </div>
               <button
                 type="button"
                 class="icon-button initialization-file-move-up"

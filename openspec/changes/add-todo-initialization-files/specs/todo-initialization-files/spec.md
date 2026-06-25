@@ -2,16 +2,25 @@
 
 ### Requirement: Manage Global Todo Initialization File Templates
 
-系统 SHALL 允许用户通过菜单栏“全局管理 > 文件管理”维护 TODO 初始化文件模板。每个模板 SHALL 包含名称、描述、文件名、文本内容和是否默认选择。系统 SHALL 持久化这些模板，并在应用重启或 workspace 切换后继续可用。系统 SHALL 拒绝保存空名称、空文件名、重复文件名、绝对路径文件名、包含路径穿越的文件名和包含目录分隔符的文件名。系统 SHALL NOT 在终端 Settings 弹窗中展示或保存 TODO 初始化文件模板管理表单。
+系统 SHALL 允许用户通过菜单栏“全局管理 > 文件管理”维护 TODO 初始化文件模板。每个模板记录 SHALL 包含显示名称、描述、文件名、文本内容和是否默认选择。系统 SHALL 通过用户上传文本文件设置模板记录的文件名和文本内容。系统 SHALL 持久化这些模板，并在应用重启或 workspace 切换后继续可用。系统 SHALL 允许不同模板记录使用相同显示名称。系统 SHALL 拒绝保存空显示名称、空文件名、重复文件名、绝对路径文件名、包含路径穿越的文件名和包含目录分隔符的文件名。系统 SHALL NOT 在终端 Settings 弹窗中展示或保存 TODO 初始化文件模板管理表单。
 
 #### Scenario: User saves initialization file templates from file management
 
 - **WHEN** 用户打开菜单栏“全局管理 > 文件管理”
 - **AND** 用户保存两个初始化文件模板
-- **AND** 第一个模板名称为 `Agent Rules`、描述为 `任务执行约束`、文件名为 `AGENTS.md`、内容为 `请先阅读任务说明`、默认选择为 true
-- **AND** 第二个模板名称为 `Prompt`、描述为 `可选提示词`、文件名为 `prompt.md`、内容为 `生成实现计划`、默认选择为 false
+- **AND** 第一个模板显示名称为 `Agent Rules`、描述为 `任务执行约束`、上传文件名为 `AGENTS.md`、上传内容为 `请先阅读任务说明`、默认选择为 true
+- **AND** 第二个模板显示名称为 `Prompt`、描述为 `可选提示词`、上传文件名为 `prompt.md`、上传内容为 `生成实现计划`、默认选择为 false
 - **THEN** 系统持久化这两个模板
 - **AND** 后续读取全局设置时返回相同的名称、描述、文件名、内容和默认选择状态
+
+#### Scenario: Duplicate display names are saved as separate records
+
+- **WHEN** 用户打开菜单栏“全局管理 > 文件管理”
+- **AND** 用户保存两个显示名称都为 `Prompt` 的初始化文件模板
+- **AND** 第一个模板上传文件名为 `prompt.md`
+- **AND** 第二个模板上传文件名为 `notes.md`
+- **THEN** 系统持久化这两个模板记录
+- **AND** 两个记录不会因为显示名称相同而互相覆盖
 
 #### Scenario: Invalid initialization file template filename is rejected
 

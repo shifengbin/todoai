@@ -19,9 +19,10 @@
 - [x] 3.1 Add a menu bar “Global management” entry with a “File management” item.
 - [x] 3.2 Move initialization file template loading and saving into an independent file management dialog.
 - [x] 3.3 Add file management UI controls to create, edit, reorder or remove initialization file templates.
-- [x] 3.4 Add fields for template name, description, file name, content, and default selection.
+- [x] 3.4 Add fields for template display name, description, upload-managed file name/content, and default selection.
 - [x] 3.5 Surface backend validation errors in the file management dialog without losing unsaved user input.
 - [x] 3.6 Keep TODO initialization file management out of the terminal Settings dialog.
+- [x] 3.7 Allow duplicate display names while preserving unique uploaded file names.
 
 ## 4. Frontend Todo Creation UI
 
@@ -36,7 +37,7 @@
 - [x] 5.1 Add Go unit tests for settings persistence, migration defaults, and template validation.
 - [x] 5.2 Add Go unit tests for TODO creation snapshot persistence and snapshot stability after global template changes.
 - [x] 5.3 Add Go unit tests for task workspace initialization file writing, including non-overwrite behavior.
-- [x] 5.4 Add frontend automated tests for global file management editing, Settings exclusion, and validation error display.
+- [x] 5.4 Add frontend automated tests for global file management upload editing, duplicate display names, Settings exclusion, and validation error display.
 - [x] 5.5 Add frontend automated tests for create TODO default selection, manual selection, and request payload snapshots.
 
 ## 6. Review and Verification

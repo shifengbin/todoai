@@ -4116,17 +4116,21 @@ describe('App project terminal tree', () => {
     await wrapper.find('[data-testid="todo-initialization-file-down-0"]').trigger('click')
     await wrapper.find('[data-testid="todo-initialization-file-remove-1"]').trigger('click')
     await wrapper.find('[data-testid="todo-initialization-file-add"]').trigger('click')
-    await wrapper.find('[data-testid="todo-initialization-file-name-1"]').setValue('Notes')
+    await wrapper.find('[data-testid="todo-initialization-file-name-1"]').setValue('Prompt')
     await wrapper.find('[data-testid="todo-initialization-file-description-1"]').setValue('记录上下文')
-    await wrapper.find('[data-testid="todo-initialization-file-filename-1"]').setValue('notes.md')
-    await wrapper.find('[data-testid="todo-initialization-file-content-1"]').setValue('notes')
+    expect(wrapper.find('[data-testid="todo-initialization-file-name-1"]').attributes('placeholder')).toBe('显示名称')
+    expect(wrapper.find('[data-testid="todo-initialization-file-description-1"]').attributes('placeholder')).toBe('描述')
+    expect(wrapper.find('[data-testid="todo-initialization-file-filename-1"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="todo-initialization-file-content-1"]').exists()).toBe(false)
+    await uploadInitializationFile(wrapper, 1, new File(['notes'], 'notes.md', { type: 'text/markdown' }))
+    expect(wrapper.find('[data-testid="todo-initialization-file-uploaded-name-1"]').text()).toContain('notes.md')
     await wrapper.find('[data-testid="todo-initialization-file-default-1"]').setValue(true)
     await wrapper.find('[data-testid="todo-initialization-file-management-save"]').trigger('click')
     await flushPromises()
 
     expect(SaveTodoInitializationFiles).toHaveBeenCalledWith([
       { name: 'Prompt', description: '可选提示词', fileName: 'prompt.md', content: 'prompt', defaultSelected: false },
-      { name: 'Notes', description: '记录上下文', fileName: 'notes.md', content: 'notes', defaultSelected: true }
+      { name: 'Prompt', description: '记录上下文', fileName: 'notes.md', content: 'notes', defaultSelected: true }
     ])
     expect(wrapper.find('[data-testid="todo-initialization-file-management-dialog"]').exists()).toBe(false)
   })
@@ -4138,8 +4142,7 @@ describe('App project terminal tree', () => {
     await openFileManagement(wrapper)
     await wrapper.find('[data-testid="todo-initialization-file-add"]').trigger('click')
     await wrapper.find('[data-testid="todo-initialization-file-name-0"]').setValue('Agent Rules')
-    await wrapper.find('[data-testid="todo-initialization-file-filename-0"]').setValue('AGENTS.md')
-    await wrapper.find('[data-testid="todo-initialization-file-content-0"]').setValue('rules')
+    await uploadInitializationFile(wrapper, 0, new File(['rules'], 'AGENTS.md', { type: 'text/markdown' }))
     await wrapper.find('[data-testid="todo-initialization-file-management-save"]').trigger('click')
     await flushPromises()
 
@@ -4235,6 +4238,16 @@ async function openFileManagement(wrapper) {
   await wrapper.find('[data-testid="global-management-toggle"]').trigger('click')
   await nextTick()
   await wrapper.find('[data-testid="global-file-management"]').trigger('click')
+  await flushPromises()
+}
+
+async function uploadInitializationFile(wrapper, index, file) {
+  const input = wrapper.find(`[data-testid="todo-initialization-file-upload-${index}"]`)
+  Object.defineProperty(input.element, 'files', {
+    configurable: true,
+    value: [file]
+  })
+  await input.trigger('change')
   await flushPromises()
 }
 

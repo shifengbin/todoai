@@ -2517,7 +2517,7 @@ button {
 .initialization-file-row {
     display: grid;
     min-width: 0;
-    grid-template-columns: 64px minmax(120px, 1fr) minmax(140px, 1.2fr) minmax(160px, 1.2fr) minmax(180px, 1.8fr) 32px 32px 32px;
+    grid-template-columns: 64px minmax(120px, 1fr) minmax(160px, 1.2fr) minmax(220px, 1.5fr) 32px 32px 32px;
     gap: 6px;
     align-items: start;
 }
@@ -2541,18 +2541,6 @@ button {
     margin: 0;
 }
 
-.initialization-file-row textarea {
-    min-width: 0;
-    min-height: 32px;
-    resize: vertical;
-    padding: 7px 9px;
-    border: 1px solid var(--control-border);
-    background: var(--surface-bg);
-    color: var(--text);
-    font: inherit;
-    font-size: 13px;
-}
-
 .initialization-file-row input[type="text"] {
     min-width: 0;
     height: 32px;
@@ -2564,15 +2552,37 @@ button {
     font-size: 13px;
 }
 
-.initialization-file-row input[type="text"]:focus,
-.initialization-file-row textarea:focus {
+.initialization-file-row input[type="text"]:focus {
     border-color: var(--accent);
     outline: none;
 }
 
+.initialization-file-upload-cell {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 7px;
+    align-items: center;
+}
+
+.initialization-file-upload-cell .toolbar-button {
+    width: max-content;
+}
+
+.initialization-file-upload-name {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 32px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 @media (max-width: 920px) {
     .initialization-file-row {
-        grid-template-columns: 64px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.4fr) 32px 32px 32px;
+        grid-template-columns: 64px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.4fr) 32px 32px 32px;
     }
 }
 
@@ -2586,8 +2596,7 @@ button {
     }
 
     .initialization-file-description-input,
-    .initialization-file-filename-input,
-    .initialization-file-content-input {
+    .initialization-file-upload-cell {
         grid-column: 1 / -1;
     }
 
