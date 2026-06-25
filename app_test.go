@@ -612,7 +612,22 @@ func TestAppProjectTerminalUsesPreparedWorktreeDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddProjectFromPath() error = %v", err)
 	}
-	_, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", state.Projects[0].ID)
+	projectID := state.Projects[0].ID
+	state, err = app.CreateTodo(CreateTodoRequest{
+		Title: "修复登录问题",
+		Projects: []TodoProjectSelection{
+			{ProjectID: projectID, BaseBranch: "feature/login-fix"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	todoID := state.Todos[0].ID
+	todoProjectID := state.TodoProjects[0].ID
+	state, err = app.ChangeTodoStatus(todoID, "in-progress")
+	if err != nil {
+		t.Fatalf("ChangeTodoStatus(in-progress) error = %v", err)
+	}
 	state, err = app.CreateTodoTerminal(todoProjectID, 80, 24)
 	if err != nil {
 		t.Fatalf("CreateTodoTerminal() error = %v", err)
@@ -621,6 +636,19 @@ func TestAppProjectTerminalUsesPreparedWorktreeDirectory(t *testing.T) {
 	todoProject := state.TodoProjects[0]
 	if todoProject.WorktreeStatus != WorktreeStatusReady || todoProject.WorktreePath == "" {
 		t.Fatalf("todoProject worktree = %#v, want ready path", todoProject)
+	}
+	wantBranch := worktreeBranchName(todoProject.Name, state.Todos[0].WorkspaceDirName)
+	if todoProject.BaseBranch != "feature/login-fix" || todoProject.WorktreeBranch != wantBranch {
+		t.Fatalf("todoProject branches = %#v, want feature/login-fix -> %s", todoProject, wantBranch)
+	}
+	readmePath := filepath.Join(mustAbs(t, workspaceDir), "tasks", state.Todos[0].WorkspaceDirName, "README.md")
+	readme, err := os.ReadFile(readmePath)
+	if err != nil {
+		t.Fatalf("read README.md: %v", err)
+	}
+	wantReadmeLine := "1. " + todoProject.Name + ": base分支为feature/login-fix, 当前worktree分支为" + wantBranch + ";"
+	if !strings.Contains(string(readme), wantReadmeLine) {
+		t.Fatalf("README.md = %q, want project branch line %q", string(readme), wantReadmeLine)
 	}
 	if len(starter.requests) != 1 {
 		t.Fatalf("shell start count = %d, want 1", len(starter.requests))

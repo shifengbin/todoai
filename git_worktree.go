@@ -168,8 +168,8 @@ func sanitizeGitBranchSegment(value string) string {
 //   - An existing branch becomes the base branch; a new isolated worktree
 //     branch is created from it and the worktree checks out the isolated
 //     branch.
-//   - A non-existent branch is created from the default branch and the
-//     worktree checks out that new branch directly.
+//   - A non-existent branch is first created from the default branch and then
+//     treated as the base branch for a new isolated worktree branch.
 //
 // Failures (git unavailable, not a repository, branch conflicts) are recorded
 // as a failed result rather than returned as errors so a single TODO can have
@@ -207,33 +207,24 @@ func (service *GitWorktreeService) PrepareWorktree(repoPath, requestedBranch, pr
 		return failed(err.Error())
 	}
 
-	if service.BranchExists(repoPath, branch) {
-		// Existing branch: create an isolated worktree branch from it.
-		worktreeBranch := worktreeBranchName(projectName, filepath.Base(taskWorkspaceDir))
-		if !service.BranchExists(repoPath, worktreeBranch) {
-			if _, err := service.run(repoPath, "branch", worktreeBranch, branch); err != nil {
-				return failed(fmt.Sprintf("create worktree branch failed: %s", gitFirstErrorLine(err)))
-			}
-		}
-		if err := service.addWorktreeForBranch(repoPath, worktreePath, worktreeBranch, branch); err != nil {
-			return failed(err.Error())
-		}
-		return WorktreePrepareResult{
-			BaseBranch:     branch,
-			WorktreeBranch: worktreeBranch,
-			WorktreePath:   worktreePath,
-			Status:         WorktreeStatusReady,
+	if !service.BranchExists(repoPath, branch) {
+		if _, err := service.run(repoPath, "branch", branch, defaultBranch); err != nil {
+			return failed(fmt.Sprintf("create base branch failed: %s", gitFirstErrorLine(err)))
 		}
 	}
 
-	// Non-existent branch: create it from the default branch and check it out
-	// directly in the worktree.
-	if err := service.addWorktreeForBranch(repoPath, worktreePath, branch, defaultBranch); err != nil {
+	worktreeBranch := worktreeBranchName(projectName, filepath.Base(taskWorkspaceDir))
+	if !service.BranchExists(repoPath, worktreeBranch) {
+		if _, err := service.run(repoPath, "branch", worktreeBranch, branch); err != nil {
+			return failed(fmt.Sprintf("create worktree branch failed: %s", gitFirstErrorLine(err)))
+		}
+	}
+	if err := service.addWorktreeForBranch(repoPath, worktreePath, worktreeBranch, branch); err != nil {
 		return failed(err.Error())
 	}
 	return WorktreePrepareResult{
-		BaseBranch:     defaultBranch,
-		WorktreeBranch: branch,
+		BaseBranch:     branch,
+		WorktreeBranch: worktreeBranch,
 		WorktreePath:   worktreePath,
 		Status:         WorktreeStatusReady,
 	}
