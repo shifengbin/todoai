@@ -876,7 +876,7 @@ describe('App project terminal tree', () => {
 
     expect(DeleteProjects).toHaveBeenCalledWith(['project-a', 'project-b'])
     expect(wrapper.find('[data-testid="todo-project-todo-project-a"]').text()).toContain('alpha')
-    expect(wrapper.find('[data-testid="todo-project-todo-project-a"]').text()).toContain('/work/alpha')
+    expect(wrapper.find('[data-testid="todo-project-todo-project-a"]').text()).not.toContain('/work/alpha')
     expect(wrapper.find('[data-testid="todo-project-picker-option-project-a"]').exists()).toBe(false)
   })
 

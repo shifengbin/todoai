@@ -531,7 +531,7 @@ describe('ProjectSidebar', () => {
     expect(wrapper.emitted('create-terminal')).toBeUndefined()
   })
 
-  it('renders TODO project rows from the workspace copy when the global candidate is gone', async () => {
+  it('renders compact TODO project rows from the workspace copy when the global candidate is gone', async () => {
     const wrapper = mountInProgressSidebar({
       props: {
         projects: [],
@@ -551,9 +551,42 @@ describe('ProjectSidebar', () => {
 
     await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
 
+    const todoProjectRow = wrapper.find('[data-testid="todo-project-todo-project-a"]')
     expect(wrapper.find('[data-testid="todo-project-name-todo-project-a"]').text()).toBe('alpha-copy')
-    expect(wrapper.find('[data-testid="todo-project-todo-project-a"]').text()).toContain('/work/alpha-copy')
+    expect(todoProjectRow.find('.lucide-folder-git-2').exists()).toBe(true)
+    expect(todoProjectRow.find('.lucide-terminal-square').exists()).toBe(false)
+    expect(todoProjectRow.text()).not.toContain('/work/alpha-copy')
     expect(wrapper.find('[data-testid="add-terminal-todo-project-a"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="remove-todo-project-todo-project-a"]').exists()).toBe(true)
+  })
+
+  it('keeps TODO project status visible without restoring path text', async () => {
+    const wrapper = mountInProgressSidebar({
+      props: {
+        projects: [],
+        todoProjects: [
+          {
+            id: 'todo-project-a',
+            todoId: 'todo-a',
+            projectId: 'project-a',
+            sourceProjectId: 'project-a',
+            name: 'alpha-copy',
+            path: '/work/alpha-copy',
+            available: false,
+            worktreeStatus: 'failed',
+            worktreeError: 'Worktree failed'
+          }
+        ]
+      }
+    })
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+
+    const todoProjectRow = wrapper.find('[data-testid="todo-project-todo-project-a"]')
+    expect(todoProjectRow.text()).toContain('alpha-copy')
+    expect(todoProjectRow.text()).toContain('Unavailable')
+    expect(todoProjectRow.text()).toContain('Worktree failed')
+    expect(todoProjectRow.text()).not.toContain('/work/alpha-copy')
   })
 
   it('collapses and expands a TODO branch independently', async () => {
@@ -1757,15 +1790,18 @@ describe('ProjectSidebar', () => {
     expect(wrapper.find('[data-testid="toggle-todo-todo-b"]').attributes('aria-expanded')).toBe('true')
   })
 
-  it('keeps TODO project row layout wider than generic project rows', () => {
+  it('uses compact TODO project row sizing without changing generic project rows', () => {
     const styles = readFileSync('src/style.css', 'utf8')
     const genericProjectRowIndex = styles.indexOf('.project-header-row')
     const todoProjectRowIndex = styles.indexOf('.todo-project-header-row {')
+    const todoProjectButtonIndex = styles.indexOf('.todo-project-header-row .project-row')
 
     expect(todoProjectRowIndex).toBeGreaterThan(genericProjectRowIndex)
     expect(styles.slice(todoProjectRowIndex, todoProjectRowIndex + 120)).toContain(
       'grid-template-columns: minmax(0, 1fr) 30px 30px;'
     )
+    expect(todoProjectButtonIndex).toBeGreaterThan(todoProjectRowIndex)
+    expect(styles.slice(todoProjectButtonIndex, todoProjectButtonIndex + 260)).toContain('min-height: 30px;')
     expect(styles).toContain('.todo-project-header-row:hover')
     expect(styles).toContain('.todo-project-node.is-active-project > .todo-project-header-row')
     expect(styles).toContain('.todo-project-header-row .project-row.active')
@@ -1836,12 +1872,21 @@ describe('ProjectSidebar', () => {
     const ackRule = styles.slice(styles.indexOf('.todo-header-row.todo-activity-needs-ack {'), styles.indexOf('@keyframes todo-activity-busy-breathe'))
     const reducedMotionRule = styles.slice(styles.indexOf('@media (prefers-reduced-motion: reduce)'), styles.indexOf('.todo-title-line {'))
     const taskTerminalGroupRule = styles.slice(styles.indexOf('.task-terminal-group {'), styles.indexOf('.terminal-list {'))
+    const terminalConnectorIndex = styles.indexOf('.terminal-row::before {')
+    const taskTerminalConnectorIndex = styles.indexOf('.task-terminal-row::before {')
+    const taskTerminalConnectorRule = styles.slice(taskTerminalConnectorIndex, styles.indexOf('.terminal-row:hover'))
     const terminalRowRule = styles.slice(styles.indexOf('.terminal-row {'), styles.indexOf('.terminal-row::before'))
     const taskTerminalRowRule = styles.slice(styles.indexOf('.task-terminal-row {'), styles.indexOf('.task-terminal-row:hover'))
 
     expect(styles).toContain('.terminal-row.activity-needs-ack')
     expect(styles).toContain('.terminal-activity.needs-ack')
     expect(taskTerminalGroupRule).not.toContain('.task-terminal-header')
+    expect(taskTerminalGroupRule).toContain('padding-left: 20px;')
+    expect(taskTerminalConnectorIndex).toBeGreaterThan(-1)
+    expect(taskTerminalConnectorIndex).toBeGreaterThan(terminalConnectorIndex)
+    expect(taskTerminalConnectorRule).toContain('left: -27px;')
+    expect(taskTerminalConnectorRule).toContain('width: 28px;')
+    expect(styles).not.toContain('.todo-project-node.has-terminals::before')
     expect(terminalRowRule).toContain('min-height: 30px;')
     expect(taskTerminalRowRule).toContain('min-height: 30px;')
     expect(taskTerminalRowRule).not.toContain('background:')

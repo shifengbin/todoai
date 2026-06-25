@@ -8,8 +8,9 @@ import {
   CircleAlert,
   Copy,
   EllipsisVertical,
-  FolderPlus,
   Eye,
+  FolderGit2,
+  FolderPlus,
   ListChevronsDownUp,
   ListChevronsUpDown,
   ListTodo,
@@ -1667,7 +1668,7 @@ watch(
                   :data-testid="`todo-project-${todoProject.id}`"
                   @click="selectTodoProject(todoProject)"
                 >
-                  <TerminalSquare class="project-icon" :size="17" />
+                  <FolderGit2 class="project-icon" :size="17" />
                   <span class="project-copy">
                     <span
                       class="project-name"
@@ -1675,7 +1676,6 @@ watch(
                     >
                       {{ projectForTodoProject(todoProject)?.name || 'Missing project' }}
                     </span>
-                    <span class="project-path">{{ projectForTodoProject(todoProject)?.path || todoProject.projectId }}</span>
                     <span v-if="!projectForTodoProject(todoProject)?.available" class="project-status">Unavailable</span>
                     <span
                       v-if="todoProjectWorktreeFailed(todoProject)"
