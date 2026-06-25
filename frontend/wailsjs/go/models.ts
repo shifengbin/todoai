@@ -162,6 +162,18 @@ export namespace main {
 	        this.lastSelectedAt = source["lastSelectedAt"];
 	    }
 	}
+	export class ProjectBranchPreference {
+	    baseBranch: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProjectBranchPreference(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.baseBranch = source["baseBranch"];
+	    }
+	}
 	export class ProjectImportSummary {
 	    parentPath: string;
 	    addedCount: number;
@@ -371,6 +383,7 @@ export namespace main {
 	    projects: Project[];
 	    todos: Todo[];
 	    todoProjects: TodoProject[];
+	    projectBranchPreferences?: Record<string, ProjectBranchPreference>;
 	    activeProjectId: string;
 	    activeTodoId?: string;
 	    activeTodoProjectId?: string;
@@ -390,6 +403,7 @@ export namespace main {
 	        this.projects = this.convertValues(source["projects"], Project);
 	        this.todos = this.convertValues(source["todos"], Todo);
 	        this.todoProjects = this.convertValues(source["todoProjects"], TodoProject);
+	        this.projectBranchPreferences = this.convertValues(source["projectBranchPreferences"], ProjectBranchPreference, true);
 	        this.activeProjectId = source["activeProjectId"];
 	        this.activeTodoId = source["activeTodoId"];
 	        this.activeTodoProjectId = source["activeTodoProjectId"];

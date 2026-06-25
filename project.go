@@ -156,19 +156,24 @@ type persistedGlobalProjectCandidates struct {
 	Projects []Project `json:"projects"`
 }
 
+type ProjectBranchPreference struct {
+	BaseBranch string `json:"baseBranch"`
+}
+
 type ProjectState struct {
-	Version             int                   `json:"version"`
-	CurrentWorkspace    *Workspace            `json:"currentWorkspace,omitempty"`
-	RecentWorkspaces    []Workspace           `json:"recentWorkspaces,omitempty"`
-	Projects            []Project             `json:"projects"`
-	Todos               []Todo                `json:"todos"`
-	TodoProjects        []TodoProject         `json:"todoProjects"`
-	ActiveProjectID     string                `json:"activeProjectId"`
-	ActiveTodoID        string                `json:"activeTodoId,omitempty"`
-	ActiveTodoProjectID string                `json:"activeTodoProjectId,omitempty"`
-	Terminals           []ProjectTerminal     `json:"terminals,omitempty"`
-	ActiveTerminalID    string                `json:"activeTerminalId,omitempty"`
-	ImportSummary       *ProjectImportSummary `json:"importSummary,omitempty"`
+	Version                  int                                `json:"version"`
+	CurrentWorkspace         *Workspace                         `json:"currentWorkspace,omitempty"`
+	RecentWorkspaces         []Workspace                        `json:"recentWorkspaces,omitempty"`
+	Projects                 []Project                          `json:"projects"`
+	Todos                    []Todo                             `json:"todos"`
+	TodoProjects             []TodoProject                      `json:"todoProjects"`
+	ProjectBranchPreferences map[string]ProjectBranchPreference `json:"projectBranchPreferences,omitempty"`
+	ActiveProjectID          string                             `json:"activeProjectId"`
+	ActiveTodoID             string                             `json:"activeTodoId,omitempty"`
+	ActiveTodoProjectID      string                             `json:"activeTodoProjectId,omitempty"`
+	Terminals                []ProjectTerminal                  `json:"terminals,omitempty"`
+	ActiveTerminalID         string                             `json:"activeTerminalId,omitempty"`
+	ImportSummary            *ProjectImportSummary              `json:"importSummary,omitempty"`
 }
 
 type ProjectManager struct {
@@ -406,6 +411,7 @@ func (manager *ProjectManager) CreateTodo(request CreateTodoRequest) (ProjectSta
 		project, _ := projectByIDFromProjects(state.Projects, selection.ProjectID)
 		state.TodoProjects = append(state.TodoProjects, todoProjectFromProject(manager.newID, todo.ID, project, selection.BaseBranch, now))
 	}
+	updateProjectBranchPreferences(&state, projectSelections)
 	if err := manager.saveLocked(state); err != nil {
 		return ProjectState{}, err
 	}
@@ -483,6 +489,7 @@ func (manager *ProjectManager) associateProjectSelections(todoID string, project
 	state.ActiveTodoID = todoID
 	state.ActiveTodoProjectID = activeTodoProjectID
 	state.ActiveProjectID = activeProjectID
+	updateProjectBranchPreferences(&state, projectSelections)
 	if err := manager.saveLocked(state); err != nil {
 		return ProjectState{}, err
 	}
@@ -556,6 +563,7 @@ func (manager *ProjectManager) UpdateTodo(request UpdateTodoRequest) (ProjectSta
 	}
 	state.TodoProjects = replaceTodoProjectsForTodo(state.TodoProjects, request.ID, updatedTodoProjects)
 	updateActiveContextAfterTodoProjectRemoval(&state, request.ID, removedTodoProjectIDs, updatedTodoProjects)
+	updateProjectBranchPreferences(&state, projectSelections)
 	if err := manager.saveLocked(state); err != nil {
 		return ProjectState{}, nil, err
 	}
@@ -1692,6 +1700,24 @@ func normalizeProjectSelections(selections []TodoProjectSelection, projectIDs []
 		})
 	}
 	return normalized
+}
+
+func updateProjectBranchPreferences(state *ProjectState, selections []TodoProjectSelection) {
+	if len(selections) == 0 {
+		return
+	}
+	if state.ProjectBranchPreferences == nil {
+		state.ProjectBranchPreferences = map[string]ProjectBranchPreference{}
+	}
+	for _, selection := range selections {
+		projectID := strings.TrimSpace(selection.ProjectID)
+		if projectID == "" {
+			continue
+		}
+		state.ProjectBranchPreferences[projectID] = ProjectBranchPreference{
+			BaseBranch: strings.TrimSpace(selection.BaseBranch),
+		}
+	}
 }
 
 func projectIDsFromSelections(selections []TodoProjectSelection) []string {

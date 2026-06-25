@@ -59,6 +59,7 @@ import { ClipboardGetText, ClipboardSetText, EventsOff, EventsOn } from '../wail
 const projects = ref([])
 const todos = ref([])
 const todoProjects = ref([])
+const projectBranchPreferences = ref({})
 const terminals = ref([])
 const currentWorkspace = ref(null)
 const recentWorkspaces = ref([])
@@ -530,6 +531,7 @@ function applyState(state, options = {}) {
   projects.value = state?.projects || []
   todos.value = state?.todos || []
   todoProjects.value = state?.todoProjects || []
+  projectBranchPreferences.value = state?.projectBranchPreferences || {}
   importSummary.value = state?.importSummary || null
   const nextTerminals = (state?.terminals || []).map((terminal) => {
     const previous = previousTerminals.get(terminal.id)
@@ -1879,6 +1881,9 @@ function selectImportedProjectCandidate(projectId) {
 }
 
 function defaultBaseBranch(projectId = '') {
+  if (projectId && Object.prototype.hasOwnProperty.call(projectBranchPreferences.value, projectId)) {
+    return projectBranchPreferences.value[projectId]?.baseBranch ?? ''
+  }
   if (projectId && gitStatus.value?.projectId === projectId && gitStatus.value?.isRepo && gitStatus.value?.branch) {
     return gitStatus.value.branch === '(detached)' ? '' : gitStatus.value.branch
   }

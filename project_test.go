@@ -542,6 +542,118 @@ func TestProjectManagerCreatesTodoWithProjectBaseBranches(t *testing.T) {
 	}
 }
 
+func TestProjectManagerUpdatesWorkspaceBranchPreferencesAfterSuccessfulProjectSaves(t *testing.T) {
+	projectDir := t.TempDir()
+	otherProjectDir := t.TempDir()
+	thirdProjectDir := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	manager := NewProjectManager(
+		configPath,
+		WithProjectIDGenerator(sequenceIDs("project-a", "project-b", "project-c", "todo-a", "todo-project-a", "todo-project-b", "todo-project-c")),
+	)
+	projectA, _, err := manager.AddProjectPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectPath(A) error = %v", err)
+	}
+	projectB, _, err := manager.AddProjectPath(otherProjectDir)
+	if err != nil {
+		t.Fatalf("AddProjectPath(B) error = %v", err)
+	}
+	projectC, _, err := manager.AddProjectPath(thirdProjectDir)
+	if err != nil {
+		t.Fatalf("AddProjectPath(C) error = %v", err)
+	}
+
+	state, err := manager.CreateTodo(CreateTodoRequest{
+		Title:    "修复登录问题",
+		Projects: []TodoProjectSelection{{ProjectID: projectA.ID, BaseBranch: " main "}},
+	})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	assertProjectBranchPreference(t, state, projectA.ID, "main")
+
+	state, _, err = manager.UpdateTodo(UpdateTodoRequest{
+		ID:    "todo-a",
+		Title: "修复登录问题",
+		Projects: []TodoProjectSelection{
+			{ProjectID: projectA.ID, BaseBranch: "release/2026"},
+			{ProjectID: projectB.ID, BaseBranch: " develop "},
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpdateTodo() error = %v", err)
+	}
+	assertProjectBranchPreference(t, state, projectA.ID, "release/2026")
+	assertProjectBranchPreference(t, state, projectB.ID, "develop")
+
+	state, err = manager.AssociateProjectSelectionsWithTodo("todo-a", []TodoProjectSelection{
+		{ProjectID: projectC.ID, BaseBranch: " feature/api "},
+	})
+	if err != nil {
+		t.Fatalf("AssociateProjectSelectionsWithTodo() error = %v", err)
+	}
+	assertProjectBranchPreference(t, state, projectC.ID, "feature/api")
+
+	reloaded := NewProjectManager(configPath)
+	persisted, err := reloaded.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	assertProjectBranchPreference(t, persisted, projectA.ID, "release/2026")
+	assertProjectBranchPreference(t, persisted, projectB.ID, "develop")
+	assertProjectBranchPreference(t, persisted, projectC.ID, "feature/api")
+}
+
+func TestProjectManagerPreservesEmptyBranchPreferenceAndKeepsGlobalCandidatesClean(t *testing.T) {
+	projectDir := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "workspace", "projects.json")
+	globalPath := filepath.Join(t.TempDir(), "global-projects.json")
+	manager := NewProjectManager(
+		configPath,
+		WithGlobalProjectCandidatesPath(globalPath),
+		WithProjectIDGenerator(sequenceIDs("project-a", "todo-a", "todo-project-a")),
+	)
+	project, _, err := manager.AddProjectPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectPath() error = %v", err)
+	}
+
+	state, err := manager.CreateTodo(CreateTodoRequest{
+		Title:    "修复登录问题",
+		Projects: []TodoProjectSelection{{ProjectID: project.ID, BaseBranch: "   "}},
+	})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	assertProjectBranchPreference(t, state, project.ID, "")
+
+	workspaceState := readJSONFileMap(t, configPath)
+	workspacePreferences, ok := workspaceState["projectBranchPreferences"].(map[string]any)
+	if !ok {
+		t.Fatalf("workspace projectBranchPreferences = %#v, want map", workspaceState["projectBranchPreferences"])
+	}
+	projectPreference, ok := workspacePreferences[project.ID].(map[string]any)
+	if !ok {
+		t.Fatalf("workspace preference for %s = %#v, want map", project.ID, workspacePreferences[project.ID])
+	}
+	if value, ok := projectPreference["baseBranch"].(string); !ok || value != "" {
+		t.Fatalf("workspace baseBranch = %#v/%v, want empty string", projectPreference["baseBranch"], ok)
+	}
+
+	globalState := readJSONFileMap(t, globalPath)
+	if _, ok := globalState["projectBranchPreferences"]; ok {
+		t.Fatalf("global candidates contain projectBranchPreferences: %#v", globalState)
+	}
+
+	reloaded := NewProjectManager(configPath, WithGlobalProjectCandidatesPath(globalPath))
+	persisted, err := reloaded.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	assertProjectBranchPreference(t, persisted, project.ID, "")
+}
+
 func TestProjectManagerCreatesTodoWithoutProjectUsingMediumPriority(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "projects.json")
 	manager := NewProjectManager(configPath, WithProjectIDGenerator(sequenceIDs("todo-a")))
@@ -1793,6 +1905,42 @@ func assertTodoInitializationFileSnapshots(t *testing.T, got []TodoInitializatio
 			t.Fatalf("InitializationFiles[%d] = %#v, want %#v", index, got[index], want[index])
 		}
 	}
+}
+
+func assertProjectBranchPreference(t *testing.T, state ProjectState, projectID string, want string) {
+	t.Helper()
+	data, err := json.Marshal(state)
+	if err != nil {
+		t.Fatalf("Marshal(ProjectState) error = %v", err)
+	}
+	var values map[string]any
+	if err := json.Unmarshal(data, &values); err != nil {
+		t.Fatalf("Unmarshal(ProjectState) error = %v", err)
+	}
+	preferences, ok := values["projectBranchPreferences"].(map[string]any)
+	if !ok {
+		t.Fatalf("projectBranchPreferences = %#v, want map", values["projectBranchPreferences"])
+	}
+	preference, ok := preferences[projectID].(map[string]any)
+	if !ok {
+		t.Fatalf("projectBranchPreferences[%s] = %#v, want map", projectID, preferences[projectID])
+	}
+	if got, ok := preference["baseBranch"].(string); !ok || got != want {
+		t.Fatalf("projectBranchPreferences[%s].baseBranch = %#v/%v, want %q", projectID, preference["baseBranch"], ok, want)
+	}
+}
+
+func readJSONFileMap(t *testing.T, path string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%s) error = %v", path, err)
+	}
+	var values map[string]any
+	if err := json.Unmarshal(data, &values); err != nil {
+		t.Fatalf("Unmarshal(%s) error = %v", path, err)
+	}
+	return values
 }
 
 func runGitForTest(t *testing.T, path string, args ...string) {
