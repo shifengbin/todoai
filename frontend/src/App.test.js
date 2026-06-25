@@ -24,6 +24,7 @@ import {
   DetectTerminalShell,
   GetCompletedTodoProjectMergeStatuses,
   GetProjectGitStatus,
+  GetTodoProjectGitStatus,
   ImportProjectsFromParentDirectoryDialog,
   InitializeGitRepositoryAndImportProject,
   InitializeProjectGitRepository,
@@ -69,6 +70,7 @@ const appApiMock = vi.hoisted(() => ({
   DetectTerminalShell: vi.fn(),
   GetCompletedTodoProjectMergeStatuses: vi.fn(),
   GetProjectGitStatus: vi.fn(),
+  GetTodoProjectGitStatus: vi.fn(),
   ImportProjectsFromParentDirectoryDialog: vi.fn(),
   InitializeGitRepositoryAndImportProject: vi.fn(),
   InitializeProjectGitRepository: vi.fn(),
@@ -252,6 +254,7 @@ describe('App project terminal tree', () => {
     appApiMock.CloseWorkspace.mockResolvedValue(noWorkspaceState())
     appApiMock.ClearRecentWorkspaces.mockResolvedValue(workspaceState({ recentWorkspaces: [] }))
     appApiMock.GetProjectGitStatus.mockResolvedValue(gitStatus())
+    appApiMock.GetTodoProjectGitStatus.mockResolvedValue(gitStatus())
     appApiMock.CreateProjectFromDialog.mockResolvedValue(projectImportResult(projectState()))
     appApiMock.InitializeGitRepositoryAndImportProject.mockResolvedValue(projectState())
     appApiMock.GetCompletedTodoProjectMergeStatuses.mockResolvedValue([])
@@ -959,7 +962,8 @@ describe('App project terminal tree', () => {
           { id: 'project-a', name: 'frontend-app', path: '/work/frontend-app', available: true },
           { id: 'project-b', name: 'api-service', path: '/work/api-service', available: true }
         ],
-        activeProjectId: 'project-a'
+        activeProjectId: 'project-a',
+        activeTodoProjectId: ''
       })
     )
     const wrapper = await mountReadyApp()
@@ -3445,6 +3449,7 @@ describe('App project terminal tree', () => {
 
   it('shows the active project git branch and changed file count', async () => {
     appApiMock.GetProjectGitStatus.mockResolvedValue(gitStatus({ branch: 'main', changedCount: 3 }))
+    appApiMock.ListProjects.mockResolvedValue(projectState({ activeTodoProjectId: '' }))
 
     const wrapper = await mountReadyApp()
 
@@ -3453,8 +3458,24 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="status-chip-changed"]').text()).toContain('3 changed')
   })
 
+  it('shows the active TODO project worktree git branch and changed file count', async () => {
+    appApiMock.GetProjectGitStatus.mockResolvedValue(gitStatus({ branch: 'main', changedCount: 0 }))
+    appApiMock.GetTodoProjectGitStatus.mockResolvedValue(
+      gitStatus({ branch: 'todo/fix-login/frontend-app', changedCount: 2 })
+    )
+
+    const wrapper = await mountReadyApp()
+
+    expect(GetTodoProjectGitStatus).toHaveBeenCalledWith('todo-project-a')
+    expect(GetProjectGitStatus).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="status-chip-branch"]').text()).toContain('todo/fix-login/frontend-app')
+    expect(wrapper.find('[data-testid="status-chip-changed"]').text()).toContain('2 changed')
+    expect(wrapper.find('[data-testid="project-git-status"]').text()).not.toContain('main')
+    expect(wrapper.find('.heading-path').text()).toContain('/work/customer-a/tasks/abc123/alpha')
+  })
+
   it('shows detailed git status chips when counts are present', async () => {
-    appApiMock.GetProjectGitStatus.mockResolvedValue(
+    appApiMock.GetTodoProjectGitStatus.mockResolvedValue(
       gitStatus({
         branch: 'feature/status-bar',
         changedCount: 6,
@@ -3468,6 +3489,7 @@ describe('App project terminal tree', () => {
 
     const wrapper = await mountReadyApp()
 
+    expect(GetTodoProjectGitStatus).toHaveBeenCalledWith('todo-project-a')
     expect(wrapper.find('[data-testid="status-chip-branch"]').text()).toContain('feature/status-bar')
     expect(wrapper.find('[data-testid="status-chip-changed"]').text()).toContain('6 changed')
     expect(wrapper.find('[data-testid="status-chip-staged"]').text()).toContain('1 staged')
@@ -3478,7 +3500,16 @@ describe('App project terminal tree', () => {
   })
 
   it('shows a stable empty git status when no project is selected', async () => {
-    appApiMock.ListProjects.mockResolvedValue(projectState({ projects: [], activeProjectId: '', terminals: [], activeTerminalId: '' }))
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        projects: [],
+        todoProjects: [],
+        activeProjectId: '',
+        activeTodoProjectId: '',
+        terminals: [],
+        activeTerminalId: ''
+      })
+    )
 
     const wrapper = await mountReadyApp()
 
@@ -3488,6 +3519,7 @@ describe('App project terminal tree', () => {
 
   it('shows when the active project is not a git repository', async () => {
     appApiMock.GetProjectGitStatus.mockResolvedValue(gitStatus({ isRepo: false, branch: '', changedCount: 0 }))
+    appApiMock.ListProjects.mockResolvedValue(projectState({ activeTodoProjectId: '' }))
 
     const wrapper = await mountReadyApp()
 
@@ -3499,6 +3531,7 @@ describe('App project terminal tree', () => {
     appApiMock.GetProjectGitStatus.mockResolvedValue(
       gitStatus({ isRepo: false, branch: '', changedCount: 0, gitUnavailable: true })
     )
+    appApiMock.ListProjects.mockResolvedValue(projectState({ activeTodoProjectId: '' }))
 
     const wrapper = await mountReadyApp()
 
@@ -3509,6 +3542,7 @@ describe('App project terminal tree', () => {
     appApiMock.GetProjectGitStatus.mockResolvedValue(
       gitStatus({ isRepo: false, branch: '', changedCount: 0, gitUnavailable: true })
     )
+    appApiMock.ListProjects.mockResolvedValue(projectState({ activeTodoProjectId: '' }))
 
     const wrapper = await mountReadyApp()
 
@@ -3519,6 +3553,7 @@ describe('App project terminal tree', () => {
     appApiMock.GetProjectGitStatus
       .mockResolvedValueOnce(gitStatus({ isRepo: false, branch: '', changedCount: 0 }))
       .mockResolvedValueOnce(gitStatus({ branch: 'main', changedCount: 0 }))
+    appApiMock.ListProjects.mockResolvedValue(projectState({ activeTodoProjectId: '' }))
 
     const wrapper = await mountReadyApp()
 
@@ -3536,6 +3571,7 @@ describe('App project terminal tree', () => {
     appApiMock.GetProjectGitStatus
       .mockResolvedValueOnce(gitStatus({ isRepo: false, branch: '', changedCount: 0 }))
       .mockResolvedValueOnce(gitStatus({ branch: 'main', changedCount: 0 }))
+    appApiMock.ListProjects.mockResolvedValue(projectState({ activeTodoProjectId: '' }))
     appApiMock.InitializeProjectGitRepository.mockReturnValue(
       new Promise((resolve) => {
         resolveInit = resolve
@@ -3556,6 +3592,7 @@ describe('App project terminal tree', () => {
 
   it('keeps non-repository status visible when git initialization fails', async () => {
     appApiMock.GetProjectGitStatus.mockResolvedValue(gitStatus({ isRepo: false, branch: '', changedCount: 0 }))
+    appApiMock.ListProjects.mockResolvedValue(projectState({ activeTodoProjectId: '' }))
     appApiMock.InitializeProjectGitRepository.mockRejectedValue(new Error('git init failed'))
 
     const wrapper = await mountReadyApp()
@@ -3572,6 +3609,8 @@ describe('App project terminal tree', () => {
     appApiMock.ListProjects.mockResolvedValue(
       projectState({
         projects: [{ id: 'project-a', name: 'alpha', path: '/missing/alpha', available: false }],
+        todoProjects: [],
+        activeTodoProjectId: '',
         terminals: [],
         activeTerminalId: ''
       })
@@ -3583,8 +3622,29 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="project-git-status"]').text()).toContain('Project path unavailable')
   })
 
+  it('shows unavailable when the active TODO project worktree is not ready without querying source project git', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        todoProjects: [
+          todoProject({
+            id: 'todo-project-a',
+            projectId: 'project-a',
+            worktreeStatus: 'pending',
+            worktreePath: ''
+          })
+        ]
+      })
+    )
+
+    const wrapper = await mountReadyApp()
+
+    expect(GetTodoProjectGitStatus).not.toHaveBeenCalled()
+    expect(GetProjectGitStatus).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="project-git-status"]').text()).toContain('Project path unavailable')
+  })
+
   it('shows when git status cannot be loaded', async () => {
-    appApiMock.GetProjectGitStatus.mockRejectedValue(new Error('git status failed'))
+    appApiMock.GetTodoProjectGitStatus.mockRejectedValue(new Error('git status failed'))
 
     const wrapper = await mountReadyApp()
 
@@ -3620,6 +3680,9 @@ describe('App project terminal tree', () => {
     appApiMock.GetProjectGitStatus
       .mockResolvedValueOnce(gitStatus({ projectId: 'project-a', branch: 'main' }))
       .mockResolvedValueOnce(gitStatus({ projectId: 'project-b', branch: 'feature/git-status', changedCount: 2 }))
+    appApiMock.GetTodoProjectGitStatus
+      .mockResolvedValueOnce(gitStatus({ projectId: 'project-a', branch: 'main' }))
+      .mockResolvedValueOnce(gitStatus({ projectId: 'project-b', branch: 'feature/git-status', changedCount: 2 }))
     const wrapper = await mountReadyApp()
 
     if (!wrapper.find('[data-testid="todo-project-todo-project-b"]').exists()) {
@@ -3629,37 +3692,102 @@ describe('App project terminal tree', () => {
     await wrapper.find('[data-testid="todo-project-todo-project-b"]').trigger('click')
     await flushPromises()
 
-    expect(GetProjectGitStatus).toHaveBeenCalledWith('project-a')
-    expect(GetProjectGitStatus).toHaveBeenCalledWith('project-b')
+    expect(GetTodoProjectGitStatus).toHaveBeenCalledWith('todo-project-a')
+    expect(GetTodoProjectGitStatus).toHaveBeenCalledWith('todo-project-b')
+    expect(GetProjectGitStatus).not.toHaveBeenCalled()
     expect(wrapper.find('[data-testid="project-git-status"]').text()).toContain('feature/git-status')
     expect(wrapper.find('[data-testid="project-git-status"]').text()).toContain('2 changed')
   })
 
+  it('keeps same-source TODO worktree git status requests independent', async () => {
+    const sharedProjectState = projectState({
+      projects: [{ id: 'project-a', name: 'alpha', path: '/work/alpha', available: true }],
+      todos: [todo({ id: 'todo-a' }), todo({ id: 'todo-b', title: 'Upgrade deps' })],
+      todoProjects: [
+        todoProject({
+          id: 'todo-project-a',
+          todoId: 'todo-a',
+          projectId: 'project-a',
+          name: 'alpha',
+          path: '/work/alpha',
+          worktreePath: '/work/customer-a/tasks/aaa/alpha'
+        }),
+        todoProject({
+          id: 'todo-project-b',
+          todoId: 'todo-b',
+          projectId: 'project-a',
+          name: 'alpha',
+          path: '/work/alpha',
+          worktreePath: '/work/customer-a/tasks/bbb/alpha'
+        })
+      ],
+      terminals: [
+        terminal({ id: 'terminal-a', todoId: 'todo-a', todoProjectId: 'todo-project-a', projectId: 'project-a' }),
+        terminal({ id: 'terminal-b', todoId: 'todo-b', todoProjectId: 'todo-project-b', projectId: 'project-a' })
+      ]
+    })
+    appApiMock.ListProjects.mockResolvedValue(sharedProjectState)
+    appApiMock.SelectTodoProject.mockResolvedValue(
+      projectState({
+        ...sharedProjectState,
+        activeProjectId: 'project-a',
+        activeTodoId: 'todo-b',
+        activeTodoProjectId: 'todo-project-b',
+        activeTerminalId: 'terminal-b'
+      })
+    )
+    const resolvers = {}
+    appApiMock.GetTodoProjectGitStatus.mockImplementation(
+      (todoProjectId) =>
+        new Promise((resolve) => {
+          resolvers[todoProjectId] = resolve
+        })
+    )
+    const wrapper = await mountReadyApp()
+    if (!wrapper.find('[data-testid="todo-project-todo-project-b"]').exists()) {
+      await wrapper.find('[data-testid="toggle-todo-todo-b"]').trigger('click')
+      await flushPromises()
+    }
+
+    await wrapper.find('[data-testid="todo-project-todo-project-b"]').trigger('click')
+    await nextTick()
+    resolvers['todo-project-b'](gitStatus({ projectId: 'project-a', branch: 'todo/upgrade', changedCount: 5 }))
+    await flushPromises()
+    resolvers['todo-project-a'](gitStatus({ projectId: 'project-a', branch: 'todo/login', changedCount: 1 }))
+    await flushPromises()
+
+    expect(GetTodoProjectGitStatus).toHaveBeenCalledWith('todo-project-a')
+    expect(GetTodoProjectGitStatus).toHaveBeenCalledWith('todo-project-b')
+    expect(wrapper.find('[data-testid="project-git-status"]').text()).toContain('todo/upgrade')
+    expect(wrapper.find('[data-testid="project-git-status"]').text()).toContain('5 changed')
+    expect(wrapper.find('[data-testid="project-git-status"]').text()).not.toContain('todo/login')
+  })
+
   it('refreshes git status when a terminal command ends', async () => {
     const wrapper = await mountReadyApp()
-    GetProjectGitStatus.mockClear()
+    GetTodoProjectGitStatus.mockClear()
 
     xtermMock.sessions.get('terminal-a').onCommandState({ type: 'command-end' })
     await flushPromises()
 
-    expect(GetProjectGitStatus).toHaveBeenCalledWith('project-a')
+    expect(GetTodoProjectGitStatus).toHaveBeenCalledWith('todo-project-a')
   })
 
   it('refreshes git status when the window receives focus', async () => {
     await mountReadyApp()
-    GetProjectGitStatus.mockClear()
+    GetTodoProjectGitStatus.mockClear()
 
     window.dispatchEvent(new Event('focus'))
     await flushPromises()
 
-    expect(GetProjectGitStatus).toHaveBeenCalledWith('project-a')
+    expect(GetTodoProjectGitStatus).toHaveBeenCalledWith('todo-project-a')
   })
 
   it('deduplicates focus git refresh while the active project request is pending', async () => {
     const resolvers = []
     await mountReadyApp()
-    GetProjectGitStatus.mockClear()
-    GetProjectGitStatus.mockImplementation(
+    GetTodoProjectGitStatus.mockClear()
+    GetTodoProjectGitStatus.mockImplementation(
       () =>
         new Promise((resolve) => {
           resolvers.push(resolve)
@@ -3671,7 +3799,7 @@ describe('App project terminal tree', () => {
     window.dispatchEvent(new Event('focus'))
     await nextTick()
 
-    expect(GetProjectGitStatus).toHaveBeenCalledTimes(1)
+    expect(GetTodoProjectGitStatus).toHaveBeenCalledTimes(1)
     resolvers.forEach((resolve) => resolve(gitStatus()))
     await flushPromises()
   })
@@ -3680,14 +3808,14 @@ describe('App project terminal tree', () => {
     const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1000)
     try {
       await mountReadyApp()
-      GetProjectGitStatus.mockClear()
+      GetTodoProjectGitStatus.mockClear()
 
       window.dispatchEvent(new Event('focus'))
       await flushPromises()
       window.dispatchEvent(new Event('focus'))
       await flushPromises()
 
-      expect(GetProjectGitStatus).toHaveBeenCalledTimes(1)
+      expect(GetTodoProjectGitStatus).toHaveBeenCalledTimes(1)
     } finally {
       nowSpy.mockRestore()
     }
@@ -3695,13 +3823,13 @@ describe('App project terminal tree', () => {
 
   it('refreshes git status when the active TODO branch is expanded', async () => {
     const wrapper = await mountReadyApp()
-    GetProjectGitStatus.mockClear()
+    GetTodoProjectGitStatus.mockClear()
 
     await wrapper.find('[data-testid="toggle-todo-todo-a"]').trigger('click')
     await wrapper.find('[data-testid="toggle-todo-todo-a"]').trigger('click')
     await flushPromises()
 
-    expect(GetProjectGitStatus).toHaveBeenCalledWith('project-a')
+    expect(GetTodoProjectGitStatus).toHaveBeenCalledWith('todo-project-a')
   })
 
   it('toggles a TODO branch by double clicking the TODO header row', async () => {
@@ -3748,12 +3876,14 @@ describe('App project terminal tree', () => {
     appApiMock.ListProjects.mockResolvedValue(twoTodoState)
     const wrapper = await mountReadyApp()
     GetProjectGitStatus.mockClear()
+    GetTodoProjectGitStatus.mockClear()
 
     await wrapper.find('[data-testid="toggle-todo-todo-b"]').trigger('click')
     await wrapper.find('[data-testid="toggle-todo-todo-b"]').trigger('click')
     await flushPromises()
 
     expect(GetProjectGitStatus).not.toHaveBeenCalled()
+    expect(GetTodoProjectGitStatus).not.toHaveBeenCalled()
   })
 
   it('refreshes git status when selecting a TODO project changes the active project', async () => {
@@ -3783,7 +3913,7 @@ describe('App project terminal tree', () => {
       })
     )
     const wrapper = await mountReadyApp()
-    GetProjectGitStatus.mockClear()
+    GetTodoProjectGitStatus.mockClear()
 
     if (!wrapper.find('[data-testid="todo-project-todo-project-b"]').exists()) {
       await wrapper.find('[data-testid="toggle-todo-todo-b"]').trigger('click')
@@ -3792,17 +3922,17 @@ describe('App project terminal tree', () => {
     await wrapper.find('[data-testid="todo-project-todo-project-b"]').trigger('click')
     await flushPromises()
 
-    expect(GetProjectGitStatus).toHaveBeenCalledWith('project-b')
+    expect(GetTodoProjectGitStatus).toHaveBeenCalledWith('todo-project-b')
   })
 
   it('refreshes git status when selecting the current TODO project', async () => {
     const wrapper = await mountReadyApp()
-    GetProjectGitStatus.mockClear()
+    GetTodoProjectGitStatus.mockClear()
 
     await wrapper.find('[data-testid="todo-project-todo-project-a"]').trigger('click')
     await flushPromises()
 
-    expect(GetProjectGitStatus).toHaveBeenCalledWith('project-a')
+    expect(GetTodoProjectGitStatus).toHaveBeenCalledWith('todo-project-a')
   })
 
   it('ignores stale git status responses from a previous active project', async () => {
@@ -3833,12 +3963,12 @@ describe('App project terminal tree', () => {
         activeTerminalId: 'terminal-b'
       })
     )
-    appApiMock.GetProjectGitStatus.mockImplementation((projectId) => {
+    appApiMock.GetTodoProjectGitStatus.mockImplementation((todoProjectId) => {
       return new Promise((resolve) => {
-        if (projectId === 'project-a') {
+        if (todoProjectId === 'todo-project-a') {
           resolveProjectA = resolve
         }
-        if (projectId === 'project-b') {
+        if (todoProjectId === 'todo-project-b') {
           resolveProjectB = resolve
         }
       })

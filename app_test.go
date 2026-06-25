@@ -2017,6 +2017,110 @@ func TestAppGetsProjectGitStatusForAvailableProject(t *testing.T) {
 	}
 }
 
+func TestAppGetsTodoProjectGitStatusFromPreparedWorktree(t *testing.T) {
+	workspaceDir := t.TempDir()
+	projectDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
+	)
+	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	projectID := state.Projects[0].ID
+	_, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", projectID)
+	state, err = app.projects.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	todoProject := findTodoProjectByIDForApp(t, state.TodoProjects, todoProjectID)
+	if todoProject.WorktreeStatus != WorktreeStatusReady || todoProject.WorktreePath == "" {
+		t.Fatalf("todoProject worktree = %#v, want ready worktree", todoProject)
+	}
+	app.gitStatus = func(path string) (GitStatus, error) {
+		if path != todoProject.WorktreePath {
+			t.Fatalf("git status path = %q, want worktree path %q", path, todoProject.WorktreePath)
+		}
+		if path == projectDir {
+			t.Fatalf("git status used source project path %q", path)
+		}
+		return GitStatus{IsRepo: true, Branch: "todo/fix-login/frontend-app", ChangedCount: 2}, nil
+	}
+
+	status, err := app.GetTodoProjectGitStatus(todoProjectID)
+	if err != nil {
+		t.Fatalf("GetTodoProjectGitStatus() error = %v", err)
+	}
+
+	if status.ProjectID != projectID {
+		t.Fatalf("ProjectID = %q, want source project %q", status.ProjectID, projectID)
+	}
+	if status.Branch != "todo/fix-login/frontend-app" {
+		t.Fatalf("Branch = %q, want worktree branch", status.Branch)
+	}
+	if status.ChangedCount != 2 {
+		t.Fatalf("ChangedCount = %d, want 2", status.ChangedCount)
+	}
+}
+
+func TestAppGetTodoProjectGitStatusRequiresReadyAvailableWorktree(t *testing.T) {
+	workspaceDir := t.TempDir()
+	projectDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
+	)
+	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	projectID := state.Projects[0].ID
+	_, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", projectID)
+	state, err = app.projects.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	for index := range state.TodoProjects {
+		if state.TodoProjects[index].ID == todoProjectID {
+			state.TodoProjects[index].WorktreeStatus = ""
+			state.TodoProjects[index].WorktreePath = ""
+			state.TodoProjects[index].WorktreeBranch = ""
+		}
+	}
+	if err := app.projects.saveLocked(state); err != nil {
+		t.Fatalf("save todo project without ready worktree: %v", err)
+	}
+	gitStatusCalls := 0
+	app.gitStatus = func(path string) (GitStatus, error) {
+		gitStatusCalls++
+		return GitStatus{}, nil
+	}
+
+	status, err := app.GetTodoProjectGitStatus(todoProjectID)
+	if err != nil {
+		t.Fatalf("GetTodoProjectGitStatus() error = %v", err)
+	}
+
+	if gitStatusCalls != 0 {
+		t.Fatalf("git status calls = %d, want 0", gitStatusCalls)
+	}
+	if status.ProjectID != projectID {
+		t.Fatalf("ProjectID = %q, want source project %q", status.ProjectID, projectID)
+	}
+	if !status.PathUnavailable {
+		t.Fatal("PathUnavailable = false, want true")
+	}
+}
+
 func TestAppListsProjectBranchesForAvailableProject(t *testing.T) {
 	projectDir := t.TempDir()
 	app := NewAppWithConfigAndShellStarter(

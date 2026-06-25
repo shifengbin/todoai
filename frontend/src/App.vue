@@ -28,6 +28,7 @@ import {
   DetectTerminalShell,
   GetCompletedTodoProjectMergeStatuses,
   GetProjectGitStatus,
+  GetTodoProjectGitStatus,
   ImportProjectsFromParentDirectoryDialog,
   InitializeGitRepositoryAndImportProject,
   InitializeProjectGitRepository,
@@ -72,10 +73,10 @@ const autoRestartedTerminals = new Set()
 const terminalAckIds = reactive(new Set())
 const errorMessage = ref('')
 let gitStatusRequestId = 0
-let gitStatusInFlightProjectId = ''
+let gitStatusInFlightContextKey = ''
 let gitStatusInFlightRequestId = 0
 let completedMergeStatusRequestGeneration = 0
-let lastFocusGitRefreshProjectId = ''
+let lastFocusGitRefreshContextKey = ''
 let lastFocusGitRefreshAt = 0
 const focusGitRefreshDedupeMs = 500
 const gitOnlyImportToastText = '只能导入 Git 仓库'
@@ -287,17 +288,19 @@ const terminalLaunchProfiles = computed(() => {
 })
 
 const currentGitStatus = computed(() => {
-  if (!activeProject.value || gitStatus.value?.projectId !== activeProject.value.id) {
+  const context = activeGitStatusContext.value
+  if (!context || gitStatus.value?.contextKey !== context.key) {
     return null
   }
   return gitStatus.value
 })
 
 const displayedGitStatus = computed(() => {
-  if (!activeProject.value || !gitStatus.value) {
+  const context = activeGitStatusContext.value
+  if (!context || !gitStatus.value) {
     return null
   }
-  if (gitStatusLoading.value && gitStatus.value.projectId !== activeProject.value.id) {
+  if (gitStatusLoading.value && gitStatus.value.contextKey !== context.key) {
     return null
   }
   return gitStatus.value
@@ -343,6 +346,7 @@ const showInitializeGitRepository = computed(() => {
   const status = currentGitStatus.value
   return Boolean(
     activeProject.value &&
+    activeGitStatusContext.value?.type === 'project' &&
     activeProject.value.available &&
     status &&
     !status.pathUnavailable &&
@@ -504,7 +508,7 @@ onBeforeUnmount(() => {
 })
 
 function applyState(state, options = {}) {
-  const previousActiveProjectId = activeProjectId.value
+  const previousGitStatusContextKey = activeGitStatusContextKey()
   const previousTerminals = new Map(terminals.value.map((terminal) => [terminal.id, terminal]))
   currentWorkspace.value = state?.currentWorkspace || null
   recentWorkspaces.value = state?.recentWorkspaces || []
@@ -551,7 +555,7 @@ function applyState(state, options = {}) {
     applyTodoProjectUIState(activeTodoProjectId.value)
   }
   closeTerminalMenu()
-  syncGitStatusForActiveProject(previousActiveProjectId, {
+  syncGitStatusForActiveProject(previousGitStatusContextKey, {
     refresh: options.refreshGitStatus !== false,
     dedupePending: options.dedupeGitStatus === true,
     force: options.forceGitStatusRefresh === true
@@ -1366,9 +1370,10 @@ function shellDisplay(shell) {
 }
 
 function syncGitStatusForActiveProject(previousActiveProjectId = '', options = {}) {
-  if (!activeProject.value) {
+  const context = activeGitStatusContext.value
+  if (!context) {
     gitStatusRequestId += 1
-    gitStatusInFlightProjectId = ''
+    gitStatusInFlightContextKey = ''
     gitStatusInFlightRequestId = 0
     gitStatus.value = null
     gitStatusLoading.value = false
@@ -1376,52 +1381,54 @@ function syncGitStatusForActiveProject(previousActiveProjectId = '', options = {
     gitInitLoading.value = false
     return
   }
-  if (!activeProject.value.available) {
+  if (!context.available) {
     gitStatusRequestId += 1
-    gitStatusInFlightProjectId = ''
+    gitStatusInFlightContextKey = ''
     gitStatusInFlightRequestId = 0
-    gitStatus.value = { projectId: activeProject.value.id, isRepo: false, pathUnavailable: true }
+    gitStatus.value = withGitStatusContext({ projectId: context.projectId, isRepo: false, pathUnavailable: true }, context)
     gitStatusLoading.value = false
     gitStatusError.value = ''
     gitInitLoading.value = false
     return
   }
-  if (options.refresh !== false && (options.force === true || activeProject.value.id !== previousActiveProjectId)) {
+  if (options.refresh !== false && (options.force === true || context.key !== previousActiveProjectId)) {
     refreshProjectGitStatus({ dedupePending: options.dedupePending === true })
   }
 }
 
 async function refreshProjectGitStatus(options = {}) {
-  const project = activeProject.value
-  if (!project || !project.available) {
-    syncGitStatusForActiveProject(activeProjectId.value)
+  const context = activeGitStatusContext.value
+  if (!context || !context.available) {
+    syncGitStatusForActiveProject(activeGitStatusContextKey())
     return
   }
-  if (options.dedupePending === true && gitStatusInFlightProjectId === project.id) {
+  if (options.dedupePending === true && gitStatusInFlightContextKey === context.key) {
     return
   }
   const requestId = gitStatusRequestId + 1
   gitStatusRequestId = requestId
-  const projectId = project.id
-  gitStatusInFlightProjectId = projectId
+  gitStatusInFlightContextKey = context.key
   gitStatusInFlightRequestId = requestId
   gitStatusLoading.value = true
   gitStatusError.value = ''
   try {
-    const status = await GetProjectGitStatus(projectId)
-    if (requestId !== gitStatusRequestId || activeProject.value?.id !== projectId) {
+    const status =
+      context.type === 'todo-project'
+        ? await GetTodoProjectGitStatus(context.todoProjectId)
+        : await GetProjectGitStatus(context.projectId)
+    if (requestId !== gitStatusRequestId || activeGitStatusContext.value?.key !== context.key) {
       return
     }
-    gitStatus.value = status
+    gitStatus.value = withGitStatusContext(status, context)
   } catch (error) {
-    if (requestId !== gitStatusRequestId || activeProject.value?.id !== projectId) {
+    if (requestId !== gitStatusRequestId || activeGitStatusContext.value?.key !== context.key) {
       return
     }
     gitStatus.value = null
     gitStatusError.value = errorMessageFrom(error)
   } finally {
-    if (gitStatusInFlightProjectId === projectId && gitStatusInFlightRequestId === requestId) {
-      gitStatusInFlightProjectId = ''
+    if (gitStatusInFlightContextKey === context.key && gitStatusInFlightRequestId === requestId) {
+      gitStatusInFlightContextKey = ''
       gitStatusInFlightRequestId = 0
     }
     if (requestId === gitStatusRequestId) {
@@ -1434,16 +1441,16 @@ function refreshProjectGitStatusOnFocus() {
   if (!hasWorkspace.value) {
     return
   }
-  const project = activeProject.value
+  const context = activeGitStatusContext.value
   const now = Date.now()
   if (
-    project &&
-    lastFocusGitRefreshProjectId === project.id &&
+    context &&
+    lastFocusGitRefreshContextKey === context.key &&
     now - lastFocusGitRefreshAt < focusGitRefreshDedupeMs
   ) {
     return
   }
-  lastFocusGitRefreshProjectId = project?.id || ''
+  lastFocusGitRefreshContextKey = context?.key || ''
   lastFocusGitRefreshAt = now
   refreshProjectGitStatus({ dedupePending: true })
 }
@@ -1502,15 +1509,54 @@ function todoProjectDisplayProject(todoProject) {
   if (!todoProject) {
     return null
   }
-  if (todoProject.name || todoProject.path) {
+  const sourceProject = projects.value.find((project) => project.id === todoProject.projectId) || null
+  if (todoProject.name || todoProject.path || todoProject.worktreePath || sourceProject) {
+    const hasReadyWorktree = todoProject.worktreeStatus === 'ready' && normalizeProjectPath(todoProject.worktreePath)
     return {
       id: todoProject.projectId,
-      name: todoProject.name || 'Missing project',
-      path: todoProject.path || todoProject.projectId,
-      available: todoProject.available !== false
+      name: todoProject.name || sourceProject?.name || 'Missing project',
+      path: hasReadyWorktree ? todoProject.worktreePath : todoProject.path || sourceProject?.path || todoProject.projectId,
+      available: todoProject.available !== false && (!todoProject.worktreeStatus || Boolean(hasReadyWorktree))
     }
   }
-  return projects.value.find((project) => project.id === todoProject.projectId) || null
+  return sourceProject
+}
+
+const activeGitStatusContext = computed(() => {
+  const todoProject = activeTodoProject.value
+  if (todoProject) {
+    const hasReadyWorktree =
+      todoProject.worktreeStatus === 'ready' && normalizeProjectPath(todoProject.worktreePath)
+    return {
+      type: 'todo-project',
+      key: `todo-project:${todoProject.id}`,
+      projectId: todoProject.projectId,
+      todoProjectId: todoProject.id,
+      available: todoProject.available !== false && Boolean(hasReadyWorktree)
+    }
+  }
+  const project = activeProject.value
+  if (!project) {
+    return null
+  }
+  return {
+    type: 'project',
+    key: `project:${project.id}`,
+    projectId: project.id,
+    available: project.available
+  }
+})
+
+function activeGitStatusContextKey() {
+  return activeGitStatusContext.value?.key || ''
+}
+
+function withGitStatusContext(status, context) {
+  return {
+    ...status,
+    projectId: status?.projectId || context.projectId,
+    contextKey: context.key
+  }
 }
 
 function normalizeProjectPath(path) {
