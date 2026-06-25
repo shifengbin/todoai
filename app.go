@@ -958,6 +958,30 @@ func (a *App) GetProjectGitStatus(projectID string) (GitStatus, error) {
 	return status, nil
 }
 
+func (a *App) GetTodoProjectGitStatus(todoProjectID string) (GitStatus, error) {
+	if !a.hasWorkspace() {
+		return GitStatus{}, ErrWorkspaceRequired
+	}
+	todoProject, _, err := a.projects.TodoProject(todoProjectID)
+	if err != nil {
+		return GitStatus{}, err
+	}
+	status := GitStatus{ProjectID: todoProject.ProjectID}
+	if todoProject.WorktreeStatus != WorktreeStatusReady ||
+		strings.TrimSpace(todoProject.WorktreePath) == "" ||
+		!directoryAvailable(todoProject.WorktreePath) {
+		status.PathUnavailable = true
+		return status, nil
+	}
+
+	status, err = a.gitStatus(todoProject.WorktreePath)
+	if err != nil {
+		return GitStatus{}, err
+	}
+	status.ProjectID = todoProject.ProjectID
+	return status, nil
+}
+
 func (a *App) ListProjectBranches(projectID string) ([]string, error) {
 	if !a.hasWorkspace() {
 		return nil, ErrWorkspaceRequired
