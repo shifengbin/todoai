@@ -597,6 +597,80 @@ func TestAppWritesTodoInitializationFilesWhenTaskWorkspaceIsPrepared(t *testing.
 	}
 }
 
+func TestAppDelaysTodoInitializationFilesUntilAllWorktreesReady(t *testing.T) {
+	workspaceDir := t.TempDir()
+	parentDir := t.TempDir()
+	projectDir := filepath.Join(parentDir, "frontend-app")
+	otherProjectDir := filepath.Join(parentDir, "api-service")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(projectDir) error = %v", err)
+	}
+	if err := os.MkdirAll(otherProjectDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(otherProjectDir) error = %v", err)
+	}
+
+	readyPreparer := newReadyWorktreePreparer()
+	attempts := map[string]int{}
+	preparer := readyWorktreePreparerFunc(func(repoPath, requestedBranch, projectName, taskWorkspaceDir string) WorktreePrepareResult {
+		attempts[projectName]++
+		if projectName == "api-service" && attempts[projectName] == 1 {
+			return WorktreePrepareResult{Status: WorktreeStatusFailed, Error: "worktree failed"}
+		}
+		return readyPreparer.PrepareWorktree(repoPath, requestedBranch, projectName, taskWorkspaceDir)
+	})
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+		WithWorktreePreparer(preparer),
+	)
+	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath(frontend) error = %v", err)
+	}
+	projectID := state.Projects[0].ID
+	state, err = app.AddProjectFromPath(otherProjectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath(api) error = %v", err)
+	}
+	otherProjectID := state.ActiveProjectID
+	state, err = app.CreateTodo(CreateTodoRequest{
+		Title: "修复登录问题",
+		Projects: []TodoProjectSelection{
+			{ProjectID: projectID, BaseBranch: "main"},
+			{ProjectID: otherProjectID, BaseBranch: "main"},
+		},
+		InitializationFiles: []TodoInitializationFileSnapshot{
+			{Name: "Agent Rules", FileName: "AGENTS.md", Content: "请先阅读任务说明"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	todoID := state.Todos[0].ID
+
+	state, err = app.ChangeTodoStatus(todoID, TodoStatusInProgress)
+	if err != nil {
+		t.Fatalf("ChangeTodoStatus(in-progress) error = %v", err)
+	}
+	taskDir := filepath.Join(mustAbs(t, workspaceDir), "tasks", state.Todos[0].WorkspaceDirName)
+	agentsPath := filepath.Join(taskDir, "AGENTS.md")
+	if _, err := os.Stat(agentsPath); !os.IsNotExist(err) {
+		t.Fatalf("AGENTS.md exists before all worktrees are ready, stat error = %v", err)
+	}
+
+	app.prepareTodoWorkspace(todoID)
+	agents, err := os.ReadFile(agentsPath)
+	if err != nil {
+		t.Fatalf("read AGENTS.md after all worktrees ready: %v", err)
+	}
+	if string(agents) != "请先阅读任务说明" {
+		t.Fatalf("AGENTS.md = %q, want snapshot content", string(agents))
+	}
+}
+
 func TestAppProjectTerminalUsesPreparedWorktreeDirectory(t *testing.T) {
 	workspaceDir := t.TempDir()
 	projectDir := t.TempDir()
@@ -2523,6 +2597,95 @@ func TestAppGetTodoProjectGitStatusRequiresReadyAvailableWorktree(t *testing.T) 
 	}
 	if !status.PathUnavailable {
 		t.Fatal("PathUnavailable = false, want true")
+	}
+}
+
+func TestAppGetTodoGitStatusUsesTaskWorkspaceRootRepository(t *testing.T) {
+	workspaceDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err := app.CreateTodo(CreateTodoRequest{Title: "修复登录问题"})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	todoID := state.Todos[0].ID
+	state, err = app.ChangeTodoStatus(todoID, TodoStatusInProgress)
+	if err != nil {
+		t.Fatalf("ChangeTodoStatus(in-progress) error = %v", err)
+	}
+	taskDir := filepath.Join(mustAbs(t, workspaceDir), "tasks", state.Todos[0].WorkspaceDirName)
+	if err := os.Mkdir(filepath.Join(taskDir, ".git"), 0o755); err != nil {
+		t.Fatalf("Mkdir(.git) error = %v", err)
+	}
+	app.gitStatus = func(path string) (GitStatus, error) {
+		if path != taskDir {
+			t.Fatalf("git status path = %q, want task workspace root %q", path, taskDir)
+		}
+		return GitStatus{IsRepo: true, Branch: "todo/root", ChangedCount: 1}, nil
+	}
+
+	status, err := app.GetTodoGitStatus(todoID)
+	if err != nil {
+		t.Fatalf("GetTodoGitStatus() error = %v", err)
+	}
+
+	if !status.IsRepo {
+		t.Fatal("IsRepo = false, want true")
+	}
+	if status.Branch != "todo/root" {
+		t.Fatalf("Branch = %q, want todo/root", status.Branch)
+	}
+	if status.ChangedCount != 1 {
+		t.Fatalf("ChangedCount = %d, want 1", status.ChangedCount)
+	}
+}
+
+func TestAppGetTodoGitStatusDoesNotSearchNestedRepositories(t *testing.T) {
+	workspaceDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err := app.CreateTodo(CreateTodoRequest{Title: "修复登录问题"})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	todoID := state.Todos[0].ID
+	state, err = app.ChangeTodoStatus(todoID, TodoStatusInProgress)
+	if err != nil {
+		t.Fatalf("ChangeTodoStatus(in-progress) error = %v", err)
+	}
+	taskDir := filepath.Join(mustAbs(t, workspaceDir), "tasks", state.Todos[0].WorkspaceDirName)
+	if err := os.MkdirAll(filepath.Join(taskDir, "nested-project", ".git"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(nested .git) error = %v", err)
+	}
+	gitStatusCalls := 0
+	app.gitStatus = func(path string) (GitStatus, error) {
+		gitStatusCalls++
+		return GitStatus{}, nil
+	}
+
+	status, err := app.GetTodoGitStatus(todoID)
+	if err != nil {
+		t.Fatalf("GetTodoGitStatus() error = %v", err)
+	}
+
+	if gitStatusCalls != 0 {
+		t.Fatalf("git status calls = %d, want 0", gitStatusCalls)
+	}
+	if status.IsRepo {
+		t.Fatal("IsRepo = true, want false")
+	}
+	if status.PathUnavailable {
+		t.Fatal("PathUnavailable = true, want false")
 	}
 }
 

@@ -24,6 +24,7 @@ import {
   DetectTerminalShell,
   GetCompletedTodoProjectMergeStatuses,
   GetProjectGitStatus,
+  GetTodoGitStatus,
   GetTodoProjectGitStatus,
   ImportProjectsFromParentDirectoryDialog,
   InitializeGitRepositoryAndImportProject,
@@ -75,6 +76,7 @@ const appApiMock = vi.hoisted(() => ({
   DetectTerminalShell: vi.fn(),
   GetCompletedTodoProjectMergeStatuses: vi.fn(),
   GetProjectGitStatus: vi.fn(),
+  GetTodoGitStatus: vi.fn(),
   GetTodoProjectGitStatus: vi.fn(),
   ImportProjectsFromParentDirectoryDialog: vi.fn(),
   InitializeGitRepositoryAndImportProject: vi.fn(),
@@ -269,6 +271,7 @@ describe('App project terminal tree', () => {
     appApiMock.CloseWorkspace.mockResolvedValue(noWorkspaceState())
     appApiMock.ClearRecentWorkspaces.mockResolvedValue(workspaceState({ recentWorkspaces: [] }))
     appApiMock.GetProjectGitStatus.mockResolvedValue(gitStatus())
+    appApiMock.GetTodoGitStatus.mockResolvedValue(gitStatus({ projectId: '', isRepo: false, branch: '' }))
     appApiMock.GetTodoProjectGitStatus.mockResolvedValue(gitStatus())
     appApiMock.CreateProjectFromDialog.mockResolvedValue(projectImportResult(projectState()))
     appApiMock.InitializeGitRepositoryAndImportProject.mockResolvedValue(projectState())
@@ -298,7 +301,8 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="new-todo"]').attributes('disabled')).toBeDefined()
     expect(wrapper.find('[data-testid="settings-toggle"]').attributes('disabled')).toBeUndefined()
     expect(wrapper.find('[data-testid="terminal-surface"]').text()).toContain('Open a project')
-    expect(wrapper.find('[data-testid="status-chip-neutral"]').text()).toContain('No project')
+    expect(wrapper.find('[data-testid="project-git-status"]').findAll('.status-chip')).toHaveLength(0)
+    expect(wrapper.find('[data-testid="project-git-status"]').text()).not.toContain('No project')
 
     await openSettings(wrapper)
     expect(wrapper.find('[data-testid="terminal-settings-dialog"]').exists()).toBe(true)
@@ -370,7 +374,8 @@ describe('App project terminal tree', () => {
     expect(xtermMock.sessions.has('terminal-a')).toBe(false)
     expect(wrapper.find('[data-testid="terminal-terminal-a"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="terminal-surface"]').text()).toContain('Open a project')
-    expect(wrapper.find('[data-testid="status-chip-neutral"]').text()).toContain('No project')
+    expect(wrapper.find('[data-testid="project-git-status"]').findAll('.status-chip')).toHaveLength(0)
+    expect(wrapper.find('[data-testid="project-git-status"]').text()).not.toContain('No project')
     expect(wrapper.find('.status-error').exists()).toBe(false)
     expect(LoadTerminalSettings).not.toHaveBeenCalled()
     expect(GetProjectGitStatus).not.toHaveBeenCalled()
@@ -3868,6 +3873,121 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('.heading-path').text()).toContain('/work/customer-a/tasks/abc123/alpha')
   })
 
+  it('uses the TODO workspace git status for task terminals and hides chips when it is not a repo', async () => {
+    appApiMock.GetProjectGitStatus.mockResolvedValue(gitStatus({ branch: 'previous-project', changedCount: 4 }))
+    appApiMock.GetTodoGitStatus.mockResolvedValue(gitStatus({ projectId: '', isRepo: false, branch: '' }))
+    appApiMock.ListProjects.mockResolvedValue(
+      inProgressProjectState({
+        activeTodoProjectId: '',
+        terminals: [taskTerminal({ id: 'task-terminal-a', state: 'running' })],
+        activeTerminalId: 'task-terminal-a'
+      })
+    )
+
+    const wrapper = await mountReadyApp()
+
+    expect(GetTodoGitStatus).toHaveBeenCalledWith('todo-a')
+    expect(GetProjectGitStatus).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="project-git-status"]').findAll('.status-chip')).toHaveLength(0)
+    expect(wrapper.find('[data-testid="project-git-status"]').text()).not.toContain('previous-project')
+    expect(wrapper.find('[data-testid="project-git-status"]').text()).not.toContain('Not a git repository')
+  })
+
+  it('shows the TODO workspace git branch and changed file count for task terminals', async () => {
+    appApiMock.GetProjectGitStatus.mockResolvedValue(gitStatus({ branch: 'previous-project', changedCount: 4 }))
+    appApiMock.GetTodoGitStatus.mockResolvedValue(gitStatus({ projectId: '', branch: 'todo/root', changedCount: 1 }))
+    appApiMock.ListProjects.mockResolvedValue(
+      inProgressProjectState({
+        activeTodoProjectId: '',
+        terminals: [taskTerminal({ id: 'task-terminal-a', state: 'running' })],
+        activeTerminalId: 'task-terminal-a'
+      })
+    )
+
+    const wrapper = await mountReadyApp()
+
+    expect(GetTodoGitStatus).toHaveBeenCalledWith('todo-a')
+    expect(GetProjectGitStatus).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="status-chip-branch"]').text()).toContain('todo/root')
+    expect(wrapper.find('[data-testid="status-chip-changed"]').text()).toContain('1 changed')
+    expect(wrapper.find('[data-testid="project-git-status"]').text()).not.toContain('previous-project')
+  })
+
+  it('shows the TODO project sidebar branch from live worktree git status without changing the heading', async () => {
+    appApiMock.GetTodoProjectGitStatus.mockResolvedValue(gitStatus({ branch: 'feature/live-worktree' }))
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        todoProjects: [
+          todoProject({
+            id: 'todo-project-a',
+            todoId: 'todo-a',
+            projectId: 'project-a',
+            worktreeBranch: 'todo/static-worktree-branch'
+          })
+        ]
+      })
+    )
+
+    const wrapper = await mountReadyApp()
+
+    expect(wrapper.find('[data-testid="todo-project-name-todo-project-a"]').text()).toContain(
+      'alpha(feature/live-worktree)'
+    )
+    expect(wrapper.find('[data-testid="todo-project-name-todo-project-a"]').text()).not.toContain(
+      'todo/static-worktree-branch'
+    )
+    expect(wrapper.find('.heading-name').text()).toBe('Fix login / alpha')
+  })
+
+  it('refreshes the TODO project sidebar branch when its worktree terminal command ends', async () => {
+    let branch = 'feature/login'
+    appApiMock.GetTodoProjectGitStatus.mockImplementation(() => Promise.resolve(gitStatus({ branch })))
+    const wrapper = await mountReadyApp()
+
+    expect(wrapper.find('[data-testid="todo-project-name-todo-project-a"]').text()).toContain('alpha(feature/login)')
+
+    branch = 'feature/payments'
+    xtermMock.sessions.get('terminal-a').onCommandState({ type: 'command-end' })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="todo-project-name-todo-project-a"]').text()).toContain('alpha(feature/payments)')
+  })
+
+  it('loads sidebar branches for non-active ready TODO project rows', async () => {
+    appApiMock.GetTodoProjectGitStatus.mockImplementation((todoProjectId) =>
+      Promise.resolve(
+        gitStatus({
+          branch: todoProjectId === 'todo-project-b' ? 'feature/beta' : 'feature/alpha'
+        })
+      )
+    )
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
+          { id: 'project-b', name: 'beta', path: '/work/beta', available: true }
+        ],
+        todos: [todo({ id: 'todo-a' }), todo({ id: 'todo-b', title: 'Upgrade deps', status: 'active' })],
+        todoProjects: [
+          todoProject({ id: 'todo-project-a', todoId: 'todo-a', projectId: 'project-a', worktreePath: '/work/tasks/a/alpha' }),
+          todoProject({ id: 'todo-project-b', todoId: 'todo-b', projectId: 'project-b', worktreePath: '/work/tasks/b/beta' })
+        ],
+        terminals: [
+          terminal({ id: 'terminal-a', todoId: 'todo-a', todoProjectId: 'todo-project-a', projectId: 'project-a' }),
+          terminal({ id: 'terminal-b', todoId: 'todo-b', todoProjectId: 'todo-project-b', projectId: 'project-b' })
+        ]
+      })
+    )
+
+    const wrapper = await mountReadyApp()
+    if (!wrapper.find('[data-testid="todo-project-todo-project-b"]').exists()) {
+      await wrapper.find('[data-testid="toggle-todo-todo-b"]').trigger('click')
+      await flushPromises()
+    }
+
+    expect(wrapper.find('[data-testid="todo-project-name-todo-project-b"]').text()).toContain('beta(feature/beta)')
+  })
+
   it('shows detailed git status chips when counts are present', async () => {
     appApiMock.GetTodoProjectGitStatus.mockResolvedValue(
       gitStatus({
@@ -3908,7 +4028,8 @@ describe('App project terminal tree', () => {
     const wrapper = await mountReadyApp()
 
     expect(GetProjectGitStatus).not.toHaveBeenCalled()
-    expect(wrapper.find('[data-testid="project-git-status"]').text()).toContain('No project')
+    expect(wrapper.find('[data-testid="project-git-status"]').findAll('.status-chip')).toHaveLength(0)
+    expect(wrapper.find('[data-testid="project-git-status"]').text()).not.toContain('No project')
   })
 
   it('shows when the active project is not a git repository', async () => {
@@ -4071,12 +4192,12 @@ describe('App project terminal tree', () => {
         activeTerminalId: 'terminal-b'
       })
     )
-    appApiMock.GetProjectGitStatus
-      .mockResolvedValueOnce(gitStatus({ projectId: 'project-a', branch: 'main' }))
-      .mockResolvedValueOnce(gitStatus({ projectId: 'project-b', branch: 'feature/git-status', changedCount: 2 }))
-    appApiMock.GetTodoProjectGitStatus
-      .mockResolvedValueOnce(gitStatus({ projectId: 'project-a', branch: 'main' }))
-      .mockResolvedValueOnce(gitStatus({ projectId: 'project-b', branch: 'feature/git-status', changedCount: 2 }))
+    appApiMock.GetTodoProjectGitStatus.mockImplementation(async (todoProjectId) => {
+      if (todoProjectId === 'todo-project-b') {
+        return gitStatus({ projectId: 'project-b', branch: 'feature/git-status', changedCount: 2 })
+      }
+      return gitStatus({ projectId: 'project-a', branch: 'main' })
+    })
     const wrapper = await mountReadyApp()
 
     if (!wrapper.find('[data-testid="todo-project-todo-project-b"]').exists()) {
@@ -4251,7 +4372,7 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="todo-project-list-todo-a"]').exists()).toBe(true)
   })
 
-  it('does not refresh git status when an unrelated TODO branch expands', async () => {
+  it('does not refresh active git status when an unrelated TODO branch expands', async () => {
     const twoTodoState = projectState({
       projects: [
         { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
@@ -4277,7 +4398,9 @@ describe('App project terminal tree', () => {
     await flushPromises()
 
     expect(GetProjectGitStatus).not.toHaveBeenCalled()
-    expect(GetTodoProjectGitStatus).not.toHaveBeenCalled()
+    expect(GetTodoProjectGitStatus).toHaveBeenCalledTimes(1)
+    expect(GetTodoProjectGitStatus).toHaveBeenCalledWith('todo-project-b')
+    expect(GetTodoProjectGitStatus).not.toHaveBeenCalledWith('todo-project-a')
   })
 
   it('refreshes git status when selecting a TODO project changes the active project', async () => {

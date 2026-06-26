@@ -110,6 +110,10 @@ export function GetShellStatus(arg1) {
   return window['go']['main']['App']['GetShellStatus'](arg1);
 }
 
+export function GetTodoGitStatus(arg1) {
+  return window['go']['main']['App']['GetTodoGitStatus'](arg1);
+}
+
 export function GetTodoProjectGitStatus(arg1) {
   return window['go']['main']['App']['GetTodoProjectGitStatus'](arg1);
 }
