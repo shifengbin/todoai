@@ -116,6 +116,10 @@ export function SendTerminalInput(arg1:string,arg2:string):Promise<void>;
 
 export function StartShell(arg1:string,arg2:number,arg3:number):Promise<main.ShellStatus>;
 
+export function StartTaskBackgroundCommand(arg1:string,arg2:string):Promise<void>;
+
+export function StartTodoProjectBackgroundCommand(arg1:string,arg2:string):Promise<void>;
+
 export function UpdateTodo(arg1:main.UpdateTodoRequest):Promise<main.ProjectState>;
 
 export function WorkspaceState():Promise<main.WorkspaceState>;

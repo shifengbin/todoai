@@ -55,6 +55,8 @@ import {
   SaveTodoProjectUIState,
   SendTerminalInput,
   StartShell,
+  StartTaskBackgroundCommand,
+  StartTodoProjectBackgroundCommand,
   UpdateTodo
 } from '../wailsjs/go/main/App'
 import { ClipboardGetText, ClipboardSetText, EventsOff, EventsOn } from '../wailsjs/runtime/runtime'
@@ -122,8 +124,8 @@ const todoSidebarWidthSaveQueue = {
   pending: null
 }
 const defaultTerminalLaunchProfiles = [
-  { name: 'codex', command: 'codex --dangerously-bypass-hook-trust --dangerously-bypass-approvals-and-sandbox', enabled: true },
-  { name: 'claude', command: 'claude --dangerously-skip-permissions', enabled: true }
+  { name: 'codex', command: 'codex --dangerously-bypass-hook-trust --dangerously-bypass-approvals-and-sandbox', enabled: true, background: false },
+  { name: 'claude', command: 'claude --dangerously-skip-permissions', enabled: true, background: false }
 ]
 const todoPriorities = [
   { value: 'high', label: '高' },
@@ -1035,6 +1037,10 @@ async function autoRestartIfExited(terminalId) {
 
 async function createTerminal(todoProjectId, launchProfile = null) {
   try {
+    if (launchProfile?.background === true) {
+      await StartTodoProjectBackgroundCommand(todoProjectId, launchProfile.command)
+      return
+    }
     const size = terminalManager.size() || { cols: 80, rows: 24 }
     const state = await CreateTodoTerminal(todoProjectId, size.cols || 80, size.rows || 24)
     applyState(state)
@@ -1047,6 +1053,10 @@ async function createTerminal(todoProjectId, launchProfile = null) {
 
 async function createTaskTerminal(todoId, launchProfile = null) {
   try {
+    if (launchProfile?.background === true) {
+      await StartTaskBackgroundCommand(todoId, launchProfile.command)
+      return
+    }
     const size = terminalManager.size() || { cols: 80, rows: 24 }
     const state = await CreateTaskTerminal(todoId, size.cols || 80, size.rows || 24)
     applyState(state)
@@ -1433,7 +1443,8 @@ function cloneLaunchProfiles(profiles) {
   return profiles.map((profile) => ({
     name: profile.name || '',
     command: profile.command || '',
-    enabled: profile.enabled !== false
+    enabled: profile.enabled !== false,
+    background: profile.background === true
   }))
 }
 
@@ -1545,7 +1556,7 @@ async function saveTodoInitializationFileManagement() {
 }
 
 function addTerminalLaunchProfile() {
-  settingsPanel.launchProfiles.push({ name: '', command: '', enabled: true })
+  settingsPanel.launchProfiles.push({ name: '', command: '', enabled: true, background: false })
 }
 
 function removeTerminalLaunchProfile(index) {
@@ -1565,7 +1576,8 @@ function normalizedLaunchProfiles() {
   return settingsPanel.launchProfiles.map((profile) => ({
     name: (profile.name || '').trim(),
     command: (profile.command || '').trim(),
-    enabled: profile.enabled !== false
+    enabled: profile.enabled !== false,
+    background: profile.background === true
   }))
 }
 
@@ -3734,6 +3746,14 @@ function clearToastTimer() {
                 :data-testid="`terminal-launch-profile-command-${index}`"
                 placeholder="codex"
               />
+              <label class="launch-profile-enabled" :title="profile.background ? 'Background' : 'Foreground'">
+                <input
+                  v-model="profile.background"
+                  type="checkbox"
+                  :data-testid="`terminal-launch-profile-background-${index}`"
+                />
+                <span class="visually-hidden">Background</span>
+              </label>
               <button
                 type="button"
                 class="icon-button"

@@ -90,6 +90,32 @@ func TestSettingsManagerAddsDefaultLaunchProfilesOnFirstLoad(t *testing.T) {
 	})
 }
 
+func TestSettingsManagerPersistsLaunchProfileBackgroundMode(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "settings.json")
+	shellPath := executableFile(t, "zsh")
+	manager := NewSettingsManager(configPath)
+	if _, err := manager.SaveShellPath(shellPath, ShellSourceManual); err != nil {
+		t.Fatalf("SaveShellPath() error = %v", err)
+	}
+
+	wantProfiles := []TerminalLaunchProfileSetting{
+		{Name: "Foreground", Command: "codex", Enabled: true, Background: false},
+		{Name: "Background Sync", Command: "npm run sync", Enabled: true, Background: true},
+		{Name: "Disabled Background", Command: "npm run later", Enabled: false, Background: true},
+	}
+	state, err := manager.SaveLaunchProfiles(wantProfiles)
+	if err != nil {
+		t.Fatalf("SaveLaunchProfiles() error = %v", err)
+	}
+	assertLaunchProfiles(t, state.LaunchProfiles, wantProfiles)
+
+	reloaded, err := manager.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	assertLaunchProfiles(t, reloaded.LaunchProfiles, wantProfiles)
+}
+
 func TestSettingsManagerMigratesLegacyDefaultLaunchProfileCommands(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "settings.json")
 	shellPath := executableFile(t, "zsh")
@@ -160,6 +186,26 @@ func TestSettingsManagerTreatsLegacyLaunchProfilesWithoutEnabledStateAsEnabled(t
 	assertLaunchProfiles(t, state.LaunchProfiles, []TerminalLaunchProfileSetting{
 		{Name: "Codex GPT-5", Command: "codex --model gpt-5", Enabled: true},
 		{Name: "Claude Plan", Command: "claude", Enabled: true},
+	})
+}
+
+func TestSettingsManagerTreatsLegacyLaunchProfilesWithoutBackgroundStateAsForeground(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "settings.json")
+	shellPath := executableFile(t, "zsh")
+	writeSettingsFileWithLaunchProfiles(t, configPath, shellPath, "manual", `[
+    {"name": "Codex GPT-5", "command": "codex --model gpt-5", "enabled": true},
+    {"name": "Claude Plan", "command": "claude", "enabled": false}
+  ]`)
+	manager := NewSettingsManager(configPath)
+
+	state, err := manager.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	assertLaunchProfiles(t, state.LaunchProfiles, []TerminalLaunchProfileSetting{
+		{Name: "Codex GPT-5", Command: "codex --model gpt-5", Enabled: true, Background: false},
+		{Name: "Claude Plan", Command: "claude", Enabled: false, Background: false},
 	})
 }
 

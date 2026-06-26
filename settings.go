@@ -32,9 +32,10 @@ type TerminalShellSetting struct {
 }
 
 type TerminalLaunchProfileSetting struct {
-	Name    string `json:"name"`
-	Command string `json:"command"`
-	Enabled bool   `json:"enabled"`
+	Name       string `json:"name"`
+	Command    string `json:"command"`
+	Enabled    bool   `json:"enabled"`
+	Background bool   `json:"background"`
 }
 
 type TodoInitializationFileTemplate struct {
@@ -47,9 +48,10 @@ type TodoInitializationFileTemplate struct {
 
 func (profile *TerminalLaunchProfileSetting) UnmarshalJSON(data []byte) error {
 	type terminalLaunchProfileSettingJSON struct {
-		Name    string `json:"name"`
-		Command string `json:"command"`
-		Enabled *bool  `json:"enabled"`
+		Name       string `json:"name"`
+		Command    string `json:"command"`
+		Enabled    *bool  `json:"enabled"`
+		Background bool   `json:"background"`
 	}
 	var decoded terminalLaunchProfileSettingJSON
 	if err := json.Unmarshal(data, &decoded); err != nil {
@@ -57,6 +59,7 @@ func (profile *TerminalLaunchProfileSetting) UnmarshalJSON(data []byte) error {
 	}
 	profile.Name = decoded.Name
 	profile.Command = decoded.Command
+	profile.Background = decoded.Background
 	profile.Enabled = true
 	if decoded.Enabled != nil {
 		profile.Enabled = *decoded.Enabled
@@ -351,7 +354,7 @@ func normalizeTerminalLaunchProfiles(profiles []TerminalLaunchProfileSetting) ([
 			return nil, fmt.Errorf("terminal launch profile name is duplicated: %s", name)
 		}
 		seen[key] = struct{}{}
-		normalized = append(normalized, TerminalLaunchProfileSetting{Name: name, Command: command, Enabled: profile.Enabled})
+		normalized = append(normalized, TerminalLaunchProfileSetting{Name: name, Command: command, Enabled: profile.Enabled, Background: profile.Background})
 	}
 	return normalized, nil
 }

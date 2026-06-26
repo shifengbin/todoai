@@ -40,6 +40,7 @@ type App struct {
 	gitBranches                   func(path string) ([]string, error)
 	gitInit                       func(path string) error
 	worktreePreparer              TodoWorktreePreparer
+	backgroundCommandRunner       BackgroundCommandRunner
 	gitBranchMerged               func(path string, worktreeBranch string, baseBranch string) (bool, error)
 	claudeStatusDir               string
 	claudeStatusWatcher           *ClaudeStatusWatcher
@@ -77,16 +78,17 @@ func NewAppWithConfigAndShellStarter(configPath string, starter ShellStarter, op
 			configPath,
 			WithGlobalProjectCandidatesPath(defaultGlobalProjectCandidatesPath(configPath)),
 		),
-		settings:           NewSettingsManager(defaultSettingsConfigPath(configPath)),
-		history:            historyStore,
-		todoProjectUIState: NewTodoProjectUIStateStore(configDir),
-		starter:            starter,
-		gitStatus:          queryGitStatus,
-		gitBranches:        queryGitBranches,
-		gitInit:            initializeGitRepository,
-		worktreePreparer:   NewGitWorktreeService(),
-		gitBranchMerged:    queryGitBranchMerged,
-		claudeStatusDir:    claudeStatusDirectory(),
+		settings:                NewSettingsManager(defaultSettingsConfigPath(configPath)),
+		history:                 historyStore,
+		todoProjectUIState:      NewTodoProjectUIStateStore(configDir),
+		starter:                 starter,
+		gitStatus:               queryGitStatus,
+		gitBranches:             queryGitBranches,
+		gitInit:                 initializeGitRepository,
+		worktreePreparer:        NewGitWorktreeService(),
+		backgroundCommandRunner: runBackgroundCommand,
+		gitBranchMerged:         queryGitBranchMerged,
+		claudeStatusDir:         claudeStatusDirectory(),
 	}
 	var shellOpts []ShellSessionManagerOption
 	for _, opt := range opts {
@@ -156,6 +158,12 @@ func WithWorktreePreparer(preparer TodoWorktreePreparer) AppOption {
 	}
 }
 
+func WithBackgroundCommandRunner(runner BackgroundCommandRunner) AppOption {
+	return func(app *App) {
+		app.backgroundCommandRunner = runner
+	}
+}
+
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	state, _ := a.workspace.MigrateLegacyGlobalData()
@@ -163,7 +171,9 @@ func (a *App) startup(ctx context.Context) {
 		a.restoreLastWorkspace(state)
 	}
 	a.startClaudeStatusWatcher()
-	go a.ensureClaudeStatusHooksForActiveWorkspace()
+	if a.claudeStatusDir != "" {
+		go a.ensureClaudeStatusHooksForActiveWorkspace()
+	}
 }
 
 func (a *App) restoreLastWorkspace(state WorkspaceState) {
@@ -697,6 +707,71 @@ func (a *App) CreateTaskTerminal(todoID string, cols int, rows int) (ProjectStat
 	}
 	a.activeTerminalID = terminal.ID
 	return a.withShellStateForActiveTerminal(state, terminal.ID), nil
+}
+
+func (a *App) StartTodoProjectBackgroundCommand(todoProjectID string, command string) error {
+	if !a.hasWorkspace() {
+		return ErrWorkspaceRequired
+	}
+	currentState, err := a.projects.Load()
+	if err != nil {
+		return err
+	}
+	terminalTodoProject, ok := todoProjectByID(currentState.TodoProjects, todoProjectID)
+	if !ok {
+		return os.ErrNotExist
+	}
+	todo, ok := openTodoByID(currentState.Todos, terminalTodoProject.TodoID)
+	if !ok {
+		return os.ErrNotExist
+	}
+	if todo.Status != TodoStatusInProgress {
+		return fmt.Errorf("todo is not in progress")
+	}
+	if err := a.ensureTodoProjectWorktreeReady(terminalTodoProject); err != nil {
+		return err
+	}
+	refreshedState, err := a.projects.Load()
+	if err != nil {
+		return err
+	}
+	refreshedTodoProject, ok := todoProjectByID(refreshedState.TodoProjects, todoProjectID)
+	if !ok {
+		return os.ErrNotExist
+	}
+	if err := requireReadyTodoProjectTerminal(refreshedTodoProject); err != nil {
+		return err
+	}
+	return a.startBackgroundCommand(refreshedTodoProject.WorktreePath, command)
+}
+
+func (a *App) StartTaskBackgroundCommand(todoID string, command string) error {
+	if !a.hasWorkspace() {
+		return ErrWorkspaceRequired
+	}
+	workspacePath, _, todo, ok := a.loadTodoForWorkspace(todoID)
+	if !ok {
+		return os.ErrNotExist
+	}
+	if todo.Status != TodoStatusInProgress {
+		return fmt.Errorf("todo is not in progress")
+	}
+	taskDir, err := a.ensureTaskWorkspaceDir(todo, workspacePath)
+	if err != nil {
+		return err
+	}
+	return a.startBackgroundCommand(taskDir, command)
+}
+
+func (a *App) startBackgroundCommand(workingDir string, command string) error {
+	if a.backgroundCommandRunner == nil {
+		return errors.New("background command runner is not configured")
+	}
+	request, err := BackgroundShellLaunch(a.settings.ResolveShellPath(), command, workingDir, os.Environ())
+	if err != nil {
+		return err
+	}
+	return a.backgroundCommandRunner(request)
 }
 
 // OpenTodoFolder reveals a TODO's task workspace directory in the host file

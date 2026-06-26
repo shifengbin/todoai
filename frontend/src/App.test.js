@@ -46,6 +46,8 @@ import {
   SelectTerminal,
   SendTerminalInput,
   StartShell,
+  StartTaskBackgroundCommand,
+  StartTodoProjectBackgroundCommand,
   UpdateTodo,
   WorkspaceState
 } from '../wailsjs/go/main/App'
@@ -98,6 +100,8 @@ const appApiMock = vi.hoisted(() => ({
   SaveTodoProjectUIState: vi.fn(),
   SendTerminalInput: vi.fn(),
   StartShell: vi.fn(),
+  StartTaskBackgroundCommand: vi.fn(),
+  StartTodoProjectBackgroundCommand: vi.fn(),
   UpdateTodo: vi.fn(),
   WorkspaceState: vi.fn()
 }))
@@ -177,6 +181,8 @@ describe('App project terminal tree', () => {
     appApiMock.SaveTerminalTheme.mockResolvedValue(settingsState())
     appApiMock.SaveTodoInitializationFiles.mockResolvedValue(settingsState())
     appApiMock.SaveTodoSidebarWidth.mockResolvedValue()
+    appApiMock.StartTaskBackgroundCommand.mockResolvedValue()
+    appApiMock.StartTodoProjectBackgroundCommand.mockResolvedValue()
     appApiMock.SelectProject.mockResolvedValue(projectState())
     appApiMock.SelectTodoProject.mockResolvedValue(projectState())
     appApiMock.SelectTerminal.mockResolvedValue(projectState())
@@ -656,6 +662,48 @@ describe('App project terminal tree', () => {
 
     expect(wrapper.find('[data-testid="terminal-terminal-b"]').text()).toContain('bash')
     expect(wrapper.find('[data-testid="terminal-terminal-b"]').text()).not.toContain('codex --model gpt-5')
+  })
+
+  it('starts a project background launch profile without creating a terminal', async () => {
+    appApiMock.LoadTerminalSettings.mockResolvedValue(
+      settingsState({ launchProfiles: [{ name: 'Sync Docs', command: 'npm run sync-docs', enabled: true, background: true }] })
+    )
+    appApiMock.ListProjects.mockResolvedValue(inProgressProjectState())
+    const wrapper = await mountReadyApp()
+    CreateTodoTerminal.mockClear()
+    SendTerminalInput.mockClear()
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+    await wrapper.find('[data-testid="add-terminal-todo-project-a"]').trigger('click')
+    await wrapper.find('[data-testid="terminal-launch-option-todo-project-a-1"]').trigger('click')
+    await flushPromises()
+
+    expect(StartTodoProjectBackgroundCommand).toHaveBeenCalledWith('todo-project-a', 'npm run sync-docs')
+    expect(CreateTodoTerminal).not.toHaveBeenCalled()
+    expect(SendTerminalInput).not.toHaveBeenCalled()
+    expect(xtermMock.sessions.has('terminal-b')).toBe(false)
+    expect(wrapper.find('[data-testid="terminal-pane-terminal-a"]').classes()).toContain('active')
+  })
+
+  it('starts a task background launch profile without creating a task terminal', async () => {
+    appApiMock.LoadTerminalSettings.mockResolvedValue(
+      settingsState({ launchProfiles: [{ name: 'Prepare Task', command: 'npm run prepare', enabled: true, background: true }] })
+    )
+    appApiMock.ListProjects.mockResolvedValue(inProgressProjectState())
+    const wrapper = await mountReadyApp()
+    CreateTaskTerminal.mockClear()
+    SendTerminalInput.mockClear()
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+    await wrapper.find('[data-testid="add-task-terminal-todo-a"]').trigger('click')
+    await wrapper.find('[data-testid="terminal-launch-option-task-todo-a-1"]').trigger('click')
+    await flushPromises()
+
+    expect(StartTaskBackgroundCommand).toHaveBeenCalledWith('todo-a', 'npm run prepare')
+    expect(CreateTaskTerminal).not.toHaveBeenCalled()
+    expect(SendTerminalInput).not.toHaveBeenCalled()
+    expect(xtermMock.sessions.has('task-terminal-a')).toBe(false)
+    expect(wrapper.find('[data-testid="terminal-pane-terminal-a"]').classes()).toContain('active')
   })
 
   it('keeps structured agent status when title changes arrive', async () => {
@@ -4464,8 +4512,8 @@ describe('App project terminal tree', () => {
     appApiMock.LoadTerminalSettings.mockResolvedValue(
       settingsState({
         launchProfiles: [
-          { name: 'Codex GPT-5', command: 'codex --model gpt-5', enabled: true },
-          { name: 'Claude Plan', command: 'claude', enabled: false }
+          { name: 'Codex GPT-5', command: 'codex --model gpt-5', enabled: true, background: true },
+          { name: 'Claude Plan', command: 'claude', enabled: false, background: false }
         ]
       })
     )
@@ -4477,8 +4525,10 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="terminal-launch-profile-name-0"]').element.value).toBe('Codex GPT-5')
     expect(wrapper.find('[data-testid="terminal-launch-profile-command-0"]').element.value).toBe('codex --model gpt-5')
     expect(wrapper.find('[data-testid="terminal-launch-profile-enabled-0"]').element.checked).toBe(true)
+    expect(wrapper.find('[data-testid="terminal-launch-profile-background-0"]').element.checked).toBe(true)
     expect(wrapper.find('[data-testid="terminal-launch-profile-name-1"]').element.value).toBe('Claude Plan')
     expect(wrapper.find('[data-testid="terminal-launch-profile-enabled-1"]').element.checked).toBe(false)
+    expect(wrapper.find('[data-testid="terminal-launch-profile-background-1"]').element.checked).toBe(false)
   })
 
   it('uses default terminal launch profile commands when settings omit launch profiles', async () => {
@@ -4490,9 +4540,11 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="terminal-launch-profile-name-0"]').element.value).toBe('codex')
     expect(wrapper.find('[data-testid="terminal-launch-profile-command-0"]').element.value).toBe(defaultCodexLaunchCommand)
     expect(wrapper.find('[data-testid="terminal-launch-profile-enabled-0"]').element.checked).toBe(true)
+    expect(wrapper.find('[data-testid="terminal-launch-profile-background-0"]').element.checked).toBe(false)
     expect(wrapper.find('[data-testid="terminal-launch-profile-name-1"]').element.value).toBe('claude')
     expect(wrapper.find('[data-testid="terminal-launch-profile-command-1"]').element.value).toBe(defaultClaudeLaunchCommand)
     expect(wrapper.find('[data-testid="terminal-launch-profile-enabled-1"]').element.checked).toBe(true)
+    expect(wrapper.find('[data-testid="terminal-launch-profile-background-1"]').element.checked).toBe(false)
   })
 
   it('treats launch profiles without enabled state as enabled in settings', async () => {
@@ -4504,6 +4556,7 @@ describe('App project terminal tree', () => {
     await openSettings(wrapper)
 
     expect(wrapper.find('[data-testid="terminal-launch-profile-enabled-0"]').element.checked).toBe(true)
+    expect(wrapper.find('[data-testid="terminal-launch-profile-background-0"]').element.checked).toBe(false)
   })
 
   it('re-detects a terminal shell from settings', async () => {
@@ -4519,10 +4572,10 @@ describe('App project terminal tree', () => {
 
   it('saves edited terminal launch profiles from settings', async () => {
     appApiMock.LoadTerminalSettings.mockResolvedValue(
-      settingsState({ launchProfiles: [{ name: 'codex', command: 'codex', enabled: true }] })
+      settingsState({ launchProfiles: [{ name: 'codex', command: 'codex', enabled: true, background: false }] })
     )
     appApiMock.SaveTerminalLaunchProfiles.mockResolvedValue(
-      settingsState({ launchProfiles: [{ name: 'Codex GPT-5', command: 'codex --model gpt-5', enabled: false }] })
+      settingsState({ launchProfiles: [{ name: 'Codex GPT-5', command: 'codex --model gpt-5', enabled: false, background: true }] })
     )
     const wrapper = await mountReadyApp()
 
@@ -4530,12 +4583,13 @@ describe('App project terminal tree', () => {
     await wrapper.find('[data-testid="terminal-launch-profile-name-0"]').setValue(' Codex GPT-5 ')
     await wrapper.find('[data-testid="terminal-launch-profile-command-0"]').setValue(' codex --model gpt-5 ')
     await wrapper.find('[data-testid="terminal-launch-profile-enabled-0"]').setValue(false)
+    await wrapper.find('[data-testid="terminal-launch-profile-background-0"]').setValue(true)
     await wrapper.find('[data-testid="terminal-settings-save"]').trigger('click')
     await flushPromises()
 
     expect(SaveTerminalShell).toHaveBeenCalled()
     expect(SaveTerminalLaunchProfiles).toHaveBeenCalledWith([
-      { name: 'Codex GPT-5', command: 'codex --model gpt-5', enabled: false }
+      { name: 'Codex GPT-5', command: 'codex --model gpt-5', enabled: false, background: true }
     ])
     expect(wrapper.find('[data-testid="terminal-settings-dialog"]').exists()).toBe(false)
   })
@@ -4561,8 +4615,8 @@ describe('App project terminal tree', () => {
     await flushPromises()
 
     expect(SaveTerminalLaunchProfiles).toHaveBeenCalledWith([
-      { name: 'claude', command: 'claude', enabled: false },
-      { name: 'Gemini', command: 'gemini', enabled: true }
+      { name: 'claude', command: 'claude', enabled: false, background: false },
+      { name: 'Gemini', command: 'gemini', enabled: true, background: false }
     ])
   })
 

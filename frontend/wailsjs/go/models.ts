@@ -513,6 +513,7 @@ export namespace main {
 	    name: string;
 	    command: string;
 	    enabled: boolean;
+	    background: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new TerminalLaunchProfileSetting(source);
@@ -523,6 +524,7 @@ export namespace main {
 	        this.name = source["name"];
 	        this.command = source["command"];
 	        this.enabled = source["enabled"];
+	        this.background = source["background"];
 	    }
 	}
 	export class TodoInitializationFileTemplate {

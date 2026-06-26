@@ -92,7 +92,7 @@ The system SHALL report when the saved terminal shell path is unavailable and SH
 - **AND** the saved terminal shell setting remains unchanged until the user saves a new setting
 
 ### Requirement: Persist Terminal Launch Profiles
-The system SHALL persist configurable terminal launch profiles in the application-global terminal settings and SHALL expose their name, startup parameters, enabled state, and saved order regardless of the current workspace. The built-in `Terminal` launch option SHALL NOT be persisted as a configurable profile. Terminal launch profiles SHALL be shared across workspaces.
+The system SHALL persist configurable terminal launch profiles in the application-global terminal settings and SHALL expose their name, startup parameters, enabled state, background startup mode, and saved order regardless of the current workspace. The built-in `Terminal` launch option SHALL NOT be persisted as a configurable profile. Terminal launch profiles SHALL be shared across workspaces.
 
 #### Scenario: Missing launch profiles use defaults
 - **WHEN** the application loads terminal settings from the global settings file that has no launch profiles field
@@ -100,18 +100,27 @@ The system SHALL persist configurable terminal launch profiles in the applicatio
 - **AND** the `codex` profile has startup parameters `codex`
 - **AND** the `claude` profile has startup parameters `claude`
 - **AND** both default launch profiles are enabled
+- **AND** both default launch profiles are foreground profiles
 
 #### Scenario: Saved launch profiles are restored
 - **WHEN** the user has previously saved launch profiles named `Codex GPT-5` and `Claude Plan`
+- **AND** `Codex GPT-5` is saved as a background profile
+- **AND** `Claude Plan` is saved as a foreground profile
 - **AND** the application loads terminal settings
 - **THEN** the settings state exposes those launch profile names in the saved order
 - **AND** each launch profile exposes its saved startup parameters
 - **AND** each launch profile exposes its saved enabled state
+- **AND** each launch profile exposes its saved background startup mode
 
 #### Scenario: Legacy launch profiles without enabled state remain enabled
 - **WHEN** the application loads terminal settings from the global settings file whose launch profiles do not include an enabled state
 - **THEN** each launch profile is exposed as enabled
-- **AND** the existing launch profile names, startup parameters, and order remain unchanged
+- **AND** the existing launch profile names, startup parameters, background startup modes, and order remain unchanged
+
+#### Scenario: Legacy launch profiles without background state remain foreground
+- **WHEN** the application loads terminal settings from the global settings file whose launch profiles do not include a background startup mode
+- **THEN** each launch profile is exposed as a foreground profile
+- **AND** the existing launch profile names, startup parameters, enabled states, and order remain unchanged
 
 #### Scenario: Empty launch profile list remains empty
 - **WHEN** the user has previously saved an empty launch profile list
@@ -127,21 +136,34 @@ The system SHALL persist configurable terminal launch profiles in the applicatio
 
 ### Requirement: Change Terminal Launch Profiles
 
-The system SHALL allow the user to add, edit, reorder, enable, disable, and remove configurable terminal launch profiles from the settings interface.
+The system SHALL allow the user to add, edit, reorder, enable, disable, remove, and choose foreground or background startup mode for configurable terminal launch profiles from the settings interface.
 
 #### Scenario: User saves valid launch profiles
 
 - **WHEN** the user configures a launch profile named `Codex` with startup parameters `codex --model gpt-5`
+- **AND** the user leaves the profile configured for foreground startup
 - **AND** the user saves settings
 - **THEN** the launch profile is persisted with name `Codex`
 - **AND** the launch profile is persisted with startup parameters `codex --model gpt-5`
 - **AND** the launch profile is persisted as enabled
+- **AND** the launch profile is persisted as foreground
+
+#### Scenario: User saves a background launch profile
+
+- **WHEN** the user configures a launch profile named `Sync Docs` with startup parameters `npm run sync-docs`
+- **AND** the user enables background startup for `Sync Docs`
+- **AND** the user saves settings
+- **THEN** the launch profile is persisted with name `Sync Docs`
+- **AND** the launch profile is persisted with startup parameters `npm run sync-docs`
+- **AND** the launch profile is persisted as enabled
+- **AND** the launch profile is persisted as background
 
 #### Scenario: User disables a launch profile
 
 - **WHEN** settings contains an enabled launch profile named `Claude Plan`
 - **AND** the user disables `Claude Plan` and saves settings
 - **THEN** the launch profile remains persisted with its name and startup parameters
+- **AND** the launch profile remains persisted with its background startup mode
 - **AND** the launch profile is persisted as disabled
 
 #### Scenario: User enables a disabled launch profile
@@ -149,6 +171,7 @@ The system SHALL allow the user to add, edit, reorder, enable, disable, and remo
 - **WHEN** settings contains a disabled launch profile named `Claude Plan`
 - **AND** the user enables `Claude Plan` and saves settings
 - **THEN** the launch profile remains persisted with its name and startup parameters
+- **AND** the launch profile remains persisted with its background startup mode
 - **AND** the launch profile is persisted as enabled
 
 #### Scenario: User removes a launch profile
@@ -174,7 +197,7 @@ The system SHALL allow the user to add, edit, reorder, enable, disable, and remo
 
 ### Requirement: Display Enabled Terminal Launch Profiles
 
-The system SHALL include only enabled configurable terminal launch profiles in terminal launch menus. The built-in `Terminal` launch option SHALL remain available regardless of configurable launch profile states.
+The system SHALL include only enabled configurable terminal launch profiles in terminal launch menus. The built-in `Terminal` launch option SHALL remain available regardless of configurable launch profile states. Selecting an enabled foreground launch profile SHALL create a visible terminal and submit its command to that terminal. Selecting an enabled background launch profile SHALL start its command in the background without adding a terminal to the UI.
 
 #### Scenario: Disabled launch profile is hidden from launch menu
 
@@ -192,12 +215,20 @@ The system SHALL include only enabled configurable terminal launch profiles in t
 - **THEN** the launch menu includes `Terminal`
 - **AND** the launch menu does not include any custom launch profile
 
-#### Scenario: Enabled launch profile can start with its command
+#### Scenario: Enabled foreground launch profile can start with its command
 
-- **WHEN** terminal settings include an enabled launch profile named `Codex GPT-5` with startup parameters `codex --model gpt-5`
+- **WHEN** terminal settings include an enabled foreground launch profile named `Codex GPT-5` with startup parameters `codex --model gpt-5`
 - **AND** the user selects `Codex GPT-5` from the launch menu
 - **THEN** the system creates a terminal
 - **AND** the system submits `codex --model gpt-5` to the created terminal
+
+#### Scenario: Enabled background launch profile starts without creating a terminal
+
+- **WHEN** terminal settings include an enabled background launch profile named `Sync Docs` with startup parameters `npm run sync-docs`
+- **AND** the user selects `Sync Docs` from the launch menu
+- **THEN** the system starts `npm run sync-docs` as a background command
+- **AND** the system does not create a terminal
+- **AND** the current active terminal remains unchanged
 
 ### Requirement: Persist Appearance Theme Setting
 The system SHALL persist the application appearance theme in the application-global terminal settings and SHALL expose the theme regardless of the current workspace. Appearance theme settings SHALL be shared across workspaces.
@@ -290,4 +321,3 @@ The system SHALL allow the user to save the application appearance theme from th
 - **AND** 路径存在但没有 execute permission
 - **THEN** 系统拒绝该终端 shell 设置
 - **AND** 之前已保存的终端 shell 设置保持不变
-

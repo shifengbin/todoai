@@ -230,6 +230,14 @@ export function StartShell(arg1, arg2, arg3) {
   return window['go']['main']['App']['StartShell'](arg1, arg2, arg3);
 }
 
+export function StartTaskBackgroundCommand(arg1, arg2) {
+  return window['go']['main']['App']['StartTaskBackgroundCommand'](arg1, arg2);
+}
+
+export function StartTodoProjectBackgroundCommand(arg1, arg2) {
+  return window['go']['main']['App']['StartTodoProjectBackgroundCommand'](arg1, arg2);
+}
+
 export function UpdateTodo(arg1) {
   return window['go']['main']['App']['UpdateTodo'](arg1);
 }

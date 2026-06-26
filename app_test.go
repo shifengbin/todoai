@@ -538,6 +538,193 @@ func TestAppCreatesTaskTerminalInTaskWorkspaceWithoutChangingTodoProjectContext(
 	}
 }
 
+func TestAppStartsTodoProjectBackgroundCommandInPreparedWorktreeWithoutAddingTerminal(t *testing.T) {
+	workspaceDir := t.TempDir()
+	projectDir := t.TempDir()
+	shellPath := executableFile(t, "zsh")
+	background := newFakeBackgroundCommandRunner()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
+		WithBackgroundCommandRunner(background.Start),
+	)
+	if _, err := app.SaveTerminalShell(shellPath, ShellSourceManual); err != nil {
+		t.Fatalf("SaveTerminalShell() error = %v", err)
+	}
+	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	todoID, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", state.Projects[0].ID)
+
+	if err := app.StartTodoProjectBackgroundCommand(todoProjectID, "npm run sync"); err != nil {
+		t.Fatalf("StartTodoProjectBackgroundCommand() error = %v", err)
+	}
+
+	state, err = app.ListProjects()
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	taskDir := filepath.Join(mustAbs(t, workspaceDir), "tasks", state.Todos[0].WorkspaceDirName)
+	wantWorktreeDir := filepath.Join(taskDir, worktreeDirectoryName(filepath.Base(projectDir)))
+	if len(background.requests) != 1 {
+		t.Fatalf("background command count = %d, want 1", len(background.requests))
+	}
+	request := background.requests[0]
+	if request.Command != "npm run sync" {
+		t.Fatalf("background command = %q, want npm run sync", request.Command)
+	}
+	if request.WorkingDir != wantWorktreeDir {
+		t.Fatalf("background working dir = %q, want %q", request.WorkingDir, wantWorktreeDir)
+	}
+	if request.ShellPath != shellPath {
+		t.Fatalf("background shell path = %q, want %q", request.ShellPath, shellPath)
+	}
+	if len(state.Terminals) != 0 || state.ActiveTerminalID != "" {
+		t.Fatalf("terminal state after background project command = %#v active %q, want unchanged empty terminals", state.Terminals, state.ActiveTerminalID)
+	}
+	if state.ActiveTodoID != todoID || state.ActiveTodoProjectID != todoProjectID {
+		t.Fatalf("active TODO context = %q/%q, want %q/%q", state.ActiveTodoID, state.ActiveTodoProjectID, todoID, todoProjectID)
+	}
+}
+
+func TestAppStartsTaskBackgroundCommandInTaskWorkspaceWithoutAddingTerminal(t *testing.T) {
+	workspaceDir := t.TempDir()
+	projectDir := t.TempDir()
+	shellPath := executableFile(t, "bash")
+	background := newFakeBackgroundCommandRunner()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
+		WithBackgroundCommandRunner(background.Start),
+	)
+	if _, err := app.SaveTerminalShell(shellPath, ShellSourceManual); err != nil {
+		t.Fatalf("SaveTerminalShell() error = %v", err)
+	}
+	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	todoID, _ := createTodoProjectForApp(t, app, "修复登录问题", state.Projects[0].ID)
+
+	if err := app.StartTaskBackgroundCommand(todoID, "npm run prepare"); err != nil {
+		t.Fatalf("StartTaskBackgroundCommand() error = %v", err)
+	}
+
+	state, err = app.ListProjects()
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	taskDir := filepath.Join(mustAbs(t, workspaceDir), "tasks", state.Todos[0].WorkspaceDirName)
+	if len(background.requests) != 1 {
+		t.Fatalf("background command count = %d, want 1", len(background.requests))
+	}
+	request := background.requests[0]
+	if request.Command != "npm run prepare" {
+		t.Fatalf("background command = %q, want npm run prepare", request.Command)
+	}
+	if request.WorkingDir != taskDir {
+		t.Fatalf("background working dir = %q, want %q", request.WorkingDir, taskDir)
+	}
+	if len(state.Terminals) != 0 || state.ActiveTerminalID != "" {
+		t.Fatalf("terminal state after background task command = %#v active %q, want unchanged empty terminals", state.Terminals, state.ActiveTerminalID)
+	}
+}
+
+func TestAppRejectsInvalidBackgroundCommandContextsWithoutAddingTerminal(t *testing.T) {
+	workspaceDir := t.TempDir()
+	projectDir := t.TempDir()
+	background := newFakeBackgroundCommandRunner()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+		WithWorktreePreparer(readyWorktreePreparerFunc(func(repoPath, requestedBranch, projectName, taskWorkspaceDir string) WorktreePrepareResult {
+			return WorktreePrepareResult{Status: WorktreeStatusFailed, Error: "git failed"}
+		})),
+		WithBackgroundCommandRunner(background.Start),
+	)
+	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	state, err = app.CreateTodo(CreateTodoRequest{Title: "修复登录问题"})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	todoID := state.Todos[0].ID
+	state, err = app.AddProjectToTodo(todoID, state.Projects[0].ID)
+	if err != nil {
+		t.Fatalf("AddProjectToTodo() error = %v", err)
+	}
+	todoProjectID := state.ActiveTodoProjectID
+
+	if err := app.StartTodoProjectBackgroundCommand(todoProjectID, "npm run sync"); err == nil || !strings.Contains(err.Error(), "todo is not in progress") {
+		t.Fatalf("StartTodoProjectBackgroundCommand(not-started) error = %v, want todo status error", err)
+	}
+	if _, err := app.ChangeTodoStatus(todoID, "in-progress"); err != nil {
+		t.Fatalf("ChangeTodoStatus(in-progress) error = %v", err)
+	}
+	if err := app.StartTodoProjectBackgroundCommand(todoProjectID, "npm run sync"); err == nil || !strings.Contains(err.Error(), "project worktree preparation failed") {
+		t.Fatalf("StartTodoProjectBackgroundCommand(failed worktree) error = %v, want worktree error", err)
+	}
+	state, err = app.ListProjects()
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	if len(background.requests) != 0 {
+		t.Fatalf("background command count = %d, want 0", len(background.requests))
+	}
+	if len(state.Terminals) != 0 || state.ActiveTerminalID != "" {
+		t.Fatalf("terminal state after rejected background command = %#v active %q, want unchanged empty terminals", state.Terminals, state.ActiveTerminalID)
+	}
+}
+
+func TestAppReportsBackgroundCommandStartFailureWithoutAddingTerminal(t *testing.T) {
+	workspaceDir := t.TempDir()
+	projectDir := t.TempDir()
+	background := newFakeBackgroundCommandRunner()
+	background.err = errors.New("start failed")
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
+		WithBackgroundCommandRunner(background.Start),
+	)
+	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	_, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", state.Projects[0].ID)
+
+	if err := app.StartTodoProjectBackgroundCommand(todoProjectID, "npm run sync"); err == nil || !strings.Contains(err.Error(), "start failed") {
+		t.Fatalf("StartTodoProjectBackgroundCommand(start failure) error = %v, want start failed", err)
+	}
+	state, err = app.ListProjects()
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	if len(background.requests) != 1 {
+		t.Fatalf("background command count = %d, want 1 attempted start", len(background.requests))
+	}
+	if len(state.Terminals) != 0 || state.ActiveTerminalID != "" {
+		t.Fatalf("terminal state after failed background start = %#v active %q, want unchanged empty terminals", state.Terminals, state.ActiveTerminalID)
+	}
+}
+
 func TestAppWritesTodoInitializationFilesWhenTaskWorkspaceIsPrepared(t *testing.T) {
 	workspaceDir := t.TempDir()
 	app := NewAppWithConfigAndShellStarter(
@@ -2654,4 +2841,18 @@ func findTerminalByID(terminals []ProjectTerminal, terminalID string) ProjectTer
 		}
 	}
 	return ProjectTerminal{}
+}
+
+type fakeBackgroundCommandRunner struct {
+	requests []BackgroundCommandRequest
+	err      error
+}
+
+func newFakeBackgroundCommandRunner() *fakeBackgroundCommandRunner {
+	return &fakeBackgroundCommandRunner{}
+}
+
+func (runner *fakeBackgroundCommandRunner) Start(request BackgroundCommandRequest) error {
+	runner.requests = append(runner.requests, request)
+	return runner.err
 }
