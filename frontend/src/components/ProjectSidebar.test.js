@@ -333,13 +333,19 @@ describe('ProjectSidebar', () => {
   it('groups TODO workflow tabs and status item actions into single rows', () => {
     const wrapper = mountSidebar()
     const workflowTabs = wrapper.find('[data-testid="todo-workflow-tabs"]')
+    const scrollArea = wrapper.find('[data-testid="todo-workspace-scroll"]')
     const actionGroup = wrapper.find('[data-testid="todo-actions-todo-a"]')
     const styles = readFileSync('src/style.css', 'utf8')
     const sidebarHeaderRule = styles.slice(styles.indexOf('.sidebar-header {'), styles.indexOf('.sidebar-title'))
-    const tabsRule = styles.slice(styles.indexOf('.todo-view-tabs {'), styles.indexOf('.todo-tree-toolbar'))
+    const projectListRule = styles.slice(styles.indexOf('.project-list {'), styles.indexOf('.todo-view-tabs {'))
+    const tabsRule = styles.slice(styles.indexOf('.todo-view-tabs {'), styles.indexOf('.todo-workspace-scroll {'))
+    const scrollRule = styles.slice(styles.indexOf('.todo-workspace-scroll {'), styles.indexOf('.todo-tree-toolbar'))
     const actionsRule = styles.slice(styles.indexOf('.todo-actions {'), styles.indexOf('.todo-action-button'))
 
     expect(workflowTabs.exists()).toBe(true)
+    expect(scrollArea.exists()).toBe(true)
+    expect(workflowTabs.element.closest('[data-testid="todo-workspace-scroll"]')).toBeNull()
+    expect(scrollArea.find('[data-testid="todo-tree-toolbar"]').exists()).toBe(true)
     expect(Array.from(workflowTabs.element.children).map((node) => node.getAttribute('data-testid'))).toEqual([
       'todo-view-not-started',
       'todo-view-in-progress',
@@ -355,7 +361,11 @@ describe('ProjectSidebar', () => {
     expect(wrapper.find('[data-testid="delete-todo-todo-a"]').exists()).toBe(false)
     expect(sidebarHeaderRule).toContain('flex-shrink: 0;')
     expect(wrapper.find('[data-testid="workspace-tabs"]').exists()).toBe(false)
+    expect(projectListRule).toContain('overflow: hidden;')
     expect(tabsRule).toContain('grid-template-columns: repeat(3, minmax(0, 1fr));')
+    expect(scrollRule).toContain('flex: 1 1 auto;')
+    expect(scrollRule).toContain('min-height: 0;')
+    expect(scrollRule).toContain('overflow-y: auto;')
     expect(actionsRule).toContain('display: inline-flex;')
     expect(actionsRule).toContain('flex-wrap: nowrap;')
   })
@@ -403,9 +413,11 @@ describe('ProjectSidebar', () => {
 
   it('uses the top toolbar for completed bulk deletion without open TODO controls', async () => {
     const wrapper = mountSidebar()
+    const scrollArea = wrapper.find('[data-testid="todo-workspace-scroll"]')
 
     expect(wrapper.find('[data-testid="todo-tree-toolbar"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="todo-tree-toolbar"]').attributes('role')).toBe('toolbar')
+    expect(scrollArea.find('[data-testid="todo-tree-toolbar"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="sort-active-todos-priority"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="collapse-all-todos"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="expand-all-todos"]').exists()).toBe(true)
@@ -420,6 +432,7 @@ describe('ProjectSidebar', () => {
     expect(wrapper.find('[data-testid="collapse-all-todos"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="expand-all-todos"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="bulk-delete-completed-todos"]').exists()).toBe(true)
+    expect(scrollArea.find('[data-testid="bulk-delete-completed-todos"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="completed-todo-toolbar"]').exists()).toBe(false)
   })
 

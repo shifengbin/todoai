@@ -1239,42 +1239,43 @@ watch(
         Open a project
       </div>
       <template v-else>
-      <div class="todo-view-tabs" data-testid="todo-workflow-tabs" role="tablist" aria-label="TODO views">
-        <button
-          type="button"
-          class="todo-view-tab"
-          :class="{ active: todoView === 'not-started' }"
-          data-testid="todo-view-not-started"
-          @click="setTodoView('not-started')"
-        >
-          未执行
-        </button>
-        <button
-          type="button"
-          class="todo-view-tab"
-          :class="{ active: todoView === 'in-progress' }"
-          data-testid="todo-view-in-progress"
-          @click="setTodoView('in-progress')"
-        >
-          执行中
-        </button>
-        <button
-          type="button"
-          class="todo-view-tab"
-          :class="{ active: todoView === 'completed' }"
-          data-testid="todo-view-completed"
-          @click="setTodoView('completed')"
-        >
-          已完成
-        </button>
-      </div>
+        <div class="todo-view-tabs" data-testid="todo-workflow-tabs" role="tablist" aria-label="TODO views">
+          <button
+            type="button"
+            class="todo-view-tab"
+            :class="{ active: todoView === 'not-started' }"
+            data-testid="todo-view-not-started"
+            @click="setTodoView('not-started')"
+          >
+            未执行
+          </button>
+          <button
+            type="button"
+            class="todo-view-tab"
+            :class="{ active: todoView === 'in-progress' }"
+            data-testid="todo-view-in-progress"
+            @click="setTodoView('in-progress')"
+          >
+            执行中
+          </button>
+          <button
+            type="button"
+            class="todo-view-tab"
+            :class="{ active: todoView === 'completed' }"
+            data-testid="todo-view-completed"
+            @click="setTodoView('completed')"
+          >
+            已完成
+          </button>
+        </div>
 
-      <div
-        class="todo-tree-toolbar"
-        data-testid="todo-tree-toolbar"
-        role="toolbar"
-        :aria-label="isOpenTodoView ? 'TODO tree controls' : 'Completed TODO controls'"
-      >
+        <div class="todo-workspace-scroll" data-testid="todo-workspace-scroll">
+          <div
+            class="todo-tree-toolbar"
+            data-testid="todo-tree-toolbar"
+            role="toolbar"
+            :aria-label="isOpenTodoView ? 'TODO tree controls' : 'Completed TODO controls'"
+          >
         <template v-if="isOpenTodoView">
           <div class="todo-sort-toggle" role="group" aria-label="TODO sort">
             <button
@@ -1366,9 +1367,9 @@ watch(
             </div>
           </div>
         </template>
-      </div>
+          </div>
 
-      <div v-if="isOpenTodoView" class="todo-list" :data-testid="currentOpenTodoListTestId">
+          <div v-if="isOpenTodoView" class="todo-list" :data-testid="currentOpenTodoListTestId">
         <div v-if="currentOpenTodos.length === 0" class="sidebar-empty">
           {{ todoView === 'in-progress' ? 'No in-progress TODOs' : 'No not-started TODOs' }}
         </div>
@@ -1910,9 +1911,9 @@ watch(
             </div>
           </div>
         </div>
-      </div>
+          </div>
 
-      <div v-else class="archived-todos completed-todos" data-testid="completed-todos">
+          <div v-else class="archived-todos completed-todos" data-testid="completed-todos">
         <div v-if="completedTodos.length === 0" class="sidebar-empty">No completed TODOs</div>
 
         <div
@@ -2030,7 +2031,8 @@ watch(
             </div>
           </div>
         </div>
-      </div>
+          </div>
+        </div>
       </template>
     </div>
   </aside>

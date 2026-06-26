@@ -444,17 +444,26 @@ button {
 }
 
 .project-list {
+    display: flex;
     flex: 1 1 auto;
     min-height: 0;
-    overflow-y: auto;
+    flex-direction: column;
+    overflow: hidden;
     padding: 8px;
 }
 
 .todo-view-tabs {
+    flex: 0 0 auto;
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 6px;
     margin-bottom: 8px;
+}
+
+.todo-workspace-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
 }
 
 .todo-tree-toolbar {
@@ -463,7 +472,7 @@ button {
     min-height: 34px;
     justify-content: flex-end;
     gap: 6px;
-    margin: -2px 0 8px;
+    margin: 0 0 8px;
 }
 
 .todo-sort-toggle {
