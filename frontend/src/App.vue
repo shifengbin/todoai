@@ -38,12 +38,14 @@ import {
   ListProjects,
   LoadTerminalSettings,
   LoadTodoInitializationFiles,
+  LoadTodoLifecycleScripts,
   LoadTodoProjectUIState,
   OpenTodoFolder,
   OpenRecentWorkspace,
   RemoveClaudeStatusHook,
   RemoveTodoProject,
   ResizeTerminal,
+  RetryTodoLifecycleScript,
   SelectProject,
   SelectTerminal,
   SelectTodoProject,
@@ -51,6 +53,7 @@ import {
   SaveTerminalShell,
   SaveTerminalTheme,
   SaveTodoInitializationFiles,
+  SaveTodoLifecycleScripts,
   SaveTodoSidebarWidth,
   SaveTodoProjectUIState,
   SendTerminalInput,
@@ -63,6 +66,7 @@ const projects = ref([])
 const todos = ref([])
 const todoProjects = ref([])
 const projectBranchPreferences = ref({})
+const lifecycleScriptStatuses = ref([])
 const terminals = ref([])
 const currentWorkspace = ref(null)
 const recentWorkspaces = ref([])
@@ -168,6 +172,13 @@ const initializationFileManagement = reactive({
   files: [],
   error: ''
 })
+const lifecycleScriptManagement = reactive({
+  visible: false,
+  loading: false,
+  saving: false,
+  scripts: [],
+  error: ''
+})
 const todoForm = reactive({
   visible: false,
   title: '',
@@ -176,6 +187,9 @@ const todoForm = reactive({
   projectSelections: [],
   projectSearch: '',
   initializationFiles: [],
+  lifecycleScripts: [],
+  selectedLifecycleScriptIndex: '',
+  lifecycleScriptMenuOpen: false,
   saving: false
 })
 const todoDetail = reactive({
@@ -407,6 +421,25 @@ const todoFormProjectOptions = computed(() => {
   return filteredProjects(projects.value, todoForm.projectSearch)
 })
 
+const todoFormLifecycleScriptOptions = computed(() => {
+  return todoForm.lifecycleScripts.map((script, index) => ({ ...script, index }))
+})
+
+const selectedTodoFormLifecycleScript = computed(() => {
+  if (todoForm.selectedLifecycleScriptIndex === '') {
+    return null
+  }
+  const index = Number(todoForm.selectedLifecycleScriptIndex)
+  if (!Number.isInteger(index) || index < 0 || index >= todoForm.lifecycleScripts.length) {
+    return null
+  }
+  return todoForm.lifecycleScripts[index] || null
+})
+
+const selectedTodoFormLifecycleScriptLabel = computed(() => {
+  return lifecycleScriptOptionLabel(selectedTodoFormLifecycleScript.value)
+})
+
 const selectedTodoDetailProjects = computed(() => {
   if (todoDetail.readOnly) {
     return []
@@ -501,6 +534,9 @@ onMounted(async () => {
   EventsOn('terminal-agent-status', (event) => {
     handleTerminalAgentStatus(event)
   })
+  EventsOn('todo-lifecycle-script-status', (status) => {
+    handleTodoLifecycleScriptStatus(status)
+  })
   EventsOn('workspace-state', (state) => {
     void applyWorkspaceProjectState(state)
   })
@@ -527,6 +563,7 @@ onBeforeUnmount(() => {
   EventsOff('terminal-command-state')
   EventsOff('terminal-status')
   EventsOff('terminal-agent-status')
+  EventsOff('todo-lifecycle-script-status')
   EventsOff('workspace-state')
   EventsOff('workspace-recent')
   window.removeEventListener('resize', fitActiveTerminal)
@@ -549,6 +586,7 @@ function applyState(state, options = {}) {
   todos.value = state?.todos || []
   todoProjects.value = state?.todoProjects || []
   projectBranchPreferences.value = state?.projectBranchPreferences || {}
+  lifecycleScriptStatuses.value = state?.lifecycleScriptStatuses || []
   importSummary.value = state?.importSummary || null
   const nextTerminals = (state?.terminals || []).map((terminal) => {
     const previous = previousTerminals.get(terminal.id)
@@ -595,6 +633,19 @@ function applyState(state, options = {}) {
     force: options.forceGitStatusRefresh === true
   })
   scheduleCompletedMergeStatusRefresh()
+}
+
+function handleTodoLifecycleScriptStatus(status) {
+  if (!status?.todoId || !status?.phase) {
+    return
+  }
+  const nextStatuses = lifecycleScriptStatuses.value.filter(
+    (candidate) => candidate.todoId !== status.todoId || candidate.phase !== status.phase
+  )
+  if (status.status) {
+    nextStatuses.push(status)
+  }
+  lifecycleScriptStatuses.value = nextStatuses
 }
 
 async function applyWorkspaceProjectState(state, options = {}) {
@@ -771,14 +822,23 @@ async function createTodo() {
   todoForm.projectSelections = []
   todoForm.projectSearch = ''
   todoForm.initializationFiles = []
+  todoForm.lifecycleScripts = []
+  todoForm.selectedLifecycleScriptIndex = ''
+  todoForm.lifecycleScriptMenuOpen = false
   todoForm.saving = false
   errorMessage.value = ''
   try {
-    const templates = await LoadTodoInitializationFiles()
+    const [templates, lifecycleScripts] = await Promise.all([
+      LoadTodoInitializationFiles(),
+      LoadTodoLifecycleScripts()
+    ])
     todoForm.initializationFiles = cloneTodoInitializationFiles(templates).map((file) => ({
       ...file,
       selected: file.defaultSelected === true
     }))
+    todoForm.lifecycleScripts = cloneTodoLifecycleScripts(lifecycleScripts)
+    const defaultIndex = todoForm.lifecycleScripts.findIndex((script) => script.defaultSelected === true)
+    todoForm.selectedLifecycleScriptIndex = defaultIndex >= 0 ? String(defaultIndex) : ''
   } catch (error) {
     showError(error)
   }
@@ -788,6 +848,9 @@ function closeTodoForm() {
   todoForm.visible = false
   todoForm.projectSelections = []
   todoForm.initializationFiles = []
+  todoForm.lifecycleScripts = []
+  todoForm.selectedLifecycleScriptIndex = ''
+  todoForm.lifecycleScriptMenuOpen = false
   todoForm.saving = false
   closeProjectBranchPicker()
 }
@@ -810,6 +873,10 @@ async function submitTodoForm() {
     const initializationFiles = selectedTodoInitializationFileSnapshots(todoForm.initializationFiles)
     if (initializationFiles.length > 0) {
       request.initializationFiles = initializationFiles
+    }
+    const lifecycleScript = selectedTodoLifecycleScriptSnapshot(selectedTodoFormLifecycleScript.value)
+    if (lifecycleScript) {
+      request.lifecycleScript = lifecycleScript
     }
     applyState(await CreateTodo(request))
     closeTodoForm()
@@ -1089,6 +1156,15 @@ async function createWorkspaceTerminal() {
 async function completeTodo(todoId) {
   try {
     applyState(await CompleteTodo(todoId))
+    await activateActiveTerminal()
+  } catch (error) {
+    showError(error)
+  }
+}
+
+async function retryTodoLifecycleScript(todoId, phase) {
+  try {
+    applyState(await RetryTodoLifecycleScript(todoId, phase))
     await activateActiveTerminal()
   } catch (error) {
     showError(error)
@@ -1447,6 +1523,16 @@ function cloneTodoInitializationFiles(files) {
   }))
 }
 
+function cloneTodoLifecycleScripts(scripts = []) {
+  return scripts.map((script) => ({
+    name: script.name || '',
+    description: script.description || '',
+    initScript: script.initScript || '',
+    completeScript: script.completeScript || '',
+    defaultSelected: script.defaultSelected === true
+  }))
+}
+
 function addTodoInitializationFile() {
   initializationFileManagement.files.push({
     name: '',
@@ -1489,6 +1575,44 @@ function selectedTodoInitializationFileSnapshots(files) {
       fileName: (file.fileName || '').trim(),
       content: file.content || ''
     }))
+}
+
+function selectedTodoLifecycleScriptSnapshot(script) {
+  if (!script) {
+    return null
+  }
+  const snapshot = {
+    name: (script.name || '').trim(),
+    description: (script.description || '').trim(),
+    initScript: (script.initScript || '').trim(),
+    completeScript: (script.completeScript || '').trim()
+  }
+  if (!snapshot.name || (!snapshot.initScript && !snapshot.completeScript)) {
+    return null
+  }
+  return snapshot
+}
+
+function lifecycleScriptOptionLabel(script) {
+  if (!script) {
+    return '不选择脚本'
+  }
+  const name = (script.name || '').trim() || '未命名脚本'
+  const description = (script.description || '').trim()
+  return description ? `${name} - ${description}` : name
+}
+
+function toggleTodoFormLifecycleScriptMenu() {
+  todoForm.lifecycleScriptMenuOpen = !todoForm.lifecycleScriptMenuOpen
+}
+
+function closeTodoFormLifecycleScriptMenu() {
+  todoForm.lifecycleScriptMenuOpen = false
+}
+
+function selectTodoFormLifecycleScript(index) {
+  todoForm.selectedLifecycleScriptIndex = index === '' ? '' : String(index)
+  closeTodoFormLifecycleScriptMenu()
 }
 
 async function uploadTodoInitializationFile(index, event) {
@@ -1541,6 +1665,87 @@ async function saveTodoInitializationFileManagement() {
     initializationFileManagement.error = errorMessageFrom(error)
   } finally {
     initializationFileManagement.saving = false
+  }
+}
+
+function addTodoLifecycleScript() {
+  lifecycleScriptManagement.scripts.push({
+    name: '',
+    description: '',
+    initScript: '',
+    completeScript: '',
+    defaultSelected: false
+  })
+}
+
+function removeTodoLifecycleScript(index) {
+  lifecycleScriptManagement.scripts.splice(index, 1)
+}
+
+function moveTodoLifecycleScript(index, direction) {
+  const nextIndex = index + direction
+  if (nextIndex < 0 || nextIndex >= lifecycleScriptManagement.scripts.length) {
+    return
+  }
+  const [script] = lifecycleScriptManagement.scripts.splice(index, 1)
+  lifecycleScriptManagement.scripts.splice(nextIndex, 0, script)
+}
+
+function setTodoLifecycleScriptDefault(index, selected) {
+  if (!lifecycleScriptManagement.scripts[index]) {
+    return
+  }
+  if (!selected) {
+    lifecycleScriptManagement.scripts[index].defaultSelected = false
+    return
+  }
+  lifecycleScriptManagement.scripts.forEach((script, scriptIndex) => {
+    script.defaultSelected = scriptIndex === index
+  })
+}
+
+function normalizedTodoLifecycleScripts() {
+  return lifecycleScriptManagement.scripts.map((script) => ({
+    name: (script.name || '').trim(),
+    description: (script.description || '').trim(),
+    initScript: (script.initScript || '').trim(),
+    completeScript: (script.completeScript || '').trim(),
+    defaultSelected: script.defaultSelected === true
+  }))
+}
+
+async function openTodoLifecycleScriptManagement() {
+  closeGlobalManagementMenu()
+  closeTerminalMenu()
+  closeTerminalSettings()
+  lifecycleScriptManagement.visible = true
+  lifecycleScriptManagement.loading = true
+  lifecycleScriptManagement.error = ''
+  lifecycleScriptManagement.scripts = []
+  try {
+    lifecycleScriptManagement.scripts = cloneTodoLifecycleScripts(await LoadTodoLifecycleScripts())
+  } catch (error) {
+    lifecycleScriptManagement.error = errorMessageFrom(error)
+  } finally {
+    lifecycleScriptManagement.loading = false
+  }
+}
+
+function closeTodoLifecycleScriptManagement() {
+  lifecycleScriptManagement.visible = false
+  lifecycleScriptManagement.error = ''
+}
+
+async function saveTodoLifecycleScriptManagement() {
+  lifecycleScriptManagement.saving = true
+  lifecycleScriptManagement.error = ''
+  try {
+    await SaveTodoLifecycleScripts(normalizedTodoLifecycleScripts())
+    closeTodoLifecycleScriptManagement()
+  } catch (error) {
+    lifecycleScriptManagement.error = errorMessageFrom(error)
+  } finally {
+    lifecycleScriptManagement.saving = false
   }
 }
 
@@ -2578,6 +2783,7 @@ function clearToastTimer() {
       :has-workspace="hasWorkspace"
       :todo-view="currentTodoView"
       :completed-merge-statuses="completedMergeStatuses"
+      :lifecycle-script-statuses="lifecycleScriptStatuses"
       @create-project="createProject"
       @import-projects="importProjectsFromParentDirectory"
       @select-project="selectProject"
@@ -2589,6 +2795,7 @@ function clearToastTimer() {
       @remove-todo-project="removeTodoProject"
       @change-todo-status="changeTodoStatus"
       @complete-todo="completeTodo"
+      @retry-todo-lifecycle-script="retryTodoLifecycleScript"
       @copy-todo-description="copyTodoDescription"
       @delete-todo="deleteTodo"
       @delete-completed-todos="deleteCompletedTodos"
@@ -2753,6 +2960,14 @@ function clearToastTimer() {
               >
                 <FileText :size="14" />
                 <span>文件管理</span>
+              </button>
+              <button
+                type="button"
+                data-testid="global-script-management"
+                @click="openTodoLifecycleScriptManagement"
+              >
+                <FileText :size="14" />
+                <span>脚本管理</span>
               </button>
             </div>
           </div>
@@ -2973,6 +3188,57 @@ function clearToastTimer() {
                   <small>{{ file.description }}</small>
                 </span>
               </label>
+            </div>
+          </div>
+
+          <div v-if="todoForm.lifecycleScripts.length" class="settings-field">
+            <span class="settings-label">
+              Lifecycle script
+              <span class="field-optional">Optional</span>
+            </span>
+            <div class="todo-lifecycle-script-dropdown" @click.stop>
+              <button
+                type="button"
+                class="todo-text-input todo-lifecycle-script-select"
+                data-testid="todo-lifecycle-script-select"
+                aria-haspopup="listbox"
+                :aria-expanded="todoForm.lifecycleScriptMenuOpen"
+                @click="toggleTodoFormLifecycleScriptMenu"
+                @keydown.escape.stop.prevent="closeTodoFormLifecycleScriptMenu"
+              >
+                <span>{{ selectedTodoFormLifecycleScriptLabel }}</span>
+                <ChevronDown :size="14" />
+              </button>
+              <div
+                v-if="todoForm.lifecycleScriptMenuOpen"
+                class="todo-lifecycle-script-menu"
+                data-testid="todo-lifecycle-script-menu"
+                role="listbox"
+              >
+                <button
+                  type="button"
+                  class="todo-lifecycle-script-option"
+                  data-testid="todo-lifecycle-script-option-none"
+                  role="option"
+                  :aria-selected="todoForm.selectedLifecycleScriptIndex === ''"
+                  @click="selectTodoFormLifecycleScript('')"
+                >
+                  不选择脚本
+                </button>
+                <button
+                  v-for="script in todoFormLifecycleScriptOptions"
+                  :key="script.index"
+                  type="button"
+                  class="todo-lifecycle-script-option"
+                  :class="{ selected: todoForm.selectedLifecycleScriptIndex === String(script.index) }"
+                  :data-testid="`todo-lifecycle-script-option-${script.index}`"
+                  role="option"
+                  :aria-selected="todoForm.selectedLifecycleScriptIndex === String(script.index)"
+                  @click="selectTodoFormLifecycleScript(script.index)"
+                >
+                  {{ lifecycleScriptOptionLabel(script) }}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -3973,6 +4239,155 @@ function clearToastTimer() {
             data-testid="todo-initialization-file-management-save"
             :disabled="initializationFileManagement.saving || initializationFileManagement.loading"
             @click="saveTodoInitializationFileManagement"
+          >
+            Save
+          </button>
+        </footer>
+      </section>
+    </div>
+
+    <div
+      v-if="lifecycleScriptManagement.visible"
+      class="settings-overlay"
+      @click="closeTodoLifecycleScriptManagement"
+    >
+      <section
+        class="settings-dialog lifecycle-script-management-dialog"
+        data-testid="todo-lifecycle-script-management-dialog"
+        @click.stop
+      >
+        <header class="settings-header">
+          <div>
+            <h2>脚本管理</h2>
+            <p>TODO lifecycle scripts</p>
+          </div>
+          <button
+            type="button"
+            class="icon-button"
+            title="Close script management"
+            @click="closeTodoLifecycleScriptManagement"
+          >
+            <X :size="16" />
+          </button>
+        </header>
+
+        <div v-if="lifecycleScriptManagement.loading" class="settings-loading">Loading</div>
+        <div v-else class="settings-body lifecycle-script-management-body">
+          <div class="launch-profile-settings" data-testid="todo-lifecycle-scripts-settings">
+            <div class="launch-profile-header">
+              <span class="settings-label">Scripts</span>
+              <button
+                type="button"
+                class="icon-button"
+                data-testid="todo-lifecycle-script-add"
+                title="Add lifecycle script"
+                @click="addTodoLifecycleScript"
+              >
+                <Plus :size="14" />
+              </button>
+            </div>
+            <div
+              v-if="!lifecycleScriptManagement.scripts.length"
+              class="initialization-file-empty"
+              data-testid="todo-lifecycle-script-empty"
+            >
+              No scripts
+            </div>
+            <div
+              v-for="(script, index) in lifecycleScriptManagement.scripts"
+              :key="index"
+              class="lifecycle-script-row"
+              :data-testid="`todo-lifecycle-script-setting-${index}`"
+            >
+              <label
+                class="initialization-file-default"
+                :title="script.defaultSelected ? 'Selected by default' : 'Optional'"
+              >
+                <input
+                  :checked="script.defaultSelected"
+                  type="checkbox"
+                  :data-testid="`todo-lifecycle-script-default-${index}`"
+                  @change="setTodoLifecycleScriptDefault(index, $event.target.checked)"
+                />
+                <span>默认</span>
+              </label>
+              <input
+                v-model="script.name"
+                class="initialization-file-name-input"
+                type="text"
+                :data-testid="`todo-lifecycle-script-name-${index}`"
+                placeholder="显示名称"
+              />
+              <input
+                v-model="script.description"
+                class="initialization-file-description-input"
+                type="text"
+                :data-testid="`todo-lifecycle-script-description-${index}`"
+                placeholder="描述"
+              />
+              <textarea
+                v-model="script.initScript"
+                class="lifecycle-script-textarea"
+                rows="3"
+                :data-testid="`todo-lifecycle-script-init-${index}`"
+                placeholder="初始化脚本"
+              ></textarea>
+              <textarea
+                v-model="script.completeScript"
+                class="lifecycle-script-textarea"
+                rows="3"
+                :data-testid="`todo-lifecycle-script-complete-${index}`"
+                placeholder="完成脚本"
+              ></textarea>
+              <button
+                type="button"
+                class="icon-button initialization-file-move-up"
+                :data-testid="`todo-lifecycle-script-up-${index}`"
+                title="Move up"
+                :disabled="index === 0"
+                @click="moveTodoLifecycleScript(index, -1)"
+              >
+                <ChevronUp :size="14" />
+              </button>
+              <button
+                type="button"
+                class="icon-button initialization-file-move-down"
+                :data-testid="`todo-lifecycle-script-down-${index}`"
+                title="Move down"
+                :disabled="index === lifecycleScriptManagement.scripts.length - 1"
+                @click="moveTodoLifecycleScript(index, 1)"
+              >
+                <ChevronDown :size="14" />
+              </button>
+              <button
+                type="button"
+                class="icon-button initialization-file-remove"
+                :data-testid="`todo-lifecycle-script-remove-${index}`"
+                title="Remove lifecycle script"
+                @click="removeTodoLifecycleScript(index)"
+              >
+                <Trash2 :size="14" />
+              </button>
+            </div>
+          </div>
+
+          <div
+            v-if="lifecycleScriptManagement.error"
+            class="settings-error"
+            data-testid="todo-lifecycle-script-management-error"
+          >
+            {{ lifecycleScriptManagement.error }}
+          </div>
+        </div>
+
+        <footer class="settings-actions">
+          <button type="button" class="toolbar-button" @click="closeTodoLifecycleScriptManagement">Cancel</button>
+          <button
+            type="button"
+            class="toolbar-button primary"
+            data-testid="todo-lifecycle-script-management-save"
+            :disabled="lifecycleScriptManagement.saving || lifecycleScriptManagement.loading"
+            @click="saveTodoLifecycleScriptManagement"
           >
             Save
           </button>

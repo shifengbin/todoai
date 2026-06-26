@@ -150,6 +150,10 @@ export function LoadTodoInitializationFiles() {
   return window['go']['main']['App']['LoadTodoInitializationFiles']();
 }
 
+export function LoadTodoLifecycleScripts() {
+  return window['go']['main']['App']['LoadTodoLifecycleScripts']();
+}
+
 export function LoadTodoProjectUIState() {
   return window['go']['main']['App']['LoadTodoProjectUIState']();
 }
@@ -186,6 +190,10 @@ export function ResizeTerminal(arg1, arg2, arg3) {
   return window['go']['main']['App']['ResizeTerminal'](arg1, arg2, arg3);
 }
 
+export function RetryTodoLifecycleScript(arg1, arg2) {
+  return window['go']['main']['App']['RetryTodoLifecycleScript'](arg1, arg2);
+}
+
 export function SaveTerminalLaunchProfiles(arg1) {
   return window['go']['main']['App']['SaveTerminalLaunchProfiles'](arg1);
 }
@@ -200,6 +208,10 @@ export function SaveTerminalTheme(arg1) {
 
 export function SaveTodoInitializationFiles(arg1) {
   return window['go']['main']['App']['SaveTodoInitializationFiles'](arg1);
+}
+
+export function SaveTodoLifecycleScripts(arg1) {
+  return window['go']['main']['App']['SaveTodoLifecycleScripts'](arg1);
 }
 
 export function SaveTodoProjectUIState(arg1, arg2) {

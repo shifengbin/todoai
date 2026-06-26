@@ -30,6 +30,8 @@ type App struct {
 	projects                      *ProjectManager
 	projectConfigPath             string
 	globalProjectCandidatesPath   string
+	lifecycleScripts              *TodoLifecycleScriptExecutor
+	lifecycleScriptRunner         todoLifecycleScriptRunner
 	shells                        *ShellSessionManager
 	settings                      *SettingsManager
 	history                       *TerminalHistoryStore
@@ -45,6 +47,7 @@ type App struct {
 	claudeStatusWatcher           *ClaudeStatusWatcher
 	claudeStatusStop              chan struct{}
 	claudeStatusStopOnce          sync.Once
+	claudeStatusHookWG            sync.WaitGroup
 	terminalAgentStatusEmitter    func(TerminalAgentStatusEvent)
 	activeTerminalID              string
 	initialWorkspaceClosed        bool
@@ -77,16 +80,17 @@ func NewAppWithConfigAndShellStarter(configPath string, starter ShellStarter, op
 			configPath,
 			WithGlobalProjectCandidatesPath(defaultGlobalProjectCandidatesPath(configPath)),
 		),
-		settings:           NewSettingsManager(defaultSettingsConfigPath(configPath)),
-		history:            historyStore,
-		todoProjectUIState: NewTodoProjectUIStateStore(configDir),
-		starter:            starter,
-		gitStatus:          queryGitStatus,
-		gitBranches:        queryGitBranches,
-		gitInit:            initializeGitRepository,
-		worktreePreparer:   NewGitWorktreeService(),
-		gitBranchMerged:    queryGitBranchMerged,
-		claudeStatusDir:    claudeStatusDirectory(),
+		settings:              NewSettingsManager(defaultSettingsConfigPath(configPath)),
+		history:               historyStore,
+		todoProjectUIState:    NewTodoProjectUIStateStore(configDir),
+		starter:               starter,
+		gitStatus:             queryGitStatus,
+		gitBranches:           queryGitBranches,
+		gitInit:               initializeGitRepository,
+		worktreePreparer:      NewGitWorktreeService(),
+		gitBranchMerged:       queryGitBranchMerged,
+		claudeStatusDir:       claudeStatusDirectory(),
+		lifecycleScriptRunner: runTodoLifecycleScriptCommand,
 	}
 	var shellOpts []ShellSessionManagerOption
 	for _, opt := range opts {
@@ -98,6 +102,10 @@ func NewAppWithConfigAndShellStarter(configPath string, starter ShellStarter, op
 		}
 	}
 	app.shellOpts = append([]ShellSessionManagerOption{}, shellOpts...)
+	app.lifecycleScripts = NewTodoLifecycleScriptExecutor(
+		app.lifecycleScriptRunner,
+		WithTodoLifecycleScriptStatusHandler(app.handleTodoLifecycleScriptStatus),
+	)
 	if !app.initialWorkspaceClosed {
 		workspace := Workspace{
 			Name:      filepath.Base(configDir),
@@ -120,6 +128,14 @@ func WithInitialWorkspaceClosed() AppOption {
 func WithRestoreLastWorkspaceOnStartup() AppOption {
 	return func(app *App) {
 		app.restoreLastWorkspaceOnStartup = true
+	}
+}
+
+func WithTodoLifecycleScriptRunner(runner todoLifecycleScriptRunner) AppOption {
+	return func(app *App) {
+		if runner != nil {
+			app.lifecycleScriptRunner = runner
+		}
 	}
 }
 
@@ -163,7 +179,11 @@ func (a *App) startup(ctx context.Context) {
 		a.restoreLastWorkspace(state)
 	}
 	a.startClaudeStatusWatcher()
-	go a.ensureClaudeStatusHooksForActiveWorkspace()
+	a.claudeStatusHookWG.Add(1)
+	go func() {
+		defer a.claudeStatusHookWG.Done()
+		a.ensureClaudeStatusHooksForActiveWorkspace()
+	}()
 }
 
 func (a *App) restoreLastWorkspace(state WorkspaceState) {
@@ -183,6 +203,7 @@ func (a *App) restoreLastWorkspace(state WorkspaceState) {
 
 func (a *App) shutdown(ctx context.Context) {
 	a.stopClaudeStatusWatcher()
+	a.claudeStatusHookWG.Wait()
 	a.shells.Shutdown()
 }
 
@@ -826,6 +847,20 @@ func (a *App) CompleteTodo(todoID string) (ProjectState, error) {
 	if !a.hasWorkspace() {
 		return a.currentProjectStateWithError(ErrWorkspaceRequired)
 	}
+	workspacePath, state, todo, ok := a.loadTodoForWorkspace(todoID)
+	if !ok || todo.Status != TodoStatusInProgress {
+		return ProjectState{}, os.ErrNotExist
+	}
+	if todo.LifecycleScript != nil && strings.TrimSpace(todo.LifecycleScript.CompleteScript) != "" {
+		if _, err := a.startTodoLifecycleScript(todo, workspacePath, TodoLifecycleScriptPhaseComplete); err != nil {
+			return ProjectState{}, err
+		}
+		return a.withShellState(state), nil
+	}
+	return a.completeTodoNow(todoID)
+}
+
+func (a *App) completeTodoNow(todoID string) (ProjectState, error) {
 	state, err := a.projects.CompleteTodo(todoID)
 	if err != nil {
 		return ProjectState{}, err
@@ -835,6 +870,7 @@ func (a *App) CompleteTodo(todoID string) (ProjectState, error) {
 	if err != nil {
 		return ProjectState{}, err
 	}
+	a.lifecycleScripts.ClearTodo(todoID)
 	return a.withShellState(state), nil
 }
 
@@ -852,6 +888,7 @@ func (a *App) DeleteTodo(todoID string) (ProjectState, error) {
 		return ProjectState{}, err
 	}
 	a.shells.DeleteTodoTerminals(todoID)
+	a.lifecycleScripts.ClearTodo(todoID)
 	_ = a.deleteTodoProjectUIState(removedTodoProjectIDs)
 	return a.withShellState(state), nil
 }
@@ -925,8 +962,59 @@ func (a *App) ChangeTodoStatus(todoID string, status string) (ProjectState, erro
 		if err != nil {
 			return ProjectState{}, err
 		}
+		workspacePath := a.workspacePathOrEmpty()
+		if todo, ok := openTodoByID(state.Todos, todoID); ok && todo.LifecycleScript != nil && strings.TrimSpace(todo.LifecycleScript.InitScript) != "" {
+			if _, err := a.startTodoLifecycleScript(todo, workspacePath, TodoLifecycleScriptPhaseInit); err != nil {
+				return ProjectState{}, err
+			}
+		}
 	}
 	return a.withShellState(state), nil
+}
+
+func (a *App) RetryTodoLifecycleScript(todoID string, phase string) (ProjectState, error) {
+	if !a.hasWorkspace() {
+		return a.currentProjectStateWithError(ErrWorkspaceRequired)
+	}
+	workspacePath, state, todo, ok := a.loadTodoForWorkspace(todoID)
+	if !ok {
+		return ProjectState{}, os.ErrNotExist
+	}
+	if _, err := a.startTodoLifecycleScript(todo, workspacePath, phase); err != nil {
+		return ProjectState{}, err
+	}
+	return a.withShellState(state), nil
+}
+
+func (a *App) startTodoLifecycleScript(todo Todo, workspacePath string, phase string) (TodoLifecycleScriptStatus, error) {
+	if todo.LifecycleScript == nil {
+		return TodoLifecycleScriptStatus{}, errors.New("todo has no lifecycle script")
+	}
+	taskDir, err := a.ensureTaskWorkspaceDir(todo, workspacePath)
+	if err != nil {
+		return TodoLifecycleScriptStatus{}, err
+	}
+	script := ""
+	switch phase {
+	case TodoLifecycleScriptPhaseInit:
+		script = todo.LifecycleScript.InitScript
+	case TodoLifecycleScriptPhaseComplete:
+		script = todo.LifecycleScript.CompleteScript
+	default:
+		return TodoLifecycleScriptStatus{}, errors.New("lifecycle script phase is invalid")
+	}
+	if strings.TrimSpace(script) == "" {
+		return TodoLifecycleScriptStatus{}, errors.New("lifecycle script is required")
+	}
+	status, _, err := a.lifecycleScripts.Start(context.Background(), TodoLifecycleScriptRunRequest{
+		TodoID:     todo.ID,
+		Phase:      phase,
+		ScriptName: todo.LifecycleScript.Name,
+		Script:     script,
+		WorkingDir: taskDir,
+		ShellPath:  a.settings.ResolveShellPath(),
+	})
+	return status, err
 }
 
 func (a *App) StartShell(terminalID string, cols int, rows int) (ShellStatus, error) {
@@ -1099,6 +1187,18 @@ func (a *App) SaveTodoInitializationFiles(files []TodoInitializationFileTemplate
 	return a.settings.SaveTodoInitializationFiles(files)
 }
 
+func (a *App) LoadTodoLifecycleScripts() ([]TodoLifecycleScriptTemplate, error) {
+	state, err := a.settings.Load()
+	if err != nil {
+		return nil, err
+	}
+	return state.TodoLifecycleScripts, nil
+}
+
+func (a *App) SaveTodoLifecycleScripts(scripts []TodoLifecycleScriptTemplate) (TerminalSettingsState, error) {
+	return a.settings.SaveTodoLifecycleScripts(scripts)
+}
+
 func (a *App) DetectTerminalShell() (TerminalShellSetting, error) {
 	return a.settings.DetectShell()
 }
@@ -1130,6 +1230,22 @@ func (a *App) emitWorkspaceRecent() {
 func (a *App) emitTerminalCommandState(event TerminalCommandStateEvent) {
 	if a.ctx != nil {
 		wailsruntime.EventsEmit(a.ctx, "terminal-command-state", event)
+	}
+}
+
+func (a *App) handleTodoLifecycleScriptStatus(status TodoLifecycleScriptStatus) {
+	a.emitTodoLifecycleScriptStatus(status)
+	if status.Phase == TodoLifecycleScriptPhaseComplete && status.Status == "" {
+		state, err := a.completeTodoNow(status.TodoID)
+		if err == nil {
+			a.emitWorkspaceState(state)
+		}
+	}
+}
+
+func (a *App) emitTodoLifecycleScriptStatus(status TodoLifecycleScriptStatus) {
+	if a.ctx != nil {
+		wailsruntime.EventsEmit(a.ctx, "todo-lifecycle-script-status", status)
 	}
 }
 
@@ -1265,6 +1381,9 @@ func (a *App) withShellState(state ProjectState) ProjectState {
 		state.RecentWorkspaces = workspaceState.RecentWorkspaces
 	}
 	state.Terminals = a.shells.Terminals()
+	if a.lifecycleScripts != nil {
+		state.LifecycleScriptStatuses = a.lifecycleScripts.Statuses()
+	}
 	if a.activeTerminalID != "" && terminalExists(state.Terminals, a.activeTerminalID) {
 		state.ActiveTerminalID = a.activeTerminalID
 		return state
@@ -1407,13 +1526,14 @@ func (a *App) emptyProjectState(workspaceState WorkspaceState) ProjectState {
 		}
 	}
 	return ProjectState{
-		Version:          projectConfigVersion,
-		CurrentWorkspace: workspaceState.CurrentWorkspace,
-		RecentWorkspaces: workspaceState.RecentWorkspaces,
-		Projects:         projects,
-		Todos:            []Todo{},
-		TodoProjects:     []TodoProject{},
-		Terminals:        []ProjectTerminal{},
+		Version:                 projectConfigVersion,
+		CurrentWorkspace:        workspaceState.CurrentWorkspace,
+		RecentWorkspaces:        workspaceState.RecentWorkspaces,
+		Projects:                projects,
+		Todos:                   []Todo{},
+		TodoProjects:            []TodoProject{},
+		Terminals:               []ProjectTerminal{},
+		LifecycleScriptStatuses: []TodoLifecycleScriptStatus{},
 	}
 }
 

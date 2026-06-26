@@ -864,6 +864,53 @@ button {
     color: var(--delete-hover-text);
 }
 
+.todo-lifecycle-statuses {
+    display: grid;
+    gap: 5px;
+    margin: 0 8px 7px 42px;
+}
+
+.todo-lifecycle-status {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    background: var(--surface-bg);
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.todo-lifecycle-status-failed {
+    border-color: var(--chip-warning-border);
+    background: var(--chip-warning-bg);
+    color: var(--warning-text);
+}
+
+.todo-lifecycle-status-copy {
+    display: grid;
+    min-width: 0;
+    flex: 1;
+    gap: 2px;
+}
+
+.todo-lifecycle-status-copy strong {
+    color: inherit;
+    font-size: 12px;
+}
+
+.todo-lifecycle-status-copy small {
+    overflow: hidden;
+    color: var(--text-secondary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.todo-lifecycle-status .todo-action-confirm-button {
+    min-width: 64px;
+}
+
 .todo-context-menu {
     position: fixed;
     z-index: 25;
@@ -2303,6 +2350,68 @@ button {
     outline: none;
 }
 
+.todo-lifecycle-script-dropdown {
+    position: relative;
+    min-width: 0;
+}
+
+.todo-lifecycle-script-select {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    background: var(--surface-bg);
+    color: var(--text);
+    cursor: pointer;
+    text-align: left;
+}
+
+.todo-lifecycle-script-select span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.todo-lifecycle-script-menu {
+    position: absolute;
+    z-index: 40;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    display: grid;
+    max-height: 220px;
+    overflow: auto;
+    padding: 4px;
+    border: 1px solid var(--control-border);
+    border-radius: 6px;
+    background: var(--surface-bg);
+    box-shadow: 0 12px 24px var(--shadow);
+}
+
+.todo-lifecycle-script-option {
+    min-width: 0;
+    min-height: 30px;
+    padding: 6px 8px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    font: inherit;
+    font-size: 13px;
+    overflow: hidden;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.todo-lifecycle-script-option:hover,
+.todo-lifecycle-script-option.selected {
+    background: var(--row-hover);
+    color: var(--text-strong);
+}
+
 .todo-selected-project-tags {
     display: flex;
     min-width: 0;
@@ -2626,7 +2735,15 @@ button {
     width: min(960px, calc(100vw - 40px));
 }
 
+.lifecycle-script-management-dialog {
+    width: min(1040px, calc(100vw - 40px));
+}
+
 .initialization-file-management-body {
+    gap: 10px;
+}
+
+.lifecycle-script-management-body {
     gap: 10px;
 }
 
@@ -2680,6 +2797,42 @@ button {
     outline: none;
 }
 
+.lifecycle-script-row {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: 64px minmax(110px, 0.8fr) minmax(140px, 1fr) minmax(180px, 1.2fr) minmax(180px, 1.2fr) 32px 32px 32px;
+    gap: 6px;
+    align-items: start;
+}
+
+.lifecycle-script-row input[type="text"],
+.lifecycle-script-textarea {
+    min-width: 0;
+    padding: 0 9px;
+    border: 1px solid var(--control-border);
+    background: var(--surface-bg);
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+}
+
+.lifecycle-script-row input[type="text"] {
+    height: 32px;
+}
+
+.lifecycle-script-textarea {
+    min-height: 72px;
+    padding-top: 7px;
+    padding-bottom: 7px;
+    resize: vertical;
+}
+
+.lifecycle-script-row input[type="text"]:focus,
+.lifecycle-script-textarea:focus {
+    border-color: var(--accent);
+    outline: none;
+}
+
 .initialization-file-upload-cell {
     display: grid;
     min-width: 0;
@@ -2704,22 +2857,31 @@ button {
 }
 
 @media (max-width: 920px) {
-    .initialization-file-row {
+    .initialization-file-row,
+    .lifecycle-script-row {
         grid-template-columns: 64px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.4fr) 32px 32px 32px;
+    }
+
+    .lifecycle-script-textarea {
+        grid-column: 1 / -1;
     }
 }
 
 @media (max-width: 720px) {
-    .initialization-file-row {
+    .initialization-file-row,
+    .lifecycle-script-row {
         grid-template-columns: 64px minmax(0, 1fr) 32px 32px 32px;
     }
 
-    .initialization-file-name-input {
+    .initialization-file-name-input,
+    .lifecycle-script-row .initialization-file-name-input {
         grid-column: 2 / 3;
     }
 
     .initialization-file-description-input,
-    .initialization-file-upload-cell {
+    .initialization-file-upload-cell,
+    .lifecycle-script-row .initialization-file-description-input,
+    .lifecycle-script-textarea {
         grid-column: 1 / -1;
     }
 

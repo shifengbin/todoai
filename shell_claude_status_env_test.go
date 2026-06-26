@@ -23,6 +23,8 @@ func TestStartTerminalInjectsClaudeStatusDir(t *testing.T) {
 }
 
 func TestStartTerminalOmitsClaudeStatusDirWhenUnset(t *testing.T) {
+	t.Setenv("TODOAI_STATUS_DIR", "/tmp/inherited-status-dir")
+
 	starter := newFakeShellStarter()
 	manager := NewShellSessionManager(starter.Start, ShellSessionCallbacks{})
 	project := Project{ID: "project-a", Path: t.TempDir(), Available: true}

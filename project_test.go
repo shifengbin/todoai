@@ -494,6 +494,44 @@ func TestProjectManagerCreatesTodoWithDetailsAndOptionalProjects(t *testing.T) {
 	}
 }
 
+func TestProjectManagerCreatesTodoWithLifecycleScriptSnapshot(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	manager := NewProjectManager(
+		configPath,
+		WithProjectIDGenerator(sequenceIDs("todo-a")),
+	)
+
+	state, err := manager.CreateTodo(CreateTodoRequest{
+		Title: "修复登录问题",
+		LifecycleScript: &TodoLifecycleScriptSnapshot{
+			Name:           "Node setup",
+			Description:    "安装依赖",
+			InitScript:     "npm install",
+			CompleteScript: "npm test",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+
+	if len(state.Todos) != 1 {
+		t.Fatalf("Todos length = %d, want 1", len(state.Todos))
+	}
+	assertTodoLifecycleScriptSnapshot(t, state.Todos[0].LifecycleScript, &TodoLifecycleScriptSnapshot{
+		Name:           "Node setup",
+		Description:    "安装依赖",
+		InitScript:     "npm install",
+		CompleteScript: "npm test",
+	})
+
+	reloaded := NewProjectManager(configPath)
+	persisted, err := reloaded.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	assertTodoLifecycleScriptSnapshot(t, persisted.Todos[0].LifecycleScript, state.Todos[0].LifecycleScript)
+}
+
 func TestProjectManagerCreatesTodoWithProjectBaseBranches(t *testing.T) {
 	projectDir := t.TempDir()
 	otherProjectDir := t.TempDir()
@@ -1904,6 +1942,19 @@ func assertTodoInitializationFileSnapshots(t *testing.T, got []TodoInitializatio
 		if got[index] != want[index] {
 			t.Fatalf("InitializationFiles[%d] = %#v, want %#v", index, got[index], want[index])
 		}
+	}
+}
+
+func assertTodoLifecycleScriptSnapshot(t *testing.T, got *TodoLifecycleScriptSnapshot, want *TodoLifecycleScriptSnapshot) {
+	t.Helper()
+	if got == nil || want == nil {
+		if got != want {
+			t.Fatalf("LifecycleScript = %#v, want %#v", got, want)
+		}
+		return
+	}
+	if *got != *want {
+		t.Fatalf("LifecycleScript = %#v, want %#v", *got, *want)
 	}
 }
 

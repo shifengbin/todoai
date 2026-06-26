@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -1069,6 +1070,182 @@ func TestAppChangesTodoStatusThroughPublicAPI(t *testing.T) {
 	}
 }
 
+func TestAppStartsTodoAndRunsInitializationLifecycleScriptAsynchronously(t *testing.T) {
+	requests := make(chan TodoLifecycleScriptRunRequest, 1)
+	release := make(chan struct{})
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+		WithTodoLifecycleScriptRunner(func(ctx context.Context, request TodoLifecycleScriptRunRequest) TodoLifecycleScriptRunResult {
+			requests <- request
+			select {
+			case <-release:
+				return TodoLifecycleScriptRunResult{}
+			case <-ctx.Done():
+				return TodoLifecycleScriptRunResult{Err: ctx.Err(), ExitCode: -1}
+			}
+		}),
+	)
+	defer close(release)
+
+	state, err := app.CreateTodo(CreateTodoRequest{
+		Title: "修复登录问题",
+		LifecycleScript: &TodoLifecycleScriptSnapshot{
+			Name:       "Node setup",
+			InitScript: "npm install",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	todoID := state.Todos[0].ID
+
+	state, err = app.ChangeTodoStatus(todoID, TodoStatusInProgress)
+	if err != nil {
+		t.Fatalf("ChangeTodoStatus() error = %v", err)
+	}
+
+	if state.Todos[0].Status != TodoStatusInProgress {
+		t.Fatalf("Status = %q, want in-progress", state.Todos[0].Status)
+	}
+	status := lifecycleScriptStatusByPhase(state.LifecycleScriptStatuses, todoID, TodoLifecycleScriptPhaseInit)
+	if status == nil || status.Status != TodoLifecycleScriptStatusRunning {
+		t.Fatalf("LifecycleScriptStatuses = %#v, want running init status", state.LifecycleScriptStatuses)
+	}
+	request := receiveLifecycleScriptRequest(t, requests)
+	if request.TodoID != todoID || request.Phase != TodoLifecycleScriptPhaseInit || request.Script != "npm install" {
+		t.Fatalf("request = %#v, want init script for todo", request)
+	}
+	if request.WorkingDir == "" || !strings.Contains(request.WorkingDir, string(os.PathSeparator)+"tasks"+string(os.PathSeparator)) {
+		t.Fatalf("WorkingDir = %q, want todo task workspace", request.WorkingDir)
+	}
+}
+
+func TestAppCompletionLifecycleScriptCompletesTodoAfterSuccess(t *testing.T) {
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+		WithTodoLifecycleScriptRunner(func(context.Context, TodoLifecycleScriptRunRequest) TodoLifecycleScriptRunResult {
+			return TodoLifecycleScriptRunResult{}
+		}),
+	)
+	state, err := app.CreateTodo(CreateTodoRequest{
+		Title: "修复登录问题",
+		LifecycleScript: &TodoLifecycleScriptSnapshot{
+			Name:           "Node setup",
+			CompleteScript: "npm test",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	todoID := state.Todos[0].ID
+	if _, err := app.ChangeTodoStatus(todoID, TodoStatusInProgress); err != nil {
+		t.Fatalf("ChangeTodoStatus() error = %v", err)
+	}
+
+	state, err = app.CompleteTodo(todoID)
+	if err != nil {
+		t.Fatalf("CompleteTodo() error = %v", err)
+	}
+	if todo := findTodo(state.Todos, todoID); todo == nil || todo.Status != TodoStatusInProgress {
+		t.Fatalf("todo after CompleteTodo = %#v, want still in-progress while script runs", todo)
+	}
+
+	state = waitForAppTodoStatus(t, app, todoID, TodoStatusCompleted)
+	if lifecycleScriptStatusByPhase(state.LifecycleScriptStatuses, todoID, TodoLifecycleScriptPhaseComplete) != nil {
+		t.Fatalf("LifecycleScriptStatuses = %#v, want completion status cleared", state.LifecycleScriptStatuses)
+	}
+}
+
+func TestAppFailedCompletionLifecycleScriptKeepsTodoRetryable(t *testing.T) {
+	attempts := 0
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+		WithTodoLifecycleScriptRunner(func(context.Context, TodoLifecycleScriptRunRequest) TodoLifecycleScriptRunResult {
+			attempts++
+			if attempts == 1 {
+				return TodoLifecycleScriptRunResult{Output: "lint failed", ExitCode: 2, Err: errors.New("exit status 2")}
+			}
+			return TodoLifecycleScriptRunResult{}
+		}),
+	)
+	state, err := app.CreateTodo(CreateTodoRequest{
+		Title: "修复登录问题",
+		LifecycleScript: &TodoLifecycleScriptSnapshot{
+			Name:           "Node setup",
+			CompleteScript: "npm test",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	todoID := state.Todos[0].ID
+	if _, err := app.ChangeTodoStatus(todoID, TodoStatusInProgress); err != nil {
+		t.Fatalf("ChangeTodoStatus() error = %v", err)
+	}
+	if _, err := app.CompleteTodo(todoID); err != nil {
+		t.Fatalf("CompleteTodo() error = %v", err)
+	}
+
+	state = waitForAppLifecycleScriptStatus(t, app, todoID, TodoLifecycleScriptPhaseComplete, TodoLifecycleScriptStatusFailed)
+	if todo := findTodo(state.Todos, todoID); todo == nil || todo.Status != TodoStatusInProgress {
+		t.Fatalf("todo after failed completion script = %#v, want in-progress", todo)
+	}
+	status := lifecycleScriptStatusByPhase(state.LifecycleScriptStatuses, todoID, TodoLifecycleScriptPhaseComplete)
+	if status == nil || status.ExitCode != 2 || status.OutputTail != "lint failed" {
+		t.Fatalf("completion status = %#v, want failed status with output", status)
+	}
+
+	if _, err := app.RetryTodoLifecycleScript(todoID, TodoLifecycleScriptPhaseComplete); err != nil {
+		t.Fatalf("RetryTodoLifecycleScript() error = %v", err)
+	}
+	state = waitForAppTodoStatus(t, app, todoID, TodoStatusCompleted)
+	if attempts != 2 {
+		t.Fatalf("attempts = %d, want 2", attempts)
+	}
+	if lifecycleScriptStatusByPhase(state.LifecycleScriptStatuses, todoID, TodoLifecycleScriptPhaseComplete) != nil {
+		t.Fatalf("LifecycleScriptStatuses = %#v, want status cleared after retry success", state.LifecycleScriptStatuses)
+	}
+}
+
+func TestAppDeleteTodoClearsLifecycleScriptStatus(t *testing.T) {
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+		WithTodoLifecycleScriptRunner(func(context.Context, TodoLifecycleScriptRunRequest) TodoLifecycleScriptRunResult {
+			return TodoLifecycleScriptRunResult{Output: "setup failed", ExitCode: 1, Err: errors.New("exit status 1")}
+		}),
+	)
+	state, err := app.CreateTodo(CreateTodoRequest{
+		Title: "修复登录问题",
+		LifecycleScript: &TodoLifecycleScriptSnapshot{
+			Name:       "Node setup",
+			InitScript: "npm install",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	todoID := state.Todos[0].ID
+	if _, err := app.ChangeTodoStatus(todoID, TodoStatusInProgress); err != nil {
+		t.Fatalf("ChangeTodoStatus() error = %v", err)
+	}
+	state = waitForAppLifecycleScriptStatus(t, app, todoID, TodoLifecycleScriptPhaseInit, TodoLifecycleScriptStatusFailed)
+	if lifecycleScriptStatusByPhase(state.LifecycleScriptStatuses, todoID, TodoLifecycleScriptPhaseInit) == nil {
+		t.Fatalf("LifecycleScriptStatuses = %#v, want failed init status before delete", state.LifecycleScriptStatuses)
+	}
+
+	state, err = app.DeleteTodo(todoID)
+	if err != nil {
+		t.Fatalf("DeleteTodo() error = %v", err)
+	}
+	if lifecycleScriptStatusByPhase(state.LifecycleScriptStatuses, todoID, TodoLifecycleScriptPhaseInit) != nil {
+		t.Fatalf("LifecycleScriptStatuses = %#v, want deleted todo status cleared", state.LifecycleScriptStatuses)
+	}
+}
+
 func TestAppAddsMultipleProjectsToExistingTodo(t *testing.T) {
 	projectDir := t.TempDir()
 	otherProjectDir := t.TempDir()
@@ -1790,6 +1967,29 @@ func TestAppSavesTodoInitializationFilesGlobally(t *testing.T) {
 	assertTodoInitializationFiles(t, loaded, files)
 }
 
+func TestAppSavesTodoLifecycleScriptsGlobally(t *testing.T) {
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	scripts := []TodoLifecycleScriptTemplate{
+		{Name: "Node setup", Description: "安装依赖", InitScript: "npm install", CompleteScript: "npm test", DefaultSelected: true},
+		{Name: "Cleanup", Description: "清理缓存", CompleteScript: "rm -rf tmp"},
+	}
+
+	state, err := app.SaveTodoLifecycleScripts(scripts)
+	if err != nil {
+		t.Fatalf("SaveTodoLifecycleScripts() error = %v", err)
+	}
+	assertTodoLifecycleScripts(t, state.TodoLifecycleScripts, scripts)
+
+	loaded, err := app.LoadTodoLifecycleScripts()
+	if err != nil {
+		t.Fatalf("LoadTodoLifecycleScripts() error = %v", err)
+	}
+	assertTodoLifecycleScripts(t, loaded, scripts)
+}
+
 func TestAppCreateTodoStoresInitializationFileSnapshots(t *testing.T) {
 	app := NewAppWithConfigAndShellStarter(
 		filepath.Join(t.TempDir(), "projects.json"),
@@ -1826,6 +2026,51 @@ func TestAppCreateTodoStoresInitializationFileSnapshots(t *testing.T) {
 	}
 	assertTodoInitializationFileSnapshots(t, reloaded.Todos[0].InitializationFiles, []TodoInitializationFileSnapshot{
 		{Name: "Agent Rules", Description: "任务执行约束", FileName: "AGENTS.md", Content: "旧内容"},
+	})
+}
+
+func TestAppCreateTodoStoresLifecycleScriptSnapshot(t *testing.T) {
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	initialScripts := []TodoLifecycleScriptTemplate{
+		{Name: "Node setup", Description: "安装依赖", InitScript: "npm install", CompleteScript: "npm test", DefaultSelected: true},
+	}
+	if _, err := app.SaveTodoLifecycleScripts(initialScripts); err != nil {
+		t.Fatalf("SaveTodoLifecycleScripts(initial) error = %v", err)
+	}
+
+	state, err := app.CreateTodo(CreateTodoRequest{
+		Title: "修复登录问题",
+		LifecycleScript: &TodoLifecycleScriptSnapshot{
+			Name:           initialScripts[0].Name,
+			Description:    initialScripts[0].Description,
+			InitScript:     initialScripts[0].InitScript,
+			CompleteScript: initialScripts[0].CompleteScript,
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	if _, err := app.SaveTodoLifecycleScripts([]TodoLifecycleScriptTemplate{
+		{Name: "Node setup", Description: "安装依赖", InitScript: "npm ci", CompleteScript: "npm run lint", DefaultSelected: true},
+	}); err != nil {
+		t.Fatalf("SaveTodoLifecycleScripts(updated) error = %v", err)
+	}
+
+	reloaded, err := app.ListProjects()
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	if len(state.Todos) != 1 || len(reloaded.Todos) != 1 {
+		t.Fatalf("todos = initial %#v reloaded %#v, want one todo", state.Todos, reloaded.Todos)
+	}
+	assertTodoLifecycleScriptSnapshot(t, reloaded.Todos[0].LifecycleScript, &TodoLifecycleScriptSnapshot{
+		Name:           "Node setup",
+		Description:    "安装依赖",
+		InitScript:     "npm install",
+		CompleteScript: "npm test",
 	})
 }
 
@@ -2654,4 +2899,62 @@ func findTerminalByID(terminals []ProjectTerminal, terminalID string) ProjectTer
 		}
 	}
 	return ProjectTerminal{}
+}
+
+func receiveLifecycleScriptRequest(t *testing.T, requests <-chan TodoLifecycleScriptRunRequest) TodoLifecycleScriptRunRequest {
+	t.Helper()
+	select {
+	case request := <-requests:
+		return request
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for lifecycle script request")
+		return TodoLifecycleScriptRunRequest{}
+	}
+}
+
+func waitForAppLifecycleScriptStatus(t *testing.T, app *App, todoID string, phase string, want string) ProjectState {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		state, err := app.ListProjects()
+		if err != nil {
+			t.Fatalf("ListProjects() error = %v", err)
+		}
+		status := lifecycleScriptStatusByPhase(state.LifecycleScriptStatuses, todoID, phase)
+		if status != nil && status.Status == want {
+			return state
+		}
+		time.Sleep(time.Millisecond)
+	}
+	state, _ := app.ListProjects()
+	t.Fatalf("LifecycleScriptStatuses = %#v, want %s for %s/%s", state.LifecycleScriptStatuses, want, todoID, phase)
+	return ProjectState{}
+}
+
+func waitForAppTodoStatus(t *testing.T, app *App, todoID string, want string) ProjectState {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		state, err := app.ListProjects()
+		if err != nil {
+			t.Fatalf("ListProjects() error = %v", err)
+		}
+		todo := findTodo(state.Todos, todoID)
+		if todo != nil && todo.Status == want {
+			return state
+		}
+		time.Sleep(time.Millisecond)
+	}
+	state, _ := app.ListProjects()
+	t.Fatalf("Todos = %#v, want todo %s status %s", state.Todos, todoID, want)
+	return ProjectState{}
+}
+
+func lifecycleScriptStatusByPhase(statuses []TodoLifecycleScriptStatus, todoID string, phase string) *TodoLifecycleScriptStatus {
+	for index := range statuses {
+		if statuses[index].TodoID == todoID && statuses[index].Phase == phase {
+			return &statuses[index]
+		}
+	}
+	return nil
 }

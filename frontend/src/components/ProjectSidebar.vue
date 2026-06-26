@@ -74,6 +74,10 @@ const props = defineProps({
   completedMergeStatuses: {
     type: Object,
     default: () => ({})
+  },
+  lifecycleScriptStatuses: {
+    type: Array,
+    default: () => []
   }
 })
 
@@ -90,6 +94,7 @@ const emit = defineEmits([
   'remove-todo-project',
   'change-todo-status',
   'complete-todo',
+  'retry-todo-lifecycle-script',
   'copy-todo-description',
   'delete-todo',
   'delete-completed-todos',
@@ -236,6 +241,20 @@ const taskTerminalsByTodo = computed(() => {
   return groups
 })
 
+const lifecycleStatusesByTodo = computed(() => {
+  const groups = new Map()
+  for (const status of props.lifecycleScriptStatuses) {
+    if (!status?.todoId || !status.status) {
+      continue
+    }
+    if (!groups.has(status.todoId)) {
+      groups.set(status.todoId, [])
+    }
+    groups.get(status.todoId).push(status)
+  }
+  return groups
+})
+
 function todoProjectsForTodo(todoId) {
   return todoProjectsByTodo.value.get(todoId) || []
 }
@@ -265,6 +284,30 @@ function taskTerminalsForTodo(todoId) {
 
 function hasTaskTerminals(todoId) {
   return taskTerminalsForTodo(todoId).length > 0
+}
+
+function lifecycleStatusesForTodo(todo) {
+  return lifecycleStatusesByTodo.value.get(todo.id) || []
+}
+
+function lifecycleScriptPhaseLabel(phase) {
+  return phase === 'complete' ? '完成脚本' : '初始化脚本'
+}
+
+function lifecycleScriptStatusLabel(status) {
+  const phaseLabel = lifecycleScriptPhaseLabel(status.phase)
+  if (status.status === 'failed') {
+    return `${phaseLabel}失败`
+  }
+  return `${phaseLabel}执行中`
+}
+
+function lifecycleScriptStatusMessage(status) {
+  return status.outputTail || status.message || ''
+}
+
+function retryLifecycleScript(todoId, phase) {
+  emit('retry-todo-lifecycle-script', todoId, phase)
 }
 
 function hasTodoProjectTerminals(todoProjectId) {
@@ -1524,6 +1567,38 @@ watch(
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+
+          <div
+            v-if="lifecycleStatusesForTodo(todo).length"
+            class="todo-lifecycle-statuses"
+            :data-testid="`todo-lifecycle-script-statuses-${todo.id}`"
+          >
+            <div
+              v-for="status in lifecycleStatusesForTodo(todo)"
+              :key="`${status.todoId}-${status.phase}`"
+              class="todo-lifecycle-status"
+              :class="`todo-lifecycle-status-${status.status}`"
+              :data-testid="`todo-lifecycle-script-status-${todo.id}-${status.phase}`"
+            >
+              <span class="terminal-activity" :class="status.status === 'failed' ? 'needs-ack' : 'busy'">
+                <TriangleAlert v-if="status.status === 'failed'" :size="13" aria-hidden="true" />
+                <LoaderCircle v-else :size="13" aria-hidden="true" />
+              </span>
+              <span class="todo-lifecycle-status-copy">
+                <strong>{{ lifecycleScriptStatusLabel(status) }}</strong>
+                <small v-if="lifecycleScriptStatusMessage(status)">{{ lifecycleScriptStatusMessage(status) }}</small>
+              </span>
+              <button
+                v-if="status.status === 'failed'"
+                type="button"
+                class="todo-action-confirm-button"
+                :data-testid="`retry-todo-lifecycle-script-${todo.id}-${status.phase}`"
+                @click.stop="retryLifecycleScript(todo.id, status.phase)"
+              >
+                Retry
+              </button>
             </div>
           </div>
 

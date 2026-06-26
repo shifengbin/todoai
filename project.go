@@ -60,6 +60,7 @@ type Todo struct {
 	ArchivedReason      string                           `json:"archivedReason,omitempty"`
 	WorkspaceDirName    string                           `json:"workspaceDirName,omitempty"`
 	InitializationFiles []TodoInitializationFileSnapshot `json:"initializationFiles,omitempty"`
+	LifecycleScript     *TodoLifecycleScriptSnapshot     `json:"lifecycleScript,omitempty"`
 	ProjectSnapshots    []TodoProjectSnapshot            `json:"projectSnapshots,omitempty"`
 	CreatedAt           string                           `json:"createdAt"`
 	StartedAt           string                           `json:"startedAt,omitempty"`
@@ -75,6 +76,7 @@ type CreateTodoRequest struct {
 	ProjectBranches     map[string]string                `json:"projectBranches,omitempty"`
 	Projects            []TodoProjectSelection           `json:"projects,omitempty"`
 	InitializationFiles []TodoInitializationFileSnapshot `json:"initializationFiles,omitempty"`
+	LifecycleScript     *TodoLifecycleScriptSnapshot     `json:"lifecycleScript,omitempty"`
 }
 
 type UpdateTodoRequest struct {
@@ -97,6 +99,13 @@ type TodoInitializationFileSnapshot struct {
 	Description string `json:"description,omitempty"`
 	FileName    string `json:"fileName"`
 	Content     string `json:"content"`
+}
+
+type TodoLifecycleScriptSnapshot struct {
+	Name           string `json:"name"`
+	Description    string `json:"description,omitempty"`
+	InitScript     string `json:"initScript,omitempty"`
+	CompleteScript string `json:"completeScript,omitempty"`
 }
 
 type TodoProject struct {
@@ -173,6 +182,7 @@ type ProjectState struct {
 	ActiveTodoProjectID      string                             `json:"activeTodoProjectId,omitempty"`
 	Terminals                []ProjectTerminal                  `json:"terminals,omitempty"`
 	ActiveTerminalID         string                             `json:"activeTerminalId,omitempty"`
+	LifecycleScriptStatuses  []TodoLifecycleScriptStatus        `json:"lifecycleScriptStatuses,omitempty"`
 	ImportSummary            *ProjectImportSummary              `json:"importSummary,omitempty"`
 }
 
@@ -383,6 +393,10 @@ func (manager *ProjectManager) CreateTodo(request CreateTodoRequest) (ProjectSta
 	if err != nil {
 		return ProjectState{}, err
 	}
+	lifecycleScript, err := normalizeTodoLifecycleScriptSnapshot(request.LifecycleScript)
+	if err != nil {
+		return ProjectState{}, err
+	}
 	projectSelections := normalizeProjectSelections(request.Projects, request.ProjectIDs, request.ProjectBranches)
 	projectIDs := projectIDsFromSelections(projectSelections)
 
@@ -404,6 +418,7 @@ func (manager *ProjectManager) CreateTodo(request CreateTodoRequest) (ProjectSta
 		Priority:            normalizedPriority,
 		Status:              TodoStatusNotStarted,
 		InitializationFiles: initializationFiles,
+		LifecycleScript:     lifecycleScript,
 		CreatedAt:           now,
 	}
 	state.Todos = append(state.Todos, todo)
@@ -1286,6 +1301,28 @@ func normalizeTodoInitializationFileSnapshots(files []TodoInitializationFileSnap
 		})
 	}
 	return normalized, nil
+}
+
+func normalizeTodoLifecycleScriptSnapshot(script *TodoLifecycleScriptSnapshot) (*TodoLifecycleScriptSnapshot, error) {
+	if script == nil {
+		return nil, nil
+	}
+	name := strings.TrimSpace(script.Name)
+	description := strings.TrimSpace(script.Description)
+	initScript := strings.TrimSpace(script.InitScript)
+	completeScript := strings.TrimSpace(script.CompleteScript)
+	if name == "" {
+		return nil, errors.New("lifecycle script name is required")
+	}
+	if initScript == "" && completeScript == "" {
+		return nil, errors.New("lifecycle script requires an initialization or completion script")
+	}
+	return &TodoLifecycleScriptSnapshot{
+		Name:           name,
+		Description:    description,
+		InitScript:     initScript,
+		CompleteScript: completeScript,
+	}, nil
 }
 
 func normalizeTodoWorkflowStatus(status string) string {
