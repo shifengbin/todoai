@@ -1513,7 +1513,7 @@ watch(
                 :aria-controls="`terminal-launch-menu-task-${todo.id}`"
                 @click.stop="toggleTaskTerminalLaunchMenu(todo.id, $event)"
               >
-                <Plus :size="14" />
+                <TerminalSquare :size="14" />
               </button>
               <div
                 v-if="isTerminalLaunchMenuOpen('task', todo.id)"
@@ -1786,7 +1786,7 @@ watch(
                     :aria-controls="`terminal-launch-menu-${todoProject.id}`"
                     @click.stop="toggleTerminalLaunchMenu(todoProject, $event)"
                   >
-                    <Plus :size="14" />
+                    <TerminalSquare :size="14" />
                   </button>
                   <div
                     v-if="isTerminalLaunchMenuOpen('project', todoProject.id)"

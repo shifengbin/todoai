@@ -121,6 +121,20 @@ describe('ProjectSidebar', () => {
     expect(wrapper.emitted('create-task-terminal')[0]).toEqual(['todo-a', { name: 'codex', command: 'codex', enabled: true }])
   })
 
+  it('uses terminal iconography for task and project terminal creation controls', async () => {
+    const wrapper = mountInProgressSidebar()
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+
+    const taskTerminalButton = wrapper.find('[data-testid="add-task-terminal-todo-a"]')
+    expect(taskTerminalButton.find('.lucide-square-terminal').exists()).toBe(true)
+    expect(taskTerminalButton.find('.lucide-plus').exists()).toBe(false)
+
+    const projectTerminalButton = wrapper.find('[data-testid="add-terminal-todo-project-a"]')
+    expect(projectTerminalButton.find('.lucide-square-terminal').exists()).toBe(true)
+    expect(projectTerminalButton.find('.lucide-plus').exists()).toBe(false)
+  })
+
   it('shows only Terminal when all custom launch profiles are disabled', async () => {
     const wrapper = mountInProgressSidebar({
       props: {

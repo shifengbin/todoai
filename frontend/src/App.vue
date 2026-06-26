@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { ChevronDown, ChevronUp, FileText, FolderInput, FolderPlus, GitBranch, Plus, RotateCcw, Settings, Trash2, X } from '@lucide/vue'
+import { ChevronDown, ChevronUp, FileText, FolderInput, FolderPlus, GitBranch, Plus, RotateCcw, Settings, TerminalSquare, Trash2, X } from '@lucide/vue'
 import ProjectSidebar from './components/ProjectSidebar.vue'
 import {
   AGENT_CONFIDENCE,
@@ -3082,7 +3082,7 @@ function clearToastTimer() {
             :disabled="!hasWorkspace"
             @click="createWorkspaceTerminal"
           >
-            <Plus :size="16" />
+            <TerminalSquare :size="16" />
             <span>Global terminal</span>
           </button>
           <div class="global-management-control" @click.stop>
@@ -3186,7 +3186,7 @@ function clearToastTimer() {
               title="New global terminal"
               @click="createWorkspaceTerminal"
             >
-              <Plus :size="14" />
+              <TerminalSquare :size="14" />
             </button>
           </div>
         </div>

@@ -467,6 +467,27 @@ describe('App project terminal tree', () => {
     expect(CreateWorkspaceTerminal).toHaveBeenCalledWith(100, 32)
   })
 
+  it('uses terminal iconography for global terminal creation controls', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        terminals: [
+          terminal({ id: 'terminal-a' }),
+          workspaceTerminal({ id: 'global-terminal', shellName: 'bash', state: 'running' })
+        ],
+        activeTerminalId: 'global-terminal'
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    const headerCreateButton = wrapper.find('[data-testid="create-global-terminal"]')
+    expect(headerCreateButton.find('.lucide-square-terminal').exists()).toBe(true)
+    expect(headerCreateButton.find('.lucide-plus').exists()).toBe(false)
+
+    const groupCreateButton = wrapper.find('[data-testid="create-global-terminal-from-group"]')
+    expect(groupCreateButton.find('.lucide-square-terminal').exists()).toBe(true)
+    expect(groupCreateButton.find('.lucide-plus').exists()).toBe(false)
+  })
+
   it('shows global terminal group only while workspace terminals exist', async () => {
     appApiMock.ListProjects.mockResolvedValue(
       projectState({
