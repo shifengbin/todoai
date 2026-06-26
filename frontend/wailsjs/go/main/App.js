@@ -26,6 +26,10 @@ export function ChangeTodoStatus(arg1, arg2) {
   return window['go']['main']['App']['ChangeTodoStatus'](arg1, arg2);
 }
 
+export function ClaudeStatusHookState(arg1) {
+  return window['go']['main']['App']['ClaudeStatusHookState'](arg1);
+}
+
 export function ClearRecentWorkspaces() {
   return window['go']['main']['App']['ClearRecentWorkspaces']();
 }
@@ -88,6 +92,10 @@ export function DeleteTodoProjectUIState(arg1) {
 
 export function DetectTerminalShell() {
   return window['go']['main']['App']['DetectTerminalShell']();
+}
+
+export function EnsureClaudeStatusHook(arg1) {
+  return window['go']['main']['App']['EnsureClaudeStatusHook'](arg1);
 }
 
 export function GetCompletedTodoProjectMergeStatuses(arg1) {
@@ -164,6 +172,10 @@ export function OpenWorkspaceFromDialog() {
 
 export function OpenWorkspaceFromPath(arg1) {
   return window['go']['main']['App']['OpenWorkspaceFromPath'](arg1);
+}
+
+export function RemoveClaudeStatusHook(arg1) {
+  return window['go']['main']['App']['RemoveClaudeStatusHook'](arg1);
 }
 
 export function RemoveTodoProject(arg1) {

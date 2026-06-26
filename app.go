@@ -86,7 +86,7 @@ func NewAppWithConfigAndShellStarter(configPath string, starter ShellStarter, op
 		gitInit:            initializeGitRepository,
 		worktreePreparer:   NewGitWorktreeService(),
 		gitBranchMerged:    queryGitBranchMerged,
-		claudeStatusDir:    defaultClaudeStatusDir,
+		claudeStatusDir:    claudeStatusDirectory(),
 	}
 	var shellOpts []ShellSessionManagerOption
 	for _, opt := range opts {
@@ -127,6 +127,7 @@ func (a *App) rebuildShellSessionManager() {
 	shellOpts := append([]ShellSessionManagerOption{
 		WithShellPathResolver(a.settings.ResolveShellPath),
 		WithTerminalHistoryStore(a.history),
+		WithShellClaudeStatusDir(a.claudeStatusDir),
 	}, a.shellOpts...)
 	a.shells = NewShellSessionManager(a.starter, ShellSessionCallbacks{
 		OnOutput:       a.emitTerminalOutput,
@@ -162,6 +163,7 @@ func (a *App) startup(ctx context.Context) {
 		a.restoreLastWorkspace(state)
 	}
 	a.startClaudeStatusWatcher()
+	go a.ensureClaudeStatusHooksForActiveWorkspace()
 }
 
 func (a *App) restoreLastWorkspace(state WorkspaceState) {
@@ -553,6 +555,9 @@ func (a *App) CreateTerminal(projectID string, cols int, rows int) (ProjectState
 	if _, err := a.shells.CreateTerminal(project, normalizeTerminalSize(cols, rows)); err != nil {
 		return ProjectState{}, err
 	}
+	if project.Path != "" {
+		_ = ensureClaudeStatusHook(project.Path)
+	}
 	a.activeTerminalID = ""
 	return a.withShellState(state), nil
 }
@@ -589,6 +594,12 @@ func (a *App) CreateTodoTerminal(todoProjectID string, cols int, rows int) (Proj
 	}
 	if _, err := a.shells.CreateTodoProjectTerminal(todoProject, project, normalizeTerminalSize(cols, rows)); err != nil {
 		return ProjectState{}, err
+	}
+	// The worktree has its own .claude/settings.json; install the status hook
+	// there now so the claude in this terminal is monitored from its first event
+	// (don't wait for the next app restart).
+	if todoProject.WorktreePath != "" {
+		_ = ensureClaudeStatusHook(todoProject.WorktreePath)
 	}
 	a.activeTerminalID = ""
 	return a.withShellState(state), nil
@@ -647,6 +658,9 @@ func (a *App) CreateWorkspaceTerminal(cols int, rows int) (ProjectState, error) 
 	if err != nil {
 		return ProjectState{}, err
 	}
+	if workspace.Path != "" {
+		_ = ensureClaudeStatusHook(workspace.Path)
+	}
 	a.activeTerminalID = terminal.ID
 	return a.withShellStateForActiveTerminal(state, terminal.ID), nil
 }
@@ -676,6 +690,10 @@ func (a *App) CreateTaskTerminal(todoID string, cols int, rows int) (ProjectStat
 	terminal, err := a.shells.CreateTaskTerminal(todoID, taskDir, normalizeTerminalSize(cols, rows))
 	if err != nil {
 		return ProjectState{}, err
+	}
+	// Task workspaces are isolated directories with their own .claude/settings.json.
+	if taskDir != "" {
+		_ = ensureClaudeStatusHook(taskDir)
 	}
 	a.activeTerminalID = terminal.ID
 	return a.withShellStateForActiveTerminal(state, terminal.ID), nil
@@ -1138,6 +1156,25 @@ func defaultProjectConfigPath() string {
 	}
 	appConfigDir := resolveAppConfigDir(filepath.Join(configDir, legacyApplicationID), filepath.Join(configDir, applicationID), copyDir)
 	return filepath.Join(appConfigDir, "projects.json")
+}
+
+// claudeStatusDirectory resolves the directory where the `todoai claude-hook`
+// subcommand writes per-session .status files, and where ClaudeStatusWatcher
+// reads them from. The TODOAI_STATUS_DIR env override wins — it is what keeps
+// the hook child process and the watcher pointed at the same physical path.
+// Without it, Windows resolves the old "/tmp/claude" default to the current
+// drive's \tmp\claude (e.g. E:\tmp\claude), which never matches bash's /tmp, so
+// the two sides never agree. Falling back under the per-user todoai config dir
+// gives Windows/macOS/Linux one stable, cross-platform location.
+func claudeStatusDirectory() string {
+	if dir := os.Getenv("TODOAI_STATUS_DIR"); dir != "" {
+		return dir
+	}
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		configDir = "."
+	}
+	return filepath.Join(configDir, applicationID, "claude-status")
 }
 
 func defaultSettingsConfigPath(projectConfigPath string) string {

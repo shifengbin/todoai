@@ -1,5 +1,25 @@
 export namespace main {
 	
+	export class ClaudeHookState {
+	    installed: boolean;
+	    command: string;
+	    expectedCommand: string;
+	    eventsCovered: number;
+	    stale: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ClaudeHookState(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.installed = source["installed"];
+	        this.command = source["command"];
+	        this.expectedCommand = source["expectedCommand"];
+	        this.eventsCovered = source["eventsCovered"];
+	        this.stale = source["stale"];
+	    }
+	}
 	export class CompletedTodoProjectMergeStatus {
 	    id: string;
 	    status: string;

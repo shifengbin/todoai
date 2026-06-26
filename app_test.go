@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -957,7 +958,18 @@ func TestAppPollsClaudeStatusFilesAndEmitsAgentStatus(t *testing.T) {
 		t.Fatalf("ActiveTerminalID = %q, want terminal-1", state.ActiveTerminalID)
 	}
 
-	if err := os.WriteFile(filepath.Join(statusDir, "session-a.status"), []byte(`{"session":"session-a","terminalId":"terminal-1","status":"waiting","event":"Notification","cwd":"`+projectDir+`","ts":1718450010}`), 0644); err != nil {
+	statusPayload, err := json.Marshal(map[string]any{
+		"session":    "session-a",
+		"terminalId": "terminal-1",
+		"status":     "waiting",
+		"event":      "Notification",
+		"cwd":        projectDir,
+		"ts":         1718450010,
+	})
+	if err != nil {
+		t.Fatalf("marshal status payload: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(statusDir, "session-a.status"), statusPayload, 0644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	app.pollClaudeStatus()

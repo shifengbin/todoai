@@ -14,6 +14,8 @@ export function AddProjectsToTodoWithBranches(arg1:string,arg2:Array<string>,arg
 
 export function ChangeTodoStatus(arg1:string,arg2:string):Promise<main.ProjectState>;
 
+export function ClaudeStatusHookState(arg1:string):Promise<main.ClaudeHookState>;
+
 export function ClearRecentWorkspaces():Promise<main.WorkspaceState>;
 
 export function CloseWorkspace():Promise<main.ProjectState>;
@@ -45,6 +47,8 @@ export function DeleteTodo(arg1:string):Promise<main.ProjectState>;
 export function DeleteTodoProjectUIState(arg1:Array<string>):Promise<void>;
 
 export function DetectTerminalShell():Promise<main.TerminalShellSetting>;
+
+export function EnsureClaudeStatusHook(arg1:string):Promise<void>;
 
 export function GetCompletedTodoProjectMergeStatuses(arg1:Array<main.CompletedTodoProjectMergeStatusRequest>):Promise<Array<main.CompletedTodoProjectMergeStatus>>;
 
@@ -83,6 +87,8 @@ export function OpenTodoProjectFolder(arg1:string):Promise<void>;
 export function OpenWorkspaceFromDialog():Promise<main.ProjectState>;
 
 export function OpenWorkspaceFromPath(arg1:string):Promise<main.ProjectState>;
+
+export function RemoveClaudeStatusHook(arg1:string):Promise<void>;
 
 export function RemoveTodoProject(arg1:string):Promise<main.ProjectState>;
 

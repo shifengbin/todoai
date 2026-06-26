@@ -2184,6 +2184,18 @@ button {
     background: var(--surface-muted);
 }
 
+.claude-status-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.settings-hint {
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
 .settings-option {
     grid-template-columns: 18px minmax(0, 1fr);
     align-items: start;

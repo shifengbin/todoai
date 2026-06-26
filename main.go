@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"os"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -12,6 +13,13 @@ import (
 var assets embed.FS
 
 func main() {
+	// `todoai claude-hook` is invoked by Claude Code on every lifecycle event
+	// (configured in .claude/settings.json). It must run without starting the
+	// GUI, so branch off before NewApp()/wails.Run.
+	if len(os.Args) > 1 && os.Args[1] == "claude-hook" {
+		os.Exit(runClaudeHookCommand())
+	}
+
 	// Create an instance of the app structure
 	app := NewApp()
 

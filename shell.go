@@ -120,6 +120,7 @@ type ShellSessionManager struct {
 	terminals         map[string]*ProjectTerminal
 	activeByContext   map[string]string
 	history           *TerminalHistoryStore
+	claudeStatusDir   string
 }
 
 type ShellSession struct {
@@ -156,6 +157,16 @@ func NewShellSessionManager(starter ShellStarter, callbacks ShellSessionCallback
 func WithShellPathResolver(resolve func() string) ShellSessionManagerOption {
 	return func(manager *ShellSessionManager) {
 		manager.shellPathResolver = resolve
+	}
+}
+
+// WithShellClaudeStatusDir sets the directory injected into every spawned
+// terminal as TODOAI_STATUS_DIR, so the `todoai claude-hook` subcommand (run by
+// Claude Code inside that terminal) writes .status files exactly where
+// ClaudeStatusWatcher reads them. Empty disables injection.
+func WithShellClaudeStatusDir(dir string) ShellSessionManagerOption {
+	return func(manager *ShellSessionManager) {
+		manager.claudeStatusDir = dir
 	}
 }
 
@@ -397,6 +408,10 @@ func (manager *ShellSessionManager) StartTerminal(terminalID string, size Termin
 		return ShellStatus{}, err
 	}
 
+	terminalEnv := terminalIdentityEnv(launch.Env, *terminal)
+	if manager.claudeStatusDir != "" {
+		terminalEnv = envWithOverrides(terminalEnv, map[string]string{"TODOAI_STATUS_DIR": manager.claudeStatusDir})
+	}
 	request := ShellStartRequest{
 		TerminalID:        terminal.ID,
 		ProjectID:         terminal.ProjectID,
@@ -408,7 +423,7 @@ func (manager *ShellSessionManager) StartTerminal(terminalID string, size Termin
 		ShellArgs:         launch.Args,
 		ShellName:         launch.ShellName,
 		Size:              size,
-		Env:               terminalIdentityEnv(launch.Env, *terminal),
+		Env:               terminalEnv,
 	}
 	process, err := manager.starter(request)
 	if err != nil {

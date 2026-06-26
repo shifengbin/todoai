@@ -14,6 +14,7 @@ import { createXtermSession } from './xtermFactory'
 import {
   AddProjectSelectionsToTodo,
   ChangeTodoStatus,
+  ClaudeStatusHookState,
   CompleteTodo,
   CreateProjectFromDialog,
   CreateTodo,
@@ -26,6 +27,7 @@ import {
   DeleteTerminal,
   DeleteTodo,
   DetectTerminalShell,
+  EnsureClaudeStatusHook,
   GetCompletedTodoProjectMergeStatuses,
   GetProjectGitStatus,
   GetTodoProjectGitStatus,
@@ -39,6 +41,7 @@ import {
   LoadTodoProjectUIState,
   OpenTodoFolder,
   OpenRecentWorkspace,
+  RemoveClaudeStatusHook,
   RemoveTodoProject,
   ResizeTerminal,
   SelectProject,
@@ -149,7 +152,14 @@ const settingsPanel = reactive({
   manualPath: '',
   launchProfiles: [],
   theme: 'light',
-  error: ''
+  error: '',
+  claudeStatus: {
+    installed: false,
+    stale: false,
+    checking: false,
+    command: '',
+    eventsCovered: 0
+  }
 })
 const initializationFileManagement = reactive({
   visible: false,
@@ -218,6 +228,8 @@ const activeProject = computed(() => {
   const todoProject = todoProjects.value.find((candidate) => candidate.id === activeTodoProjectId.value)
   return todoProjectDisplayProject(todoProject) || projects.value.find((project) => project.id === activeProjectId.value) || null
 })
+
+const activeProjectPath = computed(() => activeProject.value?.path || '')
 
 const hasWorkspace = computed(() => Boolean(currentWorkspace.value?.path))
 
@@ -1327,11 +1339,70 @@ async function openTerminalSettings() {
   } finally {
     settingsPanel.loading = false
   }
+  // Load Claude status hook state independently so a failure here does not
+  // block the terminal shell settings above.
+  await loadClaudeStatusHookState()
 }
 
 function closeTerminalSettings() {
   settingsPanel.visible = false
   settingsPanel.error = ''
+}
+
+async function loadClaudeStatusHookState() {
+  const projectPath = activeProjectPath.value
+  if (!projectPath) {
+    settingsPanel.claudeStatus = {
+      installed: false,
+      stale: false,
+      checking: false,
+      command: '',
+      eventsCovered: 0
+    }
+    return
+  }
+  settingsPanel.claudeStatus.checking = true
+  try {
+    const state = await ClaudeStatusHookState(projectPath)
+    settingsPanel.claudeStatus = {
+      installed: Boolean(state?.installed),
+      stale: Boolean(state?.stale),
+      checking: false,
+      command: state?.command || '',
+      eventsCovered: state?.eventsCovered || 0
+    }
+  } catch (error) {
+    settingsPanel.claudeStatus.checking = false
+    showError(error)
+  }
+}
+
+async function installClaudeStatusHook() {
+  const projectPath = activeProjectPath.value
+  if (!projectPath) {
+    return
+  }
+  try {
+    await EnsureClaudeStatusHook(projectPath)
+    showToast('已安装 Claude 状态监控')
+  } catch (error) {
+    showError(error)
+  }
+  await loadClaudeStatusHookState()
+}
+
+async function uninstallClaudeStatusHook() {
+  const projectPath = activeProjectPath.value
+  if (!projectPath) {
+    return
+  }
+  try {
+    await RemoveClaudeStatusHook(projectPath)
+    showToast('已卸载 Claude 状态监控')
+  } catch (error) {
+    showError(error)
+  }
+  await loadClaudeStatusHookState()
 }
 
 function applyTerminalSettings(state) {
@@ -3693,6 +3764,39 @@ function clearToastTimer() {
                 <Trash2 :size="14" />
               </button>
             </div>
+          </div>
+
+          <div class="settings-field" data-testid="claude-status-setting">
+            <span class="settings-label">Claude 状态监控</span>
+            <div class="claude-status-row">
+              <span v-if="settingsPanel.claudeStatus.checking" class="settings-hint">检测中…</span>
+              <template v-else>
+                <strong v-if="settingsPanel.claudeStatus.installed && settingsPanel.claudeStatus.stale" class="settings-warning">需更新</strong>
+                <strong v-else-if="settingsPanel.claudeStatus.installed">已安装</strong>
+                <strong v-else>未安装</strong>
+                <button
+                  v-if="settingsPanel.claudeStatus.installed && !settingsPanel.claudeStatus.stale"
+                  type="button"
+                  class="toolbar-button"
+                  data-testid="claude-status-uninstall"
+                  :disabled="!activeProjectPath"
+                  @click="uninstallClaudeStatusHook"
+                >
+                  卸载
+                </button>
+                <button
+                  v-else
+                  type="button"
+                  class="toolbar-button primary"
+                  data-testid="claude-status-install"
+                  :disabled="!activeProjectPath"
+                  @click="installClaudeStatusHook"
+                >
+                  {{ settingsPanel.claudeStatus.installed ? '重装' : '安装' }}
+                </button>
+              </template>
+            </div>
+            <p v-if="!activeProjectPath" class="settings-hint">选择一个项目后再操作</p>
           </div>
 
           <div v-if="settingsPanel.error" class="settings-error" data-testid="terminal-settings-error">
