@@ -409,6 +409,7 @@ func (manager *ShellSessionManager) StartTerminal(terminalID string, size Termin
 	}
 
 	terminalEnv := terminalIdentityEnv(launch.Env, *terminal)
+	terminalEnv = envWithoutKeys(terminalEnv, "TODOAI_STATUS_DIR")
 	if manager.claudeStatusDir != "" {
 		terminalEnv = envWithOverrides(terminalEnv, map[string]string{"TODOAI_STATUS_DIR": manager.claudeStatusDir})
 	}
@@ -1481,6 +1482,25 @@ func envWithOverrides(base []string, overrides map[string]string) []string {
 		if !seen[key] {
 			result = append(result, key+"="+value)
 		}
+	}
+	return result
+}
+
+func envWithoutKeys(base []string, keys ...string) []string {
+	if len(keys) == 0 {
+		return append([]string{}, base...)
+	}
+	omit := map[string]bool{}
+	for _, key := range keys {
+		omit[key] = true
+	}
+	result := make([]string, 0, len(base))
+	for _, entry := range base {
+		key, _, ok := strings.Cut(entry, "=")
+		if ok && omit[key] {
+			continue
+		}
+		result = append(result, entry)
 	}
 	return result
 }

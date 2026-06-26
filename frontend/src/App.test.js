@@ -24,6 +24,7 @@ import {
   DetectTerminalShell,
   GetCompletedTodoProjectMergeStatuses,
   GetProjectGitStatus,
+  GetTodoGitStatus,
   GetTodoProjectGitStatus,
   ImportProjectsFromParentDirectoryDialog,
   InitializeGitRepositoryAndImportProject,
@@ -31,16 +32,19 @@ import {
   ListProjectBranches,
   LoadTerminalSettings,
   LoadTodoInitializationFiles,
+  LoadTodoLifecycleScripts,
   LoadTodoProjectUIState,
   OpenTodoFolder,
   OpenRecentWorkspace,
   OpenWorkspaceFromDialog,
   OpenWorkspaceFromPath,
   RemoveTodoProject,
+  RetryTodoLifecycleScript,
   SaveTerminalLaunchProfiles,
   SaveTerminalShell,
   SaveTerminalTheme,
   SaveTodoInitializationFiles,
+  SaveTodoLifecycleScripts,
   SaveTodoSidebarWidth,
   SaveTodoProjectUIState,
   SelectTerminal,
@@ -74,6 +78,7 @@ const appApiMock = vi.hoisted(() => ({
   DetectTerminalShell: vi.fn(),
   GetCompletedTodoProjectMergeStatuses: vi.fn(),
   GetProjectGitStatus: vi.fn(),
+  GetTodoGitStatus: vi.fn(),
   GetTodoProjectGitStatus: vi.fn(),
   ImportProjectsFromParentDirectoryDialog: vi.fn(),
   InitializeGitRepositoryAndImportProject: vi.fn(),
@@ -82,6 +87,7 @@ const appApiMock = vi.hoisted(() => ({
   ListProjects: vi.fn(),
   LoadTerminalSettings: vi.fn(),
   LoadTodoInitializationFiles: vi.fn(),
+  LoadTodoLifecycleScripts: vi.fn(),
   LoadTodoProjectUIState: vi.fn(),
   OpenTodoFolder: vi.fn(),
   OpenRecentWorkspace: vi.fn(),
@@ -89,6 +95,7 @@ const appApiMock = vi.hoisted(() => ({
   OpenWorkspaceFromPath: vi.fn(),
   RemoveTodoProject: vi.fn(),
   ResizeTerminal: vi.fn(),
+  RetryTodoLifecycleScript: vi.fn(),
   SelectProject: vi.fn(),
   SelectTerminal: vi.fn(),
   SelectTodoProject: vi.fn(),
@@ -96,6 +103,7 @@ const appApiMock = vi.hoisted(() => ({
   SaveTerminalShell: vi.fn(),
   SaveTerminalTheme: vi.fn(),
   SaveTodoInitializationFiles: vi.fn(),
+  SaveTodoLifecycleScripts: vi.fn(),
   SaveTodoSidebarWidth: vi.fn(),
   SaveTodoProjectUIState: vi.fn(),
   SendTerminalInput: vi.fn(),
@@ -171,6 +179,7 @@ describe('App project terminal tree', () => {
     appApiMock.ListProjects.mockResolvedValue(projectState())
     appApiMock.LoadTerminalSettings.mockResolvedValue(settingsState())
     appApiMock.LoadTodoInitializationFiles.mockResolvedValue([])
+    appApiMock.LoadTodoLifecycleScripts.mockResolvedValue([])
     appApiMock.LoadTodoProjectUIState.mockResolvedValue(todoProjectUIStateFile())
     appApiMock.SaveTodoProjectUIState.mockResolvedValue()
     appApiMock.DetectTerminalShell.mockResolvedValue(shellSetting({ path: '/usr/bin/bash', displayName: 'bash' }))
@@ -180,6 +189,7 @@ describe('App project terminal tree', () => {
     appApiMock.SaveTerminalLaunchProfiles.mockResolvedValue(settingsState())
     appApiMock.SaveTerminalTheme.mockResolvedValue(settingsState())
     appApiMock.SaveTodoInitializationFiles.mockResolvedValue(settingsState())
+    appApiMock.SaveTodoLifecycleScripts.mockResolvedValue(settingsState())
     appApiMock.SaveTodoSidebarWidth.mockResolvedValue()
     appApiMock.StartTaskBackgroundCommand.mockResolvedValue()
     appApiMock.StartTodoProjectBackgroundCommand.mockResolvedValue()
@@ -258,6 +268,7 @@ describe('App project terminal tree', () => {
     )
     appApiMock.DeleteTerminal.mockResolvedValue(projectState({ terminals: [], activeTerminalId: '' }))
     appApiMock.RemoveTodoProject.mockResolvedValue(projectState({ todoProjects: [], terminals: [], activeTodoProjectId: '', activeTerminalId: '' }))
+    appApiMock.RetryTodoLifecycleScript.mockResolvedValue(inProgressProjectState({ lifecycleScriptStatuses: [lifecycleScriptStatus({ status: 'running' })] }))
     appApiMock.UpdateTodo.mockResolvedValue(projectState())
     appApiMock.WorkspaceState.mockResolvedValue(workspaceState())
     appApiMock.OpenWorkspaceFromDialog.mockResolvedValue(projectState())
@@ -266,6 +277,7 @@ describe('App project terminal tree', () => {
     appApiMock.CloseWorkspace.mockResolvedValue(noWorkspaceState())
     appApiMock.ClearRecentWorkspaces.mockResolvedValue(workspaceState({ recentWorkspaces: [] }))
     appApiMock.GetProjectGitStatus.mockResolvedValue(gitStatus())
+    appApiMock.GetTodoGitStatus.mockResolvedValue(gitStatus({ projectId: '', isRepo: false, branch: '' }))
     appApiMock.GetTodoProjectGitStatus.mockResolvedValue(gitStatus())
     appApiMock.CreateProjectFromDialog.mockResolvedValue(projectImportResult(projectState()))
     appApiMock.InitializeGitRepositoryAndImportProject.mockResolvedValue(projectState())
@@ -295,7 +307,8 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="new-todo"]').attributes('disabled')).toBeDefined()
     expect(wrapper.find('[data-testid="settings-toggle"]').attributes('disabled')).toBeUndefined()
     expect(wrapper.find('[data-testid="terminal-surface"]').text()).toContain('Open a project')
-    expect(wrapper.find('[data-testid="status-chip-neutral"]').text()).toContain('No project')
+    expect(wrapper.find('[data-testid="project-git-status"]').findAll('.status-chip')).toHaveLength(0)
+    expect(wrapper.find('[data-testid="project-git-status"]').text()).not.toContain('No project')
 
     await openSettings(wrapper)
     expect(wrapper.find('[data-testid="terminal-settings-dialog"]').exists()).toBe(true)
@@ -367,7 +380,8 @@ describe('App project terminal tree', () => {
     expect(xtermMock.sessions.has('terminal-a')).toBe(false)
     expect(wrapper.find('[data-testid="terminal-terminal-a"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="terminal-surface"]').text()).toContain('Open a project')
-    expect(wrapper.find('[data-testid="status-chip-neutral"]').text()).toContain('No project')
+    expect(wrapper.find('[data-testid="project-git-status"]').findAll('.status-chip')).toHaveLength(0)
+    expect(wrapper.find('[data-testid="project-git-status"]').text()).not.toContain('No project')
     expect(wrapper.find('.status-error').exists()).toBe(false)
     expect(LoadTerminalSettings).not.toHaveBeenCalled()
     expect(GetProjectGitStatus).not.toHaveBeenCalled()
@@ -3907,6 +3921,121 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('.heading-path').text()).toContain('/work/customer-a/tasks/abc123/alpha')
   })
 
+  it('uses the TODO workspace git status for task terminals and hides chips when it is not a repo', async () => {
+    appApiMock.GetProjectGitStatus.mockResolvedValue(gitStatus({ branch: 'previous-project', changedCount: 4 }))
+    appApiMock.GetTodoGitStatus.mockResolvedValue(gitStatus({ projectId: '', isRepo: false, branch: '' }))
+    appApiMock.ListProjects.mockResolvedValue(
+      inProgressProjectState({
+        activeTodoProjectId: '',
+        terminals: [taskTerminal({ id: 'task-terminal-a', state: 'running' })],
+        activeTerminalId: 'task-terminal-a'
+      })
+    )
+
+    const wrapper = await mountReadyApp()
+
+    expect(GetTodoGitStatus).toHaveBeenCalledWith('todo-a')
+    expect(GetProjectGitStatus).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="project-git-status"]').findAll('.status-chip')).toHaveLength(0)
+    expect(wrapper.find('[data-testid="project-git-status"]').text()).not.toContain('previous-project')
+    expect(wrapper.find('[data-testid="project-git-status"]').text()).not.toContain('Not a git repository')
+  })
+
+  it('shows the TODO workspace git branch and changed file count for task terminals', async () => {
+    appApiMock.GetProjectGitStatus.mockResolvedValue(gitStatus({ branch: 'previous-project', changedCount: 4 }))
+    appApiMock.GetTodoGitStatus.mockResolvedValue(gitStatus({ projectId: '', branch: 'todo/root', changedCount: 1 }))
+    appApiMock.ListProjects.mockResolvedValue(
+      inProgressProjectState({
+        activeTodoProjectId: '',
+        terminals: [taskTerminal({ id: 'task-terminal-a', state: 'running' })],
+        activeTerminalId: 'task-terminal-a'
+      })
+    )
+
+    const wrapper = await mountReadyApp()
+
+    expect(GetTodoGitStatus).toHaveBeenCalledWith('todo-a')
+    expect(GetProjectGitStatus).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="status-chip-branch"]').text()).toContain('todo/root')
+    expect(wrapper.find('[data-testid="status-chip-changed"]').text()).toContain('1 changed')
+    expect(wrapper.find('[data-testid="project-git-status"]').text()).not.toContain('previous-project')
+  })
+
+  it('shows the TODO project sidebar branch from live worktree git status without changing the heading', async () => {
+    appApiMock.GetTodoProjectGitStatus.mockResolvedValue(gitStatus({ branch: 'feature/live-worktree' }))
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        todoProjects: [
+          todoProject({
+            id: 'todo-project-a',
+            todoId: 'todo-a',
+            projectId: 'project-a',
+            worktreeBranch: 'todo/static-worktree-branch'
+          })
+        ]
+      })
+    )
+
+    const wrapper = await mountReadyApp()
+
+    expect(wrapper.find('[data-testid="todo-project-name-todo-project-a"]').text()).toContain(
+      'alpha(feature/live-worktree)'
+    )
+    expect(wrapper.find('[data-testid="todo-project-name-todo-project-a"]').text()).not.toContain(
+      'todo/static-worktree-branch'
+    )
+    expect(wrapper.find('.heading-name').text()).toBe('Fix login / alpha')
+  })
+
+  it('refreshes the TODO project sidebar branch when its worktree terminal command ends', async () => {
+    let branch = 'feature/login'
+    appApiMock.GetTodoProjectGitStatus.mockImplementation(() => Promise.resolve(gitStatus({ branch })))
+    const wrapper = await mountReadyApp()
+
+    expect(wrapper.find('[data-testid="todo-project-name-todo-project-a"]').text()).toContain('alpha(feature/login)')
+
+    branch = 'feature/payments'
+    xtermMock.sessions.get('terminal-a').onCommandState({ type: 'command-end' })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="todo-project-name-todo-project-a"]').text()).toContain('alpha(feature/payments)')
+  })
+
+  it('loads sidebar branches for non-active ready TODO project rows', async () => {
+    appApiMock.GetTodoProjectGitStatus.mockImplementation((todoProjectId) =>
+      Promise.resolve(
+        gitStatus({
+          branch: todoProjectId === 'todo-project-b' ? 'feature/beta' : 'feature/alpha'
+        })
+      )
+    )
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
+          { id: 'project-b', name: 'beta', path: '/work/beta', available: true }
+        ],
+        todos: [todo({ id: 'todo-a' }), todo({ id: 'todo-b', title: 'Upgrade deps', status: 'active' })],
+        todoProjects: [
+          todoProject({ id: 'todo-project-a', todoId: 'todo-a', projectId: 'project-a', worktreePath: '/work/tasks/a/alpha' }),
+          todoProject({ id: 'todo-project-b', todoId: 'todo-b', projectId: 'project-b', worktreePath: '/work/tasks/b/beta' })
+        ],
+        terminals: [
+          terminal({ id: 'terminal-a', todoId: 'todo-a', todoProjectId: 'todo-project-a', projectId: 'project-a' }),
+          terminal({ id: 'terminal-b', todoId: 'todo-b', todoProjectId: 'todo-project-b', projectId: 'project-b' })
+        ]
+      })
+    )
+
+    const wrapper = await mountReadyApp()
+    if (!wrapper.find('[data-testid="todo-project-todo-project-b"]').exists()) {
+      await wrapper.find('[data-testid="toggle-todo-todo-b"]').trigger('click')
+      await flushPromises()
+    }
+
+    expect(wrapper.find('[data-testid="todo-project-name-todo-project-b"]').text()).toContain('beta(feature/beta)')
+  })
+
   it('shows detailed git status chips when counts are present', async () => {
     appApiMock.GetTodoProjectGitStatus.mockResolvedValue(
       gitStatus({
@@ -3947,7 +4076,8 @@ describe('App project terminal tree', () => {
     const wrapper = await mountReadyApp()
 
     expect(GetProjectGitStatus).not.toHaveBeenCalled()
-    expect(wrapper.find('[data-testid="project-git-status"]').text()).toContain('No project')
+    expect(wrapper.find('[data-testid="project-git-status"]').findAll('.status-chip')).toHaveLength(0)
+    expect(wrapper.find('[data-testid="project-git-status"]').text()).not.toContain('No project')
   })
 
   it('shows when the active project is not a git repository', async () => {
@@ -4110,12 +4240,12 @@ describe('App project terminal tree', () => {
         activeTerminalId: 'terminal-b'
       })
     )
-    appApiMock.GetProjectGitStatus
-      .mockResolvedValueOnce(gitStatus({ projectId: 'project-a', branch: 'main' }))
-      .mockResolvedValueOnce(gitStatus({ projectId: 'project-b', branch: 'feature/git-status', changedCount: 2 }))
-    appApiMock.GetTodoProjectGitStatus
-      .mockResolvedValueOnce(gitStatus({ projectId: 'project-a', branch: 'main' }))
-      .mockResolvedValueOnce(gitStatus({ projectId: 'project-b', branch: 'feature/git-status', changedCount: 2 }))
+    appApiMock.GetTodoProjectGitStatus.mockImplementation(async (todoProjectId) => {
+      if (todoProjectId === 'todo-project-b') {
+        return gitStatus({ projectId: 'project-b', branch: 'feature/git-status', changedCount: 2 })
+      }
+      return gitStatus({ projectId: 'project-a', branch: 'main' })
+    })
     const wrapper = await mountReadyApp()
 
     if (!wrapper.find('[data-testid="todo-project-todo-project-b"]').exists()) {
@@ -4290,7 +4420,7 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="todo-project-list-todo-a"]').exists()).toBe(true)
   })
 
-  it('does not refresh git status when an unrelated TODO branch expands', async () => {
+  it('does not refresh active git status when an unrelated TODO branch expands', async () => {
     const twoTodoState = projectState({
       projects: [
         { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
@@ -4316,7 +4446,9 @@ describe('App project terminal tree', () => {
     await flushPromises()
 
     expect(GetProjectGitStatus).not.toHaveBeenCalled()
-    expect(GetTodoProjectGitStatus).not.toHaveBeenCalled()
+    expect(GetTodoProjectGitStatus).toHaveBeenCalledTimes(1)
+    expect(GetTodoProjectGitStatus).toHaveBeenCalledWith('todo-project-b')
+    expect(GetTodoProjectGitStatus).not.toHaveBeenCalledWith('todo-project-a')
   })
 
   it('refreshes git status when selecting a TODO project changes the active project', async () => {
@@ -4681,6 +4813,171 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="todo-initialization-file-name-0"]').element.value).toBe('Agent Rules')
   })
 
+  it('adds edits reorders and saves TODO lifecycle scripts from global script management', async () => {
+    appApiMock.LoadTodoLifecycleScripts.mockResolvedValue([
+      lifecycleScriptTemplate({ name: 'Node setup', description: 'Install deps', initScript: 'npm install', defaultSelected: true }),
+      lifecycleScriptTemplate({ name: 'Verify', description: 'Run tests', initScript: '', completeScript: 'npm test', defaultSelected: false })
+    ])
+    const wrapper = await mountReadyApp()
+
+    await openScriptManagement(wrapper)
+
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-management-dialog"]').exists()).toBe(true)
+    expect(LoadTodoLifecycleScripts).toHaveBeenCalled()
+    await wrapper.find('[data-testid="todo-lifecycle-script-down-0"]').trigger('click')
+    await wrapper.find('[data-testid="todo-lifecycle-script-remove-1"]').trigger('click')
+    await wrapper.find('[data-testid="todo-lifecycle-script-add"]').trigger('click')
+    await wrapper.find('[data-testid="todo-lifecycle-script-name-1"]').setValue('Release')
+    await wrapper.find('[data-testid="todo-lifecycle-script-description-1"]').setValue('Prepare release')
+    await wrapper.find('[data-testid="todo-lifecycle-script-init-1"]').setValue('pnpm install')
+    await wrapper.find('[data-testid="todo-lifecycle-script-complete-1"]').setValue('pnpm test')
+    await wrapper.find('[data-testid="todo-lifecycle-script-default-1"]').setValue(true)
+    await wrapper.find('[data-testid="todo-lifecycle-script-management-save"]').trigger('click')
+    await flushPromises()
+
+    expect(SaveTodoLifecycleScripts).toHaveBeenCalledWith([
+      { name: 'Verify', description: 'Run tests', initScript: '', completeScript: 'npm test', defaultSelected: false },
+      { name: 'Release', description: 'Prepare release', initScript: 'pnpm install', completeScript: 'pnpm test', defaultSelected: true }
+    ])
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-management-dialog"]').exists()).toBe(false)
+  })
+
+  it('shows TODO lifecycle script save errors without losing edited scripts', async () => {
+    appApiMock.SaveTodoLifecycleScripts.mockRejectedValue(new Error('lifecycle script name is required'))
+    const wrapper = await mountReadyApp()
+
+    await openScriptManagement(wrapper)
+    await wrapper.find('[data-testid="todo-lifecycle-script-add"]').trigger('click')
+    await wrapper.find('[data-testid="todo-lifecycle-script-init-0"]').setValue('npm install')
+    await wrapper.find('[data-testid="todo-lifecycle-script-management-save"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-management-error"]').text()).toContain('lifecycle script name is required')
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-management-dialog"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-init-0"]').element.value).toBe('npm install')
+  })
+
+  it('shows lifecycle scripts in one dropdown and submits the selected snapshot when creating a TODO', async () => {
+    appApiMock.LoadTodoLifecycleScripts.mockResolvedValue([
+      lifecycleScriptTemplate({ name: 'Node setup', description: 'Install deps', initScript: 'npm install', completeScript: 'npm test' }),
+      lifecycleScriptTemplate({ name: 'API checks', description: 'Backend verification', initScript: 'go mod download', completeScript: 'go test ./...', defaultSelected: true })
+    ])
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="new-todo"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="todo-name-input"]').setValue('Write tests')
+
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-filter"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-description"]').exists()).toBe(false)
+    expect(wrapper.find('select[data-testid="todo-lifecycle-script-select"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-menu"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="todo-lifecycle-script-select"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-menu"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-option-0"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-option-0"]').text()).toBe('Node setup - Install deps')
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-option-1"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-option-1"]').text()).toBe('API checks - Backend verification')
+
+    await wrapper.find('[data-testid="todo-lifecycle-script-option-0"]').trigger('click')
+    await nextTick()
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-select"]').text()).toContain('Node setup - Install deps')
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-menu"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="todo-create-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(CreateTodo).toHaveBeenCalledWith({
+      title: 'Write tests',
+      description: '',
+      priority: 'medium',
+      projects: [],
+      lifecycleScript: {
+        name: 'Node setup',
+        description: 'Install deps',
+        initScript: 'npm install',
+        completeScript: 'npm test'
+      }
+    })
+  })
+
+  it('supports creating a TODO without selecting a lifecycle script', async () => {
+    appApiMock.LoadTodoLifecycleScripts.mockResolvedValue([
+      lifecycleScriptTemplate({ name: 'Node setup', description: 'Install deps', initScript: 'npm install', defaultSelected: true })
+    ])
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="new-todo"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="todo-name-input"]').setValue('Write tests')
+    await wrapper.find('[data-testid="todo-lifecycle-script-select"]').trigger('click')
+    await nextTick()
+    await wrapper.find('[data-testid="todo-lifecycle-script-option-none"]').trigger('click')
+    await wrapper.find('[data-testid="todo-create-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(CreateTodo).toHaveBeenCalledWith({
+      title: 'Write tests',
+      description: '',
+      priority: 'medium',
+      projects: []
+    })
+  })
+
+  it('merges lifecycle script status events and hides cleared successful states', async () => {
+    appApiMock.ListProjects.mockResolvedValue(inProgressProjectState({ lifecycleScriptStatuses: [] }))
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+    runtimeMock.handlers['todo-lifecycle-script-status'](
+      lifecycleScriptStatus({ phase: 'init', status: 'running', scriptName: 'Node setup' })
+    )
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-status-todo-a-init"]').text()).toContain('初始化脚本执行中')
+
+    runtimeMock.handlers['todo-lifecycle-script-status'](
+      lifecycleScriptStatus({ phase: 'init', status: '', scriptName: 'Node setup' })
+    )
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-status-todo-a-init"]').exists()).toBe(false)
+  })
+
+  it('shows failed lifecycle scripts with retry actions and replaces them with running state', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      inProgressProjectState({
+        lifecycleScriptStatuses: [
+          lifecycleScriptStatus({ phase: 'complete', status: 'failed', outputTail: 'lint failed', exitCode: 2 })
+        ]
+      })
+    )
+    appApiMock.RetryTodoLifecycleScript.mockResolvedValue(
+      inProgressProjectState({
+        lifecycleScriptStatuses: [
+          lifecycleScriptStatus({ phase: 'complete', status: 'running', outputTail: '', exitCode: 0 })
+        ]
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+
+    const failedStatus = wrapper.find('[data-testid="todo-lifecycle-script-status-todo-a-complete"]')
+    expect(failedStatus.text()).toContain('完成脚本失败')
+    expect(failedStatus.text()).toContain('lint failed')
+
+    await wrapper.find('[data-testid="retry-todo-lifecycle-script-todo-a-complete"]').trigger('click')
+    await flushPromises()
+
+    expect(RetryTodoLifecycleScript).toHaveBeenCalledWith('todo-a', 'complete')
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-status-todo-a-complete"]').text()).toContain('完成脚本执行中')
+    expect(wrapper.find('[data-testid="retry-todo-lifecycle-script-todo-a-complete"]').exists()).toBe(false)
+  })
+
   it('shows launch profile validation errors without closing settings', async () => {
     appApiMock.LoadTerminalSettings.mockResolvedValue(
       settingsState({ launchProfiles: [{ name: 'codex', command: 'codex' }] })
@@ -4771,6 +5068,13 @@ async function openFileManagement(wrapper) {
   await flushPromises()
 }
 
+async function openScriptManagement(wrapper) {
+  await wrapper.find('[data-testid="global-management-toggle"]').trigger('click')
+  await nextTick()
+  await wrapper.find('[data-testid="global-script-management"]').trigger('click')
+  await flushPromises()
+}
+
 async function uploadInitializationFile(wrapper, index, file) {
   const input = wrapper.find(`[data-testid="todo-initialization-file-upload-${index}"]`)
   Object.defineProperty(input.element, 'files', {
@@ -4839,6 +5143,7 @@ function projectState(overrides = {}) {
     todos: [todo()],
     todoProjects: [todoProject()],
     projectBranchPreferences: {},
+    lifecycleScriptStatuses: [],
     activeProjectId: 'project-a',
     activeTodoId: 'todo-a',
     activeTodoProjectId: 'todo-project-a',
@@ -4950,6 +5255,7 @@ function settingsState(overrides = {}) {
       { name: 'claude', command: defaultClaudeLaunchCommand }
     ],
     todoInitializationFiles: [],
+    todoLifecycleScripts: [],
     ...overrides
   }
 }
@@ -4961,6 +5267,32 @@ function initializationFile(overrides = {}) {
     fileName: 'AGENTS.md',
     content: '请先阅读任务说明',
     defaultSelected: true,
+    ...overrides
+  }
+}
+
+function lifecycleScriptTemplate(overrides = {}) {
+  return {
+    name: 'Node setup',
+    description: 'Install dependencies',
+    initScript: 'npm install',
+    completeScript: 'npm test',
+    defaultSelected: false,
+    ...overrides
+  }
+}
+
+function lifecycleScriptStatus(overrides = {}) {
+  return {
+    todoId: 'todo-a',
+    phase: 'init',
+    status: 'running',
+    scriptName: 'Node setup',
+    startedAt: '2026-06-10T09:00:00Z',
+    finishedAt: '',
+    exitCode: 0,
+    outputTail: '',
+    message: '',
     ...overrides
   }
 }

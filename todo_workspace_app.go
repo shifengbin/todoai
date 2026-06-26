@@ -32,6 +32,25 @@ func todoProjectsForTodoID(todoProjects []TodoProject, todoID string) []TodoProj
 	return matches
 }
 
+func todoWorkspaceInitializationReady(todoProjects []TodoProject, todoID string) bool {
+	matches := todoProjectsForTodoID(todoProjects, todoID)
+	if len(matches) == 0 {
+		return true
+	}
+	for _, todoProject := range matches {
+		if todoProject.WorktreeStatus != WorktreeStatusReady {
+			return false
+		}
+	}
+	return true
+}
+
+func writeTodoWorkspaceInitializationFilesWhenReady(todo Todo, todoProjects []TodoProject, workspacePath string) {
+	if todoWorkspaceInitializationReady(todoProjects, todo.ID) {
+		_ = writeTodoWorkspaceInitializationFiles(todo, workspacePath)
+	}
+}
+
 // workspacePathOrEmpty returns the current workspace root path or an empty
 // string when no workspace is bound.
 func (a *App) workspacePathOrEmpty() string {
@@ -91,7 +110,6 @@ func (a *App) ensureTaskWorkspaceDir(todo Todo, workspacePath string) (string, e
 	if err := os.MkdirAll(taskDir, 0o755); err != nil {
 		return "", err
 	}
-	_ = writeTodoWorkspaceInitializationFiles(todo, workspacePath)
 	return taskDir, nil
 }
 
@@ -151,7 +169,7 @@ func (a *App) prepareTodoWorkspace(todoID string) {
 	}
 	for _, candidate := range persistedState.Todos {
 		if candidate.ID == todoID {
-			_ = writeTodoWorkspaceInitializationFiles(candidate, workspacePath)
+			writeTodoWorkspaceInitializationFilesWhenReady(candidate, persistedState.TodoProjects, workspacePath)
 			break
 		}
 	}
@@ -188,6 +206,6 @@ func (a *App) writeTodoReadmeFromState(state ProjectState, todoID string, worksp
 	if !found || todo.WorkspaceDirName == "" {
 		return
 	}
-	_ = writeTodoWorkspaceInitializationFiles(todo, workspacePath)
+	writeTodoWorkspaceInitializationFilesWhenReady(todo, state.TodoProjects, workspacePath)
 	_ = writeTodoWorkspaceReadme(todo, todoProjectsForTodoID(state.TodoProjects, todoID), workspacePath)
 }

@@ -56,6 +56,8 @@ export function GetProjectGitStatus(arg1:string):Promise<main.GitStatus>;
 
 export function GetShellStatus(arg1:string):Promise<main.ShellStatus>;
 
+export function GetTodoGitStatus(arg1:string):Promise<main.GitStatus>;
+
 export function GetTodoProjectGitStatus(arg1:string):Promise<main.GitStatus>;
 
 export function ImportProjectFromPath(arg1:string):Promise<main.ProjectImportResult>;
@@ -76,6 +78,8 @@ export function LoadTerminalSettings():Promise<main.TerminalSettingsState>;
 
 export function LoadTodoInitializationFiles():Promise<Array<main.TodoInitializationFileTemplate>>;
 
+export function LoadTodoLifecycleScripts():Promise<Array<main.TodoLifecycleScriptTemplate>>;
+
 export function LoadTodoProjectUIState():Promise<main.TodoProjectUIStateFile>;
 
 export function OpenRecentWorkspace(arg1:string):Promise<main.ProjectState>;
@@ -94,6 +98,8 @@ export function RemoveTodoProject(arg1:string):Promise<main.ProjectState>;
 
 export function ResizeTerminal(arg1:string,arg2:number,arg3:number):Promise<void>;
 
+export function RetryTodoLifecycleScript(arg1:string,arg2:string):Promise<main.ProjectState>;
+
 export function SaveTerminalLaunchProfiles(arg1:Array<main.TerminalLaunchProfileSetting>):Promise<main.TerminalSettingsState>;
 
 export function SaveTerminalShell(arg1:string,arg2:string):Promise<main.TerminalSettingsState>;
@@ -101,6 +107,8 @@ export function SaveTerminalShell(arg1:string,arg2:string):Promise<main.Terminal
 export function SaveTerminalTheme(arg1:string):Promise<main.TerminalSettingsState>;
 
 export function SaveTodoInitializationFiles(arg1:Array<main.TodoInitializationFileTemplate>):Promise<main.TerminalSettingsState>;
+
+export function SaveTodoLifecycleScripts(arg1:Array<main.TodoLifecycleScriptTemplate>):Promise<main.TerminalSettingsState>;
 
 export function SaveTodoProjectUIState(arg1:string,arg2:main.TodoProjectUIState):Promise<void>;
 

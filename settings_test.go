@@ -324,6 +324,47 @@ func TestSettingsManagerSavesTodoInitializationFilesAndPreservesOtherSettings(t 
 	assertLaunchProfiles(t, reloaded.LaunchProfiles, wantProfiles)
 }
 
+func TestSettingsManagerSavesTodoLifecycleScriptsAndPreservesOtherSettings(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "settings.json")
+	shellPath := executableFile(t, "zsh")
+	manager := NewSettingsManager(configPath)
+	if _, err := manager.SaveShellPath(shellPath, ShellSourceManual); err != nil {
+		t.Fatalf("SaveShellPath() error = %v", err)
+	}
+	wantProfiles := []TerminalLaunchProfileSetting{{Name: "Codex", Command: "codex", Enabled: true}}
+	if _, err := manager.SaveLaunchProfiles(wantProfiles); err != nil {
+		t.Fatalf("SaveLaunchProfiles() error = %v", err)
+	}
+	files := []TodoInitializationFileTemplate{{Name: "Agent Rules", FileName: "AGENTS.md", Content: "rules"}}
+	if _, err := manager.SaveTodoInitializationFiles(files); err != nil {
+		t.Fatalf("SaveTodoInitializationFiles() error = %v", err)
+	}
+
+	scripts := []TodoLifecycleScriptTemplate{
+		{Name: "Node setup", Description: "安装依赖", InitScript: "npm install", CompleteScript: "npm test", DefaultSelected: true},
+		{Name: "Cleanup", Description: "清理缓存", CompleteScript: "rm -rf tmp"},
+	}
+	state, err := manager.SaveTodoLifecycleScripts(scripts)
+	if err != nil {
+		t.Fatalf("SaveTodoLifecycleScripts() error = %v", err)
+	}
+
+	if state.Selected.Path != shellPath {
+		t.Fatalf("Selected.Path = %q, want %q", state.Selected.Path, shellPath)
+	}
+	assertLaunchProfiles(t, state.LaunchProfiles, wantProfiles)
+	assertTodoInitializationFiles(t, state.TodoInitializationFiles, files)
+	assertTodoLifecycleScripts(t, state.TodoLifecycleScripts, scripts)
+
+	reloaded, err := manager.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	assertTodoLifecycleScripts(t, reloaded.TodoLifecycleScripts, scripts)
+	assertTodoInitializationFiles(t, reloaded.TodoInitializationFiles, files)
+	assertLaunchProfiles(t, reloaded.LaunchProfiles, wantProfiles)
+}
+
 func TestSettingsManagerDefaultsTodoInitializationFilesToEmpty(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "settings.json")
 	writeSettingsFile(t, configPath, executableFile(t, "zsh"), "manual")
@@ -335,6 +376,20 @@ func TestSettingsManagerDefaultsTodoInitializationFilesToEmpty(t *testing.T) {
 	}
 	if len(state.TodoInitializationFiles) != 0 {
 		t.Fatalf("TodoInitializationFiles = %#v, want empty", state.TodoInitializationFiles)
+	}
+}
+
+func TestSettingsManagerDefaultsTodoLifecycleScriptsToEmpty(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "settings.json")
+	writeSettingsFile(t, configPath, executableFile(t, "zsh"), "manual")
+	manager := NewSettingsManager(configPath)
+
+	state, err := manager.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(state.TodoLifecycleScripts) != 0 {
+		t.Fatalf("TodoLifecycleScripts = %#v, want empty", state.TodoLifecycleScripts)
 	}
 }
 
@@ -389,6 +444,54 @@ func TestSettingsManagerRejectsInvalidTodoInitializationFiles(t *testing.T) {
 			if _, err := manager.SaveTodoInitializationFiles(tc.files); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("SaveTodoInitializationFiles() error = %v, want containing %q", err, tc.want)
 			}
+		})
+	}
+}
+
+func TestSettingsManagerRejectsInvalidTodoLifecycleScripts(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "settings.json")
+	manager := NewSettingsManager(configPath)
+	if _, err := manager.SaveShellPath(executableFile(t, "zsh"), ShellSourceManual); err != nil {
+		t.Fatalf("SaveShellPath() error = %v", err)
+	}
+	if _, err := manager.SaveTodoLifecycleScripts([]TodoLifecycleScriptTemplate{{Name: "Valid", InitScript: "echo ok"}}); err != nil {
+		t.Fatalf("SaveTodoLifecycleScripts(valid) error = %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		scripts []TodoLifecycleScriptTemplate
+		want    string
+	}{
+		{
+			name:    "missing name",
+			scripts: []TodoLifecycleScriptTemplate{{InitScript: "echo ok"}},
+			want:    "lifecycle script name is required",
+		},
+		{
+			name:    "empty scripts",
+			scripts: []TodoLifecycleScriptTemplate{{Name: "Empty"}},
+			want:    "lifecycle script requires an initialization or completion script",
+		},
+		{
+			name: "multiple defaults",
+			scripts: []TodoLifecycleScriptTemplate{
+				{Name: "One", InitScript: "echo one", DefaultSelected: true},
+				{Name: "Two", CompleteScript: "echo two", DefaultSelected: true},
+			},
+			want: "only one lifecycle script can be default selected",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := manager.SaveTodoLifecycleScripts(tc.scripts); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("SaveTodoLifecycleScripts() error = %v, want containing %q", err, tc.want)
+			}
+			state, err := manager.Load()
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			assertTodoLifecycleScripts(t, state.TodoLifecycleScripts, []TodoLifecycleScriptTemplate{{Name: "Valid", InitScript: "echo ok"}})
 		})
 	}
 }
@@ -849,6 +952,18 @@ func assertTodoInitializationFiles(t *testing.T, got []TodoInitializationFileTem
 	for index := range want {
 		if got[index] != want[index] {
 			t.Fatalf("TodoInitializationFiles[%d] = %#v, want %#v", index, got[index], want[index])
+		}
+	}
+}
+
+func assertTodoLifecycleScripts(t *testing.T, got []TodoLifecycleScriptTemplate, want []TodoLifecycleScriptTemplate) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("len(TodoLifecycleScripts) = %d, want %d: %#v", len(got), len(want), got)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("TodoLifecycleScripts[%d] = %#v, want %#v", index, got[index], want[index])
 		}
 	}
 }

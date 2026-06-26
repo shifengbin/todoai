@@ -46,6 +46,14 @@ type TodoInitializationFileTemplate struct {
 	DefaultSelected bool   `json:"defaultSelected,omitempty"`
 }
 
+type TodoLifecycleScriptTemplate struct {
+	Name            string `json:"name"`
+	Description     string `json:"description,omitempty"`
+	InitScript      string `json:"initScript,omitempty"`
+	CompleteScript  string `json:"completeScript,omitempty"`
+	DefaultSelected bool   `json:"defaultSelected,omitempty"`
+}
+
 func (profile *TerminalLaunchProfileSetting) UnmarshalJSON(data []byte) error {
 	type terminalLaunchProfileSettingJSON struct {
 		Name       string `json:"name"`
@@ -75,6 +83,7 @@ type TerminalSettingsState struct {
 	LaunchProfiles          []TerminalLaunchProfileSetting   `json:"launchProfiles"`
 	Theme                   string                           `json:"theme"`
 	TodoInitializationFiles []TodoInitializationFileTemplate `json:"todoInitializationFiles"`
+	TodoLifecycleScripts    []TodoLifecycleScriptTemplate    `json:"todoLifecycleScripts"`
 }
 
 type SettingsManagerOption func(*SettingsManager)
@@ -92,6 +101,7 @@ type persistedSettings struct {
 	LaunchProfiles          []TerminalLaunchProfileSetting   `json:"launchProfiles"`
 	Theme                   string                           `json:"theme"`
 	TodoInitializationFiles []TodoInitializationFileTemplate `json:"todoInitializationFiles,omitempty"`
+	TodoLifecycleScripts    []TodoLifecycleScriptTemplate    `json:"todoLifecycleScripts,omitempty"`
 }
 
 func NewSettingsManager(configPath string, opts ...SettingsManagerOption) *SettingsManager {
@@ -181,6 +191,23 @@ func (manager *SettingsManager) SaveTodoInitializationFiles(files []TodoInitiali
 	return state, manager.saveLocked(state)
 }
 
+func (manager *SettingsManager) SaveTodoLifecycleScripts(scripts []TodoLifecycleScriptTemplate) (TerminalSettingsState, error) {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	normalizedScripts, err := normalizeTodoLifecycleScriptTemplates(scripts)
+	if err != nil {
+		state, _ := manager.loadExistingLocked()
+		return state, err
+	}
+	state, err := manager.loadLocked()
+	if err != nil {
+		return TerminalSettingsState{}, err
+	}
+	state.TodoLifecycleScripts = normalizedScripts
+	return state, manager.saveLocked(state)
+}
+
 func (manager *SettingsManager) SaveShellPath(path string, source string) (TerminalSettingsState, error) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
@@ -234,6 +261,7 @@ func (manager *SettingsManager) loadLocked() (TerminalSettingsState, error) {
 			LaunchProfiles:          defaultTerminalLaunchProfiles(),
 			Theme:                   AppearanceThemeLight,
 			TodoInitializationFiles: []TodoInitializationFileTemplate{},
+			TodoLifecycleScripts:    []TodoLifecycleScriptTemplate{},
 		}
 		if saveErr := manager.saveLocked(state); saveErr != nil {
 			return TerminalSettingsState{}, saveErr
@@ -292,6 +320,7 @@ func (manager *SettingsManager) loadExistingLocked() (TerminalSettingsState, err
 		LaunchProfiles:          launchProfiles,
 		Theme:                   normalizeAppearanceTheme(persisted.Theme),
 		TodoInitializationFiles: append([]TodoInitializationFileTemplate{}, persisted.TodoInitializationFiles...),
+		TodoLifecycleScripts:    append([]TodoLifecycleScriptTemplate{}, persisted.TodoLifecycleScripts...),
 	}, nil
 }
 
@@ -309,6 +338,7 @@ func (manager *SettingsManager) saveLocked(state TerminalSettingsState) error {
 		LaunchProfiles:          append([]TerminalLaunchProfileSetting{}, launchProfiles...),
 		Theme:                   normalizeAppearanceTheme(state.Theme),
 		TodoInitializationFiles: append([]TodoInitializationFileTemplate{}, state.TodoInitializationFiles...),
+		TodoLifecycleScripts:    append([]TodoLifecycleScriptTemplate{}, state.TodoLifecycleScripts...),
 	}, "", "  ")
 	if err != nil {
 		return err
@@ -386,6 +416,37 @@ func normalizeTodoInitializationFileTemplates(files []TodoInitializationFileTemp
 			FileName:        fileName,
 			Content:         file.Content,
 			DefaultSelected: file.DefaultSelected,
+		})
+	}
+	return normalized, nil
+}
+
+func normalizeTodoLifecycleScriptTemplates(scripts []TodoLifecycleScriptTemplate) ([]TodoLifecycleScriptTemplate, error) {
+	normalized := make([]TodoLifecycleScriptTemplate, 0, len(scripts))
+	defaultCount := 0
+	for _, script := range scripts {
+		name := strings.TrimSpace(script.Name)
+		description := strings.TrimSpace(script.Description)
+		initScript := strings.TrimSpace(script.InitScript)
+		completeScript := strings.TrimSpace(script.CompleteScript)
+		if name == "" {
+			return nil, errors.New("lifecycle script name is required")
+		}
+		if initScript == "" && completeScript == "" {
+			return nil, errors.New("lifecycle script requires an initialization or completion script")
+		}
+		if script.DefaultSelected {
+			defaultCount++
+			if defaultCount > 1 {
+				return nil, errors.New("only one lifecycle script can be default selected")
+			}
+		}
+		normalized = append(normalized, TodoLifecycleScriptTemplate{
+			Name:            name,
+			Description:     description,
+			InitScript:      initScript,
+			CompleteScript:  completeScript,
+			DefaultSelected: script.DefaultSelected,
 		})
 	}
 	return normalized, nil

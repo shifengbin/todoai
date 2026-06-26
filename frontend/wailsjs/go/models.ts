@@ -54,6 +54,24 @@ export namespace main {
 	        this.baseBranch = source["baseBranch"];
 	    }
 	}
+	export class TodoLifecycleScriptSnapshot {
+	    name: string;
+	    description?: string;
+	    initScript?: string;
+	    completeScript?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TodoLifecycleScriptSnapshot(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.initScript = source["initScript"];
+	        this.completeScript = source["completeScript"];
+	    }
+	}
 	export class TodoInitializationFileSnapshot {
 	    name: string;
 	    description?: string;
@@ -94,6 +112,7 @@ export namespace main {
 	    projectBranches?: Record<string, string>;
 	    projects?: TodoProjectSelection[];
 	    initializationFiles?: TodoInitializationFileSnapshot[];
+	    lifecycleScript?: TodoLifecycleScriptSnapshot;
 	
 	    static createFrom(source: any = {}) {
 	        return new CreateTodoRequest(source);
@@ -108,6 +127,7 @@ export namespace main {
 	        this.projectBranches = source["projectBranches"];
 	        this.projects = this.convertValues(source["projects"], TodoProjectSelection);
 	        this.initializationFiles = this.convertValues(source["initializationFiles"], TodoInitializationFileSnapshot);
+	        this.lifecycleScript = this.convertValues(source["lifecycleScript"], TodoLifecycleScriptSnapshot);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -232,6 +252,34 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class TodoLifecycleScriptStatus {
+	    todoId: string;
+	    phase: string;
+	    status: string;
+	    scriptName?: string;
+	    startedAt?: string;
+	    finishedAt?: string;
+	    exitCode?: number;
+	    outputTail?: string;
+	    message?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TodoLifecycleScriptStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.todoId = source["todoId"];
+	        this.phase = source["phase"];
+	        this.status = source["status"];
+	        this.scriptName = source["scriptName"];
+	        this.startedAt = source["startedAt"];
+	        this.finishedAt = source["finishedAt"];
+	        this.exitCode = source["exitCode"];
+	        this.outputTail = source["outputTail"];
+	        this.message = source["message"];
+	    }
+	}
 	export class ProjectTerminal {
 	    id: string;
 	    projectId: string;
@@ -331,6 +379,7 @@ export namespace main {
 	    archivedReason?: string;
 	    workspaceDirName?: string;
 	    initializationFiles?: TodoInitializationFileSnapshot[];
+	    lifecycleScript?: TodoLifecycleScriptSnapshot;
 	    projectSnapshots?: TodoProjectSnapshot[];
 	    createdAt: string;
 	    startedAt?: string;
@@ -351,6 +400,7 @@ export namespace main {
 	        this.archivedReason = source["archivedReason"];
 	        this.workspaceDirName = source["workspaceDirName"];
 	        this.initializationFiles = this.convertValues(source["initializationFiles"], TodoInitializationFileSnapshot);
+	        this.lifecycleScript = this.convertValues(source["lifecycleScript"], TodoLifecycleScriptSnapshot);
 	        this.projectSnapshots = this.convertValues(source["projectSnapshots"], TodoProjectSnapshot);
 	        this.createdAt = source["createdAt"];
 	        this.startedAt = source["startedAt"];
@@ -409,6 +459,7 @@ export namespace main {
 	    activeTodoProjectId?: string;
 	    terminals?: ProjectTerminal[];
 	    activeTerminalId?: string;
+	    lifecycleScriptStatuses?: TodoLifecycleScriptStatus[];
 	    importSummary?: ProjectImportSummary;
 	
 	    static createFrom(source: any = {}) {
@@ -429,6 +480,7 @@ export namespace main {
 	        this.activeTodoProjectId = source["activeTodoProjectId"];
 	        this.terminals = this.convertValues(source["terminals"], ProjectTerminal);
 	        this.activeTerminalId = source["activeTerminalId"];
+	        this.lifecycleScriptStatuses = this.convertValues(source["lifecycleScriptStatuses"], TodoLifecycleScriptStatus);
 	        this.importSummary = this.convertValues(source["importSummary"], ProjectImportSummary);
 	    }
 	
@@ -527,6 +579,26 @@ export namespace main {
 	        this.background = source["background"];
 	    }
 	}
+	export class TodoLifecycleScriptTemplate {
+	    name: string;
+	    description?: string;
+	    initScript?: string;
+	    completeScript?: string;
+	    defaultSelected?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new TodoLifecycleScriptTemplate(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.initScript = source["initScript"];
+	        this.completeScript = source["completeScript"];
+	        this.defaultSelected = source["defaultSelected"];
+	    }
+	}
 	export class TodoInitializationFileTemplate {
 	    name: string;
 	    description?: string;
@@ -573,6 +645,7 @@ export namespace main {
 	    launchProfiles: TerminalLaunchProfileSetting[];
 	    theme: string;
 	    todoInitializationFiles: TodoInitializationFileTemplate[];
+	    todoLifecycleScripts: TodoLifecycleScriptTemplate[];
 	
 	    static createFrom(source: any = {}) {
 	        return new TerminalSettingsState(source);
@@ -587,6 +660,7 @@ export namespace main {
 	        this.launchProfiles = this.convertValues(source["launchProfiles"], TerminalLaunchProfileSetting);
 	        this.theme = source["theme"];
 	        this.todoInitializationFiles = this.convertValues(source["todoInitializationFiles"], TodoInitializationFileTemplate);
+	        this.todoLifecycleScripts = this.convertValues(source["todoLifecycleScripts"], TodoLifecycleScriptTemplate);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -607,6 +681,9 @@ export namespace main {
 		    return a;
 		}
 	}
+	
+	
+	
 	
 	
 	

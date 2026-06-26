@@ -1,9 +1,6 @@
 package main
 
-import (
-	"os"
-	"testing"
-)
+import "testing"
 
 func TestStartTerminalInjectsClaudeStatusDir(t *testing.T) {
 	starter := newFakeShellStarter()
@@ -26,17 +23,7 @@ func TestStartTerminalInjectsClaudeStatusDir(t *testing.T) {
 }
 
 func TestStartTerminalOmitsClaudeStatusDirWhenUnset(t *testing.T) {
-	previousStatusDir, hadStatusDir := os.LookupEnv("TODOAI_STATUS_DIR")
-	if err := os.Unsetenv("TODOAI_STATUS_DIR"); err != nil {
-		t.Fatalf("Unsetenv TODOAI_STATUS_DIR: %v", err)
-	}
-	t.Cleanup(func() {
-		if hadStatusDir {
-			_ = os.Setenv("TODOAI_STATUS_DIR", previousStatusDir)
-			return
-		}
-		_ = os.Unsetenv("TODOAI_STATUS_DIR")
-	})
+	t.Setenv("TODOAI_STATUS_DIR", "/tmp/inherited-status-dir")
 
 	starter := newFakeShellStarter()
 	manager := NewShellSessionManager(starter.Start, ShellSessionCallbacks{})
