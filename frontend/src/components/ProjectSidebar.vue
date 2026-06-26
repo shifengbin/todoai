@@ -35,6 +35,10 @@ const props = defineProps({
     type: Array,
     default: () => []
   },
+  todoProjectBranches: {
+    type: Object,
+    default: () => ({})
+  },
   terminals: {
     type: Array,
     default: () => []
@@ -253,6 +257,12 @@ function projectForTodoProject(todoProject) {
     }
   }
   return projectsById.value.get(todoProject.projectId) || null
+}
+
+function todoProjectDisplayName(todoProject) {
+  const projectName = projectForTodoProject(todoProject)?.name || 'Missing project'
+  const branch = (props.todoProjectBranches?.[todoProject.id] || '').trim()
+  return branch ? `${projectName}(${branch})` : projectName
 }
 
 function todoProjectTerminals(todoProjectId) {
@@ -1674,7 +1684,7 @@ watch(
                       class="project-name"
                       :data-testid="`todo-project-name-${todoProject.id}`"
                     >
-                      {{ projectForTodoProject(todoProject)?.name || 'Missing project' }}
+                      {{ todoProjectDisplayName(todoProject) }}
                     </span>
                     <span v-if="!projectForTodoProject(todoProject)?.available" class="project-status">Unavailable</span>
                     <span

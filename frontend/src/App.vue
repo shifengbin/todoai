@@ -30,6 +30,7 @@ import {
   EnsureClaudeStatusHook,
   GetCompletedTodoProjectMergeStatuses,
   GetProjectGitStatus,
+  GetTodoGitStatus,
   GetTodoProjectGitStatus,
   ImportProjectsFromParentDirectoryDialog,
   InitializeGitRepositoryAndImportProject,
@@ -81,6 +82,9 @@ const errorMessage = ref('')
 let gitStatusRequestId = 0
 let gitStatusInFlightContextKey = ''
 let gitStatusInFlightRequestId = 0
+const todoProjectGitBranches = reactive({})
+const todoProjectGitStatusInFlight = new Map()
+let todoProjectGitStatusRequestId = 0
 let completedMergeStatusRequestGeneration = 0
 let lastFocusGitRefreshContextKey = ''
 let lastFocusGitRefreshAt = 0
@@ -338,11 +342,15 @@ const displayedGitStatus = computed(() => {
 })
 
 const projectGitStatusChips = computed(() => {
-  if (!activeProject.value) {
-    return [statusChip('neutral', 'neutral', 'No project')]
+  const context = activeGitStatusContext.value
+  if (!context) {
+    return []
   }
   const status = displayedGitStatus.value
-  if (!activeProject.value.available || status?.pathUnavailable) {
+  if (context.type === 'todo' && status && !status.isRepo) {
+    return []
+  }
+  if ((context.type === 'project' && !activeProject.value?.available) || status?.pathUnavailable) {
     return [statusChip('warning', 'warning', 'Project path unavailable')]
   }
   if (status?.gitUnavailable) {
@@ -577,6 +585,7 @@ function applyState(state, options = {}) {
   activeTodoId.value = state?.activeTodoId || ''
   activeTodoProjectId.value = state?.activeTodoProjectId || ''
   activeTerminalId.value = state?.activeTerminalId || ''
+  pruneTodoProjectGitBranches()
   for (const terminal of terminals.value) {
     if (terminal.state) {
       shellStatuses[terminal.id] = terminal.state
@@ -594,6 +603,7 @@ function applyState(state, options = {}) {
     dedupePending: options.dedupeGitStatus === true,
     force: options.forceGitStatusRefresh === true
   })
+  refreshTodoProjectBranchStatuses({ dedupePending: true })
   scheduleCompletedMergeStatusRefresh()
 }
 
@@ -1657,6 +1667,9 @@ function syncGitStatusForActiveProject(previousActiveProjectId = '', options = {
     gitStatusLoading.value = false
     gitStatusError.value = ''
     gitInitLoading.value = false
+    if (context.type === 'todo-project') {
+      clearTodoProjectGitBranch(context.todoProjectId)
+    }
     return
   }
   if (options.refresh !== false && (options.force === true || context.key !== previousActiveProjectId)) {
@@ -1683,17 +1696,25 @@ async function refreshProjectGitStatus(options = {}) {
     const status =
       context.type === 'todo-project'
         ? await GetTodoProjectGitStatus(context.todoProjectId)
-        : await GetProjectGitStatus(context.projectId)
+        : context.type === 'todo'
+          ? await GetTodoGitStatus(context.todoId)
+          : await GetProjectGitStatus(context.projectId)
     if (requestId !== gitStatusRequestId || activeGitStatusContext.value?.key !== context.key) {
       return
     }
     gitStatus.value = withGitStatusContext(status, context)
+    if (context.type === 'todo-project') {
+      setTodoProjectGitBranch(context.todoProjectId, status)
+    }
   } catch (error) {
     if (requestId !== gitStatusRequestId || activeGitStatusContext.value?.key !== context.key) {
       return
     }
     gitStatus.value = null
     gitStatusError.value = errorMessageFrom(error)
+    if (context.type === 'todo-project') {
+      clearTodoProjectGitBranch(context.todoProjectId)
+    }
   } finally {
     if (gitStatusInFlightContextKey === context.key && gitStatusInFlightRequestId === requestId) {
       gitStatusInFlightContextKey = ''
@@ -1702,6 +1723,100 @@ async function refreshProjectGitStatus(options = {}) {
     if (requestId === gitStatusRequestId) {
       gitStatusLoading.value = false
     }
+  }
+}
+
+function todoProjectCanLoadGitStatus(todoProject) {
+  return Boolean(
+    todoProject &&
+      todoProject.available !== false &&
+      todoProject.worktreeStatus === 'ready' &&
+      normalizeProjectPath(todoProject.worktreePath)
+  )
+}
+
+function branchFromGitStatus(status) {
+  if (!status?.isRepo || status.pathUnavailable || status.gitUnavailable) {
+    return ''
+  }
+  return (status.branch || '').trim()
+}
+
+function setTodoProjectGitBranch(todoProjectId, status) {
+  if (!todoProjectId) {
+    return
+  }
+  const branch = branchFromGitStatus(status)
+  if (branch) {
+    todoProjectGitBranches[todoProjectId] = branch
+  } else {
+    clearTodoProjectGitBranch(todoProjectId)
+  }
+}
+
+function clearTodoProjectGitBranch(todoProjectId) {
+  if (todoProjectId) {
+    delete todoProjectGitBranches[todoProjectId]
+  }
+}
+
+function pruneTodoProjectGitBranches() {
+  const availableTodoProjectIds = new Set(
+    todoProjects.value.filter((todoProject) => todoProjectCanLoadGitStatus(todoProject)).map((todoProject) => todoProject.id)
+  )
+  for (const todoProjectId of Object.keys(todoProjectGitBranches)) {
+    if (!availableTodoProjectIds.has(todoProjectId)) {
+      delete todoProjectGitBranches[todoProjectId]
+    }
+  }
+}
+
+async function refreshTodoProjectBranchStatus(todoProjectId, options = {}) {
+  const todoProject = todoProjects.value.find((candidate) => candidate.id === todoProjectId)
+  if (!todoProjectCanLoadGitStatus(todoProject)) {
+    clearTodoProjectGitBranch(todoProjectId)
+    return
+  }
+  if (options.dedupePending === true && todoProjectGitStatusInFlight.has(todoProjectId)) {
+    return
+  }
+  const requestId = todoProjectGitStatusRequestId + 1
+  todoProjectGitStatusRequestId = requestId
+  todoProjectGitStatusInFlight.set(todoProjectId, requestId)
+  try {
+    const status = await GetTodoProjectGitStatus(todoProjectId)
+    if (todoProjectGitStatusInFlight.get(todoProjectId) !== requestId) {
+      return
+    }
+    const currentTodoProject = todoProjects.value.find((candidate) => candidate.id === todoProjectId)
+    if (!todoProjectCanLoadGitStatus(currentTodoProject)) {
+      clearTodoProjectGitBranch(todoProjectId)
+      return
+    }
+    setTodoProjectGitBranch(todoProjectId, status)
+  } catch (_error) {
+    if (todoProjectGitStatusInFlight.get(todoProjectId) === requestId) {
+      clearTodoProjectGitBranch(todoProjectId)
+    }
+  } finally {
+    if (todoProjectGitStatusInFlight.get(todoProjectId) === requestId) {
+      todoProjectGitStatusInFlight.delete(todoProjectId)
+    }
+  }
+}
+
+function refreshTodoProjectBranchStatuses(options = {}) {
+  const activeTodoProjectBranchId =
+    activeGitStatusContext.value?.type === 'todo-project' ? activeGitStatusContext.value.todoProjectId : ''
+  for (const todoProject of todoProjects.value) {
+    if (!todoProjectCanLoadGitStatus(todoProject)) {
+      clearTodoProjectGitBranch(todoProject.id)
+      continue
+    }
+    if (todoProject.id === activeTodoProjectBranchId) {
+      continue
+    }
+    refreshTodoProjectBranchStatus(todoProject.id, { dedupePending: options.dedupePending === true })
   }
 }
 
@@ -1721,14 +1836,23 @@ function refreshProjectGitStatusOnFocus() {
   lastFocusGitRefreshContextKey = context?.key || ''
   lastFocusGitRefreshAt = now
   refreshProjectGitStatus({ dedupePending: true })
+  refreshTodoProjectBranchStatuses({ dedupePending: true })
 }
 
 function handleTodoExpanded(todoId) {
   const todoProject = activeTodoProject.value
   if (!todoProject || todoProject.todoId !== todoId) {
+    for (const candidate of todoProjectsForTodo(todoId)) {
+      refreshTodoProjectBranchStatus(candidate.id, { dedupePending: true })
+    }
     return
   }
   refreshProjectGitStatus({ dedupePending: true })
+  for (const candidate of todoProjectsForTodo(todoId)) {
+    if (candidate.id !== todoProject.id) {
+      refreshTodoProjectBranchStatus(candidate.id, { dedupePending: true })
+    }
+  }
 }
 
 async function initializeActiveProjectGitRepository() {
@@ -1791,6 +1915,16 @@ function todoProjectDisplayProject(todoProject) {
 }
 
 const activeGitStatusContext = computed(() => {
+  const terminal = activeTerminal.value
+  if (terminal && !terminal.workspaceTerminal && terminal.todoId && !terminal.todoProjectId) {
+    return {
+      type: 'todo',
+      key: `todo:${terminal.todoId}`,
+      todoId: terminal.todoId,
+      projectId: '',
+      available: true
+    }
+  }
   const todoProject = activeTodoProject.value
   if (todoProject) {
     const hasReadyWorktree =
@@ -2413,6 +2547,8 @@ function handleTerminalCommandState(terminalId, event) {
     })
     if (terminal.id === activeTerminalId.value && !terminal.workspaceTerminal) {
       refreshProjectGitStatus()
+    } else if (terminal.todoProjectId) {
+      refreshTodoProjectBranchStatus(terminal.todoProjectId, { dedupePending: true })
     }
   }
 }
@@ -2568,6 +2704,7 @@ function clearToastTimer() {
       :projects="projects"
       :todos="todos"
       :todo-projects="todoProjects"
+      :todo-project-branches="todoProjectGitBranches"
       :terminals="sidebarTerminals"
       :active-project-id="activeProjectId"
       :active-todo-id="activeTodoId"

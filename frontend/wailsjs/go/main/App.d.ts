@@ -56,6 +56,8 @@ export function GetProjectGitStatus(arg1:string):Promise<main.GitStatus>;
 
 export function GetShellStatus(arg1:string):Promise<main.ShellStatus>;
 
+export function GetTodoGitStatus(arg1:string):Promise<main.GitStatus>;
+
 export function GetTodoProjectGitStatus(arg1:string):Promise<main.GitStatus>;
 
 export function ImportProjectFromPath(arg1:string):Promise<main.ProjectImportResult>;

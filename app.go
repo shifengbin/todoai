@@ -45,6 +45,7 @@ type App struct {
 	claudeStatusWatcher           *ClaudeStatusWatcher
 	claudeStatusStop              chan struct{}
 	claudeStatusStopOnce          sync.Once
+	claudeHookInstallWG           sync.WaitGroup
 	terminalAgentStatusEmitter    func(TerminalAgentStatusEvent)
 	activeTerminalID              string
 	initialWorkspaceClosed        bool
@@ -163,7 +164,11 @@ func (a *App) startup(ctx context.Context) {
 		a.restoreLastWorkspace(state)
 	}
 	a.startClaudeStatusWatcher()
-	go a.ensureClaudeStatusHooksForActiveWorkspace()
+	a.claudeHookInstallWG.Add(1)
+	go func() {
+		defer a.claudeHookInstallWG.Done()
+		a.ensureClaudeStatusHooksForActiveWorkspace()
+	}()
 }
 
 func (a *App) restoreLastWorkspace(state WorkspaceState) {
@@ -183,6 +188,7 @@ func (a *App) restoreLastWorkspace(state WorkspaceState) {
 
 func (a *App) shutdown(ctx context.Context) {
 	a.stopClaudeStatusWatcher()
+	a.claudeHookInstallWG.Wait()
 	a.shells.Shutdown()
 }
 
@@ -998,6 +1004,26 @@ func (a *App) GetTodoProjectGitStatus(todoProjectID string) (GitStatus, error) {
 	}
 	status.ProjectID = todoProject.ProjectID
 	return status, nil
+}
+
+func (a *App) GetTodoGitStatus(todoID string) (GitStatus, error) {
+	if !a.hasWorkspace() {
+		return GitStatus{}, ErrWorkspaceRequired
+	}
+	workspacePath, _, todo, ok := a.loadTodoForWorkspace(todoID)
+	if !ok {
+		return GitStatus{}, os.ErrNotExist
+	}
+	status := GitStatus{}
+	taskDir, ok := todoWorkspacePath(todo, workspacePath)
+	if !ok || !directoryAvailable(taskDir) {
+		status.PathUnavailable = true
+		return status, nil
+	}
+	if !pathHasGitRepositoryMetadata(taskDir) {
+		return status, nil
+	}
+	return a.gitStatus(taskDir)
 }
 
 func (a *App) ListProjectBranches(projectID string) ([]string, error) {
