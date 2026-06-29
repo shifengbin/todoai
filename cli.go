@@ -16,12 +16,15 @@ const (
 )
 
 type cliCommandOptions struct {
-	args         []string
-	workingDir   string
-	appConfigDir string
-	stdout       io.Writer
-	stderr       io.Writer
+	args             []string
+	workingDir       string
+	appConfigDir     string
+	stdout           io.Writer
+	stderr           io.Writer
+	ipcCommandSender todoIPCCommandSender
 }
+
+type todoIPCCommandSender func(context.Context, string, string, string) error
 
 type completedTodoCLIRow struct {
 	TaskName       string `json:"taskName"`
@@ -41,6 +44,13 @@ func runCLICommand(options cliCommandOptions) (bool, int) {
 	options = normalizeCLICommandOptions(options)
 	if len(options.args) == 2 && options.args[0] == "list" && options.args[1] == "--done" {
 		if err := runListDoneCommand(options); err != nil {
+			fmt.Fprintln(options.stderr, err.Error())
+			return true, cliExitError
+		}
+		return true, cliExitSuccess
+	}
+	if len(options.args) == 1 && (options.args[0] == "start" || options.args[0] == "done") {
+		if err := runTodoLifecycleCLICommand(options, options.args[0]); err != nil {
 			fmt.Fprintln(options.stderr, err.Error())
 			return true, cliExitError
 		}
@@ -69,7 +79,18 @@ func normalizeCLICommandOptions(options cliCommandOptions) cliCommandOptions {
 	if options.stderr == nil {
 		options.stderr = os.Stderr
 	}
+	if options.ipcCommandSender == nil {
+		options.ipcCommandSender = sendTodoIPCCommand
+	}
 	return options
+}
+
+func runTodoLifecycleCLICommand(options cliCommandOptions, command string) error {
+	workingDir, err := normalizeWorkspacePath(options.workingDir)
+	if err != nil {
+		return err
+	}
+	return options.ipcCommandSender(context.Background(), options.appConfigDir, command, workingDir)
 }
 
 func runListDoneCommand(options cliCommandOptions) error {

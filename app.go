@@ -32,6 +32,7 @@ type App struct {
 	globalProjectCandidatesPath   string
 	lifecycleScripts              *TodoLifecycleScriptExecutor
 	lifecycleScriptRunner         todoLifecycleScriptRunner
+	todoIPCServer                 *todoIPCServer
 	shells                        *ShellSessionManager
 	settings                      *SettingsManager
 	history                       *TerminalHistoryStore
@@ -50,6 +51,7 @@ type App struct {
 	claudeStatusStopOnce          sync.Once
 	claudeHookInstallWG           sync.WaitGroup
 	terminalAgentStatusEmitter    func(TerminalAgentStatusEvent)
+	workspaceStateEmitter         func(ProjectState)
 	activeTerminalID              string
 	initialWorkspaceClosed        bool
 	restoreLastWorkspaceOnStartup bool
@@ -166,6 +168,12 @@ func WithTerminalAgentStatusEmitter(emit func(TerminalAgentStatusEvent)) AppOpti
 	}
 }
 
+func WithWorkspaceStateEmitter(emit func(ProjectState)) AppOption {
+	return func(app *App) {
+		app.workspaceStateEmitter = emit
+	}
+}
+
 // WithWorktreePreparer overrides the Git worktree preparer used when a TODO
 // enters progress. Primarily used in tests to avoid real git operations.
 func WithWorktreePreparer(preparer TodoWorktreePreparer) AppOption {
@@ -186,6 +194,7 @@ func (a *App) startup(ctx context.Context) {
 	if a.restoreLastWorkspaceOnStartup {
 		a.restoreLastWorkspace(state)
 	}
+	a.startTodoIPCServer()
 	a.startClaudeStatusWatcher()
 	if a.claudeStatusDir != "" {
 		a.claudeHookInstallWG.Add(1)
@@ -212,6 +221,7 @@ func (a *App) restoreLastWorkspace(state WorkspaceState) {
 }
 
 func (a *App) shutdown(ctx context.Context) {
+	a.stopTodoIPCServer()
 	a.stopClaudeStatusWatcher()
 	a.claudeHookInstallWG.Wait()
 	a.shells.Shutdown()
@@ -1305,6 +1315,9 @@ func (a *App) emitTerminalOutput(event TerminalOutputEvent) {
 }
 
 func (a *App) emitWorkspaceState(state ProjectState) {
+	if a.workspaceStateEmitter != nil {
+		a.workspaceStateEmitter(state)
+	}
 	if a.ctx != nil {
 		wailsruntime.EventsEmit(a.ctx, workspaceStateEvent, state)
 	}
