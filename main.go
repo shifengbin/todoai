@@ -19,6 +19,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "claude-hook" {
 		os.Exit(runClaudeHookCommand())
 	}
+	if handled, exitCode := runCLICommand(cliCommandOptions{args: os.Args[1:]}); handled {
+		os.Exit(exitCode)
+	}
 
 	// Create an instance of the app structure
 	app := NewApp()
