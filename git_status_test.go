@@ -179,22 +179,34 @@ func TestPathHasGitRepositoryMetadataRejectsNonGitDirectory(t *testing.T) {
 }
 
 func TestInitializeGitRepositoryForPathRunsGitInit(t *testing.T) {
-	called := false
-	gotPath := ""
-	err := initializeGitRepositoryForPath("/work/new-repo", gitAvailable, func(ctx context.Context, path string) ([]byte, error) {
-		called = true
-		gotPath = path
-		return []byte("Initialized empty Git repository"), nil
+	commands := [][]string{}
+	gotPaths := []string{}
+	err := initializeGitRepositoryForPath("/work/new-repo", gitAvailable, func(ctx context.Context, path string, args ...string) ([]byte, error) {
+		gotPaths = append(gotPaths, path)
+		commands = append(commands, append([]string(nil), args...))
+		return []byte("ok"), nil
 	})
 
 	if err != nil {
 		t.Fatalf("initializeGitRepositoryForPath() error = %v, want nil", err)
 	}
-	if !called {
-		t.Fatal("git init runner was not called")
+	for _, gotPath := range gotPaths {
+		if gotPath != "/work/new-repo" {
+			t.Fatalf("git init path = %q, want /work/new-repo", gotPath)
+		}
 	}
-	if gotPath != "/work/new-repo" {
-		t.Fatalf("git init path = %q, want /work/new-repo", gotPath)
+	wantCommands := [][]string{
+		{"init"},
+		{"add", "-A"},
+		{"commit", "-m", "chore: initial commit"},
+	}
+	if len(commands) != len(wantCommands) {
+		t.Fatalf("commands = %#v, want %#v", commands, wantCommands)
+	}
+	for index, want := range wantCommands {
+		if strings.Join(commands[index], "\x00") != strings.Join(want, "\x00") {
+			t.Fatalf("command[%d] = %#v, want %#v", index, commands[index], want)
+		}
 	}
 }
 
@@ -202,7 +214,7 @@ func TestInitializeGitRepositoryForPathReturnsGitUnavailableWithoutRunningInit(t
 	called := false
 	err := initializeGitRepositoryForPath("/work/new-repo", func() error {
 		return exec.ErrNotFound
-	}, func(ctx context.Context, path string) ([]byte, error) {
+	}, func(ctx context.Context, path string, args ...string) ([]byte, error) {
 		called = true
 		return []byte("should not run"), nil
 	})
@@ -219,8 +231,11 @@ func TestInitializeGitRepositoryForPathReturnsGitUnavailableWithoutRunningInit(t
 }
 
 func TestInitializeGitRepositoryForPathReturnsCommandFailure(t *testing.T) {
-	err := initializeGitRepositoryForPath("/work/new-repo", gitAvailable, func(ctx context.Context, path string) ([]byte, error) {
-		return []byte("fatal: could not create work tree dir"), errors.New("exit status 128")
+	err := initializeGitRepositoryForPath("/work/new-repo", gitAvailable, func(ctx context.Context, path string, args ...string) ([]byte, error) {
+		if len(args) == 1 && args[0] == "init" {
+			return []byte("fatal: could not create work tree dir"), errors.New("exit status 128")
+		}
+		return []byte("ok"), nil
 	})
 
 	if err == nil {
@@ -228,6 +243,68 @@ func TestInitializeGitRepositoryForPathReturnsCommandFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "git init failed") {
 		t.Fatalf("error = %q, want git init failed", err.Error())
+	}
+}
+
+func TestInitializeGitRepositoryForPathReturnsAddFailure(t *testing.T) {
+	err := initializeGitRepositoryForPath("/work/new-repo", gitAvailable, func(ctx context.Context, path string, args ...string) ([]byte, error) {
+		if len(args) == 2 && args[0] == "add" && args[1] == "-A" {
+			return []byte("fatal: unable to add files"), errors.New("exit status 128")
+		}
+		return []byte("ok"), nil
+	})
+
+	if err == nil {
+		t.Fatal("initializeGitRepositoryForPath() error = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "git add failed") || !strings.Contains(err.Error(), "fatal: unable to add files") {
+		t.Fatalf("error = %q, want git add failure with output", err.Error())
+	}
+}
+
+func TestInitializeGitRepositoryForPathReturnsCommitFailure(t *testing.T) {
+	err := initializeGitRepositoryForPath("/work/new-repo", gitAvailable, func(ctx context.Context, path string, args ...string) ([]byte, error) {
+		if len(args) == 1 && args[0] == "commit" {
+			t.Fatalf("commit command = %#v, want message arguments", args)
+		}
+		if len(args) == 3 && args[0] == "commit" {
+			return []byte("Author identity unknown"), errors.New("exit status 128")
+		}
+		return []byte("ok"), nil
+	})
+
+	if err == nil {
+		t.Fatal("initializeGitRepositoryForPath() error = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "git commit failed") || !strings.Contains(err.Error(), "Author identity unknown") {
+		t.Fatalf("error = %q, want git commit failure with output", err.Error())
+	}
+}
+
+func TestInitializeGitRepositoryCreatesCommitUsableForWorktree(t *testing.T) {
+	if err := gitCommandAvailable(); err != nil {
+		t.Skipf("git not available: %v", err)
+	}
+	t.Setenv("GIT_AUTHOR_NAME", "Todo Helper Test")
+	t.Setenv("GIT_AUTHOR_EMAIL", "todo-helper-test@example.invalid")
+	t.Setenv("GIT_COMMITTER_NAME", "Todo Helper Test")
+	t.Setenv("GIT_COMMITTER_EMAIL", "todo-helper-test@example.invalid")
+
+	projectDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectDir, "app.txt"), []byte("source file\n"), 0o600); err != nil {
+		t.Fatalf("write app.txt: %v", err)
+	}
+	if err := initializeGitRepository(projectDir); err != nil {
+		t.Fatalf("initializeGitRepository() error = %v", err)
+	}
+
+	taskDir := t.TempDir()
+	result := NewGitWorktreeService().PrepareWorktree(projectDir, "", "sample-project", taskDir)
+	if result.Status != WorktreeStatusReady {
+		t.Fatalf("PrepareWorktree() = %#v, want ready", result)
+	}
+	if _, err := os.Stat(filepath.Join(result.WorktreePath, "app.txt")); err != nil {
+		t.Fatalf("worktree app.txt stat error = %v, want initial file in worktree", err)
 	}
 }
 

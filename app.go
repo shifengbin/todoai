@@ -428,12 +428,21 @@ func (a *App) InitializeGitRepositoryAndImportProject(path string) (ProjectState
 	if !directoryAvailable(absolutePath) {
 		return ProjectState{}, errors.New("project path is not an accessible directory")
 	}
-	if !pathHasGitRepositoryMetadata(absolutePath) {
+	hadGitMetadata := pathHasGitRepositoryMetadata(absolutePath)
+	if !hadGitMetadata {
 		if err := a.gitInit(absolutePath); err != nil {
+			removeCreatedGitRepositoryMetadata(absolutePath, hadGitMetadata)
 			return ProjectState{}, err
 		}
 	}
 	return a.addProjectFromPath(absolutePath)
+}
+
+func removeCreatedGitRepositoryMetadata(path string, existedBeforeInitialization bool) {
+	if existedBeforeInitialization {
+		return
+	}
+	_ = os.RemoveAll(filepath.Join(path, ".git"))
 }
 
 func (a *App) ImportProjectsFromParentDirectory(parentPath string) (ProjectState, error) {
@@ -1261,7 +1270,12 @@ func (a *App) InitializeProjectGitRepository(projectID string) error {
 	if !project.Available {
 		return fmt.Errorf("project path unavailable")
 	}
-	return a.gitInit(project.Path)
+	hadGitMetadata := pathHasGitRepositoryMetadata(project.Path)
+	if err := a.gitInit(project.Path); err != nil {
+		removeCreatedGitRepositoryMetadata(project.Path, hadGitMetadata)
+		return err
+	}
+	return nil
 }
 
 func (a *App) LoadTerminalSettings() (TerminalSettingsState, error) {

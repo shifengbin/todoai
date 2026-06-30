@@ -413,7 +413,7 @@ const showInitializeGitRepository = computed(() => {
 })
 
 const gitInitializeButtonText = computed(() => {
-  return gitInitLoading.value ? 'Initializing Git Repository' : 'Initialize Git Repository'
+  return gitInitLoading.value ? 'Initializing Git Repository and Commit' : 'Initialize Git Repository and Commit'
 })
 
 const terminalSettingsDetected = computed(() => {
@@ -2986,8 +2986,8 @@ function clearToastTimer() {
         @click.stop
       >
         <header class="git-init-confirm-header">
-          <h2 id="git-init-confirm-title">初始化 Git 仓库</h2>
-          <p>所选目录不是 Git 仓库。初始化后再导入项目？</p>
+          <h2 id="git-init-confirm-title">初始化 Git 仓库并创建初始提交</h2>
+          <p>所选目录不是 Git 仓库。确认后会暂存当前目录内容，创建初始提交，再导入项目。</p>
         </header>
         <div class="git-init-confirm-path" data-testid="git-init-confirm-path">
           {{ gitInitializationPrompt.path }}
@@ -3007,7 +3007,7 @@ function clearToastTimer() {
             data-testid="git-init-confirm-submit"
             @click="resolveGitInitializationPrompt(true)"
           >
-            初始化并导入
+            初始化并提交导入
           </button>
         </footer>
       </section>

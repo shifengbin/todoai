@@ -3215,6 +3215,8 @@ describe('App project terminal tree', () => {
     expect(window.confirm).not.toHaveBeenCalled()
     expect(wrapper.find('[data-testid="git-init-confirm-dialog"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="git-init-confirm-path"]').text()).toBe('/work/beta')
+    expect(wrapper.find('[data-testid="git-init-confirm-dialog"]').text()).toContain('暂存当前目录内容')
+    expect(wrapper.find('[data-testid="git-init-confirm-dialog"]').text()).toContain('初始提交')
     expect(InitializeGitRepositoryAndImportProject).not.toHaveBeenCalled()
 
     await wrapper.find('[data-testid="git-init-confirm-submit"]').trigger('click')
@@ -3223,6 +3225,29 @@ describe('App project terminal tree', () => {
     expect(InitializeGitRepositoryAndImportProject).toHaveBeenCalledWith('/work/beta')
     expect(wrapper.find('[data-testid="git-init-confirm-dialog"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="todo-project-picker-tag-project-b"]').exists()).toBe(true)
+  })
+
+  it('shows an error and keeps the project unselected when non-Git initialization commit fails', async () => {
+    appApiMock.CreateProjectFromDialog.mockResolvedValue({
+      requiresGitInitialization: true,
+      path: '/work/beta'
+    })
+    appApiMock.InitializeGitRepositoryAndImportProject.mockRejectedValue(
+      new Error('git commit failed: Author identity unknown')
+    )
+    const wrapper = await mountReadyApp()
+
+    await selectTodoMenuAction(wrapper, 'add-project', 'todo-a')
+    await wrapper.find('[data-testid="import-single-project-candidate"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('[data-testid="git-init-confirm-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(InitializeGitRepositoryAndImportProject).toHaveBeenCalledWith('/work/beta')
+    expect(wrapper.find('[data-testid="git-init-confirm-dialog"]').exists()).toBe(false)
+    expect(wrapper.find('.status-error').text()).toContain('git commit failed')
+    expect(wrapper.find('[data-testid="todo-project-picker-tag-project-b"]').exists()).toBe(false)
   })
 
   it('shows a temporary toast when non-Git single project initialization is declined', async () => {
@@ -4109,6 +4134,7 @@ describe('App project terminal tree', () => {
 
     expect(wrapper.find('[data-testid="project-git-status"]').text()).toContain('Not a git repository')
     expect(wrapper.find('[data-testid="initialize-git-repository"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="initialize-git-repository"]').text()).toContain('Commit')
   })
 
   it('shows when git is not installed', async () => {

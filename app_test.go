@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -2142,6 +2143,144 @@ func TestAppInitializeGitRepositoryAndImportProjectInitializesThenAdds(t *testin
 	}
 }
 
+func TestAppInitializeGitRepositoryAndImportProjectCreatesInitialCommitBeforeImport(t *testing.T) {
+	if err := gitCommandAvailable(); err != nil {
+		t.Skipf("git not available: %v", err)
+	}
+	t.Setenv("GIT_AUTHOR_NAME", "Todo Helper Test")
+	t.Setenv("GIT_AUTHOR_EMAIL", "todo-helper-test@example.invalid")
+	t.Setenv("GIT_COMMITTER_NAME", "Todo Helper Test")
+	t.Setenv("GIT_COMMITTER_EMAIL", "todo-helper-test@example.invalid")
+
+	projectDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectDir, "app.txt"), []byte("source file\n"), 0o600); err != nil {
+		t.Fatalf("write app.txt: %v", err)
+	}
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+
+	state, err := app.InitializeGitRepositoryAndImportProject(projectDir)
+	if err != nil {
+		t.Fatalf("InitializeGitRepositoryAndImportProject() error = %v", err)
+	}
+
+	if len(state.Projects) != 1 || state.Projects[0].Path != mustAbs(t, projectDir) {
+		t.Fatalf("Projects = %#v, want initialized project imported", state.Projects)
+	}
+	if output, err := exec.Command("git", "-C", projectDir, "rev-parse", "--verify", "HEAD").CombinedOutput(); err != nil {
+		t.Fatalf("git rev-parse HEAD error = %v output=%s", err, string(output))
+	}
+	output, err := exec.Command("git", "-C", projectDir, "ls-tree", "--name-only", "HEAD").CombinedOutput()
+	if err != nil {
+		t.Fatalf("git ls-tree HEAD error = %v output=%s", err, string(output))
+	}
+	if !strings.Contains(string(output), "app.txt") {
+		t.Fatalf("HEAD files = %q, want app.txt", string(output))
+	}
+}
+
+func TestAppNonGitInitializationCommitSupportsTodoWorktreeStart(t *testing.T) {
+	if err := gitCommandAvailable(); err != nil {
+		t.Skipf("git not available: %v", err)
+	}
+	t.Setenv("GIT_AUTHOR_NAME", "Todo Helper Test")
+	t.Setenv("GIT_AUTHOR_EMAIL", "todo-helper-test@example.invalid")
+	t.Setenv("GIT_COMMITTER_NAME", "Todo Helper Test")
+	t.Setenv("GIT_COMMITTER_EMAIL", "todo-helper-test@example.invalid")
+
+	workspaceDir := t.TempDir()
+	projectDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectDir, "app.txt"), []byte("source file\n"), 0o600); err != nil {
+		t.Fatalf("write app.txt: %v", err)
+	}
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err := app.InitializeGitRepositoryAndImportProject(projectDir)
+	if err != nil {
+		t.Fatalf("InitializeGitRepositoryAndImportProject() error = %v", err)
+	}
+	projectID := state.Projects[0].ID
+
+	state, err = app.CreateTodo(CreateTodoRequest{
+		Title: "修复初始化 worktree",
+		Projects: []TodoProjectSelection{
+			{ProjectID: projectID},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	todoID := state.Todos[0].ID
+	state, err = app.ChangeTodoStatus(todoID, TodoStatusInProgress)
+	if err != nil {
+		t.Fatalf("ChangeTodoStatus() error = %v", err)
+	}
+
+	if len(state.TodoProjects) != 1 {
+		t.Fatalf("TodoProjects = %#v, want one associated project", state.TodoProjects)
+	}
+	todoProject := state.TodoProjects[0]
+	if todoProject.WorktreeStatus != WorktreeStatusReady || todoProject.WorktreePath == "" {
+		t.Fatalf("todoProject worktree = %#v, want ready worktree", todoProject)
+	}
+	if _, err := os.Stat(filepath.Join(todoProject.WorktreePath, "app.txt")); err != nil {
+		t.Fatalf("worktree app.txt stat error = %v, want initial file in worktree", err)
+	}
+}
+
+func TestAppInitializeGitRepositoryAndImportProjectDoesNotImportWhenInitializationFails(t *testing.T) {
+	projectDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	app.gitInit = func(path string) error {
+		if path != mustAbs(t, projectDir) {
+			t.Fatalf("git init path = %q, want %q", path, mustAbs(t, projectDir))
+		}
+		return errors.New("git commit failed: Author identity unknown")
+	}
+
+	if _, err := app.InitializeGitRepositoryAndImportProject(projectDir); err == nil || !strings.Contains(err.Error(), "git commit failed") {
+		t.Fatalf("InitializeGitRepositoryAndImportProject() error = %v, want git commit failure", err)
+	}
+	state, err := app.ListProjects()
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	if len(state.Projects) != 0 {
+		t.Fatalf("Projects = %#v, want no import after initialization failure", state.Projects)
+	}
+}
+
+func TestAppInitializeGitRepositoryAndImportProjectRemovesCreatedMetadataWhenInitializationFails(t *testing.T) {
+	projectDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	app.gitInit = func(path string) error {
+		if err := os.Mkdir(filepath.Join(path, ".git"), 0o755); err != nil {
+			t.Fatalf("mkdir .git: %v", err)
+		}
+		return errors.New("git commit failed: Author identity unknown")
+	}
+
+	if _, err := app.InitializeGitRepositoryAndImportProject(projectDir); err == nil {
+		t.Fatal("InitializeGitRepositoryAndImportProject() error = nil, want commit failure")
+	}
+	if pathHasGitRepositoryMetadata(projectDir) {
+		t.Fatal("pathHasGitRepositoryMetadata() = true, want failed initialization cleanup")
+	}
+}
+
 func TestAppUsesSavedTerminalShellForNewTerminals(t *testing.T) {
 	configDir := t.TempDir()
 	projectDir := t.TempDir()
@@ -3195,6 +3334,32 @@ func TestAppInitializeProjectGitRepositoryReturnsGitInitError(t *testing.T) {
 
 	if err := app.InitializeProjectGitRepository(projectID); err == nil {
 		t.Fatal("InitializeProjectGitRepository() error = nil, want error")
+	}
+}
+
+func TestAppInitializeProjectGitRepositoryRemovesCreatedMetadataWhenInitializationFails(t *testing.T) {
+	projectDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	projectID := state.Projects[0].ID
+	app.gitInit = func(path string) error {
+		if err := os.Mkdir(filepath.Join(path, ".git"), 0o755); err != nil {
+			t.Fatalf("mkdir .git: %v", err)
+		}
+		return errors.New("git commit failed: Author identity unknown")
+	}
+
+	if err := app.InitializeProjectGitRepository(projectID); err == nil {
+		t.Fatal("InitializeProjectGitRepository() error = nil, want commit failure")
+	}
+	if pathHasGitRepositoryMetadata(projectDir) {
+		t.Fatal("pathHasGitRepositoryMetadata() = true, want failed initialization cleanup")
 	}
 }
 

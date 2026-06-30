@@ -19,7 +19,7 @@ var errGitUnavailable = errors.New("Git is not installed")
 
 type gitCommandChecker func() error
 type gitStatusRunner func(context.Context, string) ([]byte, error)
-type gitInitRunner func(context.Context, string) ([]byte, error)
+type gitInitRunner func(context.Context, string, ...string) ([]byte, error)
 type gitBranchesRunner func(context.Context, string) ([]byte, error)
 type gitBranchRunner func(context.Context, string) ([]byte, error)
 type gitBranchMergedRunner func(context.Context, string, string, string) ([]byte, error)
@@ -197,15 +197,25 @@ func initializeGitRepositoryForPath(path string, checker gitCommandChecker, runn
 	ctx, cancel := context.WithTimeout(context.Background(), gitStatusTimeout)
 	defer cancel()
 
-	output, err := runner(ctx, path)
-	if err != nil {
-		if errorsIsDeadlineExceeded(ctx.Err()) {
-			return fmt.Errorf("git init timed out")
+	steps := []struct {
+		label string
+		args  []string
+	}{
+		{label: "git init", args: []string{"init"}},
+		{label: "git add", args: []string{"add", "-A"}},
+		{label: "git commit", args: []string{"commit", "-m", "chore: initial commit"}},
+	}
+	for _, step := range steps {
+		output, err := runner(ctx, path, step.args...)
+		if err != nil {
+			if errorsIsDeadlineExceeded(ctx.Err()) {
+				return fmt.Errorf("%s timed out", step.label)
+			}
+			if message := strings.TrimSpace(string(output)); message != "" {
+				return fmt.Errorf("%s failed: %w: %s", step.label, err, message)
+			}
+			return fmt.Errorf("%s failed: %w", step.label, err)
 		}
-		if message := strings.TrimSpace(string(output)); message != "" {
-			return fmt.Errorf("git init failed: %w: %s", err, message)
-		}
-		return fmt.Errorf("git init failed: %w", err)
 	}
 	return nil
 }
@@ -232,8 +242,9 @@ func runGitBranchesCommand(ctx context.Context, path string) ([]byte, error) {
 	return cmd.CombinedOutput()
 }
 
-func runGitInitCommand(ctx context.Context, path string) ([]byte, error) {
-	cmd := newBackgroundCommand(ctx, "git", "-C", path, "init")
+func runGitInitCommand(ctx context.Context, path string, args ...string) ([]byte, error) {
+	fullArgs := append([]string{"-C", path}, args...)
+	cmd := newBackgroundCommand(ctx, "git", fullArgs...)
 	return cmd.CombinedOutput()
 }
 
