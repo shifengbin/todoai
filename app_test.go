@@ -3249,6 +3249,326 @@ func TestAppCompletedTodoProjectMergeStatusMapsUnmergedAndErrors(t *testing.T) {
 	}
 }
 
+func TestAppCompletedTodoProjectMergeStatusPersistsRemovedWorktreePath(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	app := NewAppWithConfigAndShellStarter(
+		configPath,
+		newFakeShellStarter().Start,
+	)
+	writeProjectStateForTest(t, configPath, ProjectState{
+		Version: projectConfigVersion,
+		Todos: []Todo{completedTodoWithSnapshotForTest(TodoProjectSnapshot{
+			ProjectID:      "project-a",
+			Name:           "frontend",
+			Path:           "/work/frontend",
+			WorktreeBranch: "todo/fix-login",
+			BaseBranch:     "main",
+		})},
+	})
+	app.gitBranchMerged = func(path string, worktreeBranch string, baseBranch string) (bool, error) {
+		return false, errGitWorktreePathMissing
+	}
+
+	statuses, err := app.GetCompletedTodoProjectMergeStatuses([]CompletedTodoProjectMergeStatusRequest{
+		completedMergeStatusRequestForTest("todo-a", 0, "/work/frontend", "todo/fix-login", "main"),
+	})
+	if err != nil {
+		t.Fatalf("GetCompletedTodoProjectMergeStatuses() error = %v", err)
+	}
+
+	if len(statuses) != 1 || statuses[0].Status != CompletedTodoProjectMergeStatusMerged {
+		t.Fatalf("statuses = %#v, want merged status for removed worktree path", statuses)
+	}
+	state, err := app.projects.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	snapshot := state.Todos[0].ProjectSnapshots[0]
+	if snapshot.MergeStatus != CompletedTodoProjectMergeStatusConfirmed ||
+		snapshot.MergeStatusReason != CompletedTodoProjectMergeStatusReasonWorktreeRemoved {
+		t.Fatalf("snapshot merge status = %q/%q, want confirmed/worktree removed", snapshot.MergeStatus, snapshot.MergeStatusReason)
+	}
+}
+
+func TestAppCompletedTodoProjectMergeStatusPersistsRemovedWorktreeBranch(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	app := NewAppWithConfigAndShellStarter(
+		configPath,
+		newFakeShellStarter().Start,
+	)
+	writeProjectStateForTest(t, configPath, ProjectState{
+		Version: projectConfigVersion,
+		Todos: []Todo{completedTodoWithSnapshotForTest(TodoProjectSnapshot{
+			ProjectID:      "project-a",
+			Name:           "frontend",
+			Path:           "/work/frontend",
+			WorktreeBranch: "todo/fix-login",
+			BaseBranch:     "main",
+		})},
+	})
+	app.gitBranchMerged = func(path string, worktreeBranch string, baseBranch string) (bool, error) {
+		return false, errGitWorktreeBranchMissing
+	}
+
+	statuses, err := app.GetCompletedTodoProjectMergeStatuses([]CompletedTodoProjectMergeStatusRequest{
+		completedMergeStatusRequestForTest("todo-a", 0, "/work/frontend", "todo/fix-login", "main"),
+	})
+	if err != nil {
+		t.Fatalf("GetCompletedTodoProjectMergeStatuses() error = %v", err)
+	}
+
+	if len(statuses) != 1 || statuses[0].Status != CompletedTodoProjectMergeStatusMerged {
+		t.Fatalf("statuses = %#v, want merged status for removed worktree branch", statuses)
+	}
+	state, err := app.projects.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	snapshot := state.Todos[0].ProjectSnapshots[0]
+	if snapshot.MergeStatus != CompletedTodoProjectMergeStatusConfirmed ||
+		snapshot.MergeStatusReason != CompletedTodoProjectMergeStatusReasonWorktreeBranchRemoved {
+		t.Fatalf("snapshot merge status = %q/%q, want confirmed/worktree branch removed", snapshot.MergeStatus, snapshot.MergeStatusReason)
+	}
+}
+
+func TestAppCompletedTodoProjectMergeStatusPersistsOnlyConfirmedResults(t *testing.T) {
+	tests := []struct {
+		name        string
+		merged      bool
+		mergeErr    error
+		wantStatus  string
+		wantReason  string
+		wantPersist bool
+	}{
+		{
+			name:        "merged persists",
+			merged:      true,
+			wantStatus:  CompletedTodoProjectMergeStatusMerged,
+			wantReason:  CompletedTodoProjectMergeStatusReasonMerged,
+			wantPersist: true,
+		},
+		{
+			name:       "unmerged does not persist",
+			merged:     false,
+			wantStatus: CompletedTodoProjectMergeStatusUnmerged,
+		},
+		{
+			name:       "unknown does not persist",
+			mergeErr:   errors.New("git failed"),
+			wantStatus: CompletedTodoProjectMergeStatusUnknown,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), "projects.json")
+			app := NewAppWithConfigAndShellStarter(
+				configPath,
+				newFakeShellStarter().Start,
+			)
+			writeProjectStateForTest(t, configPath, ProjectState{
+				Version: projectConfigVersion,
+				Todos: []Todo{completedTodoWithSnapshotForTest(TodoProjectSnapshot{
+					ProjectID:      "project-a",
+					Name:           "frontend",
+					Path:           "/work/frontend",
+					WorktreeBranch: "todo/fix-login",
+					BaseBranch:     "main",
+				})},
+			})
+			app.gitBranchMerged = func(path string, worktreeBranch string, baseBranch string) (bool, error) {
+				return tt.merged, tt.mergeErr
+			}
+
+			statuses, err := app.GetCompletedTodoProjectMergeStatuses([]CompletedTodoProjectMergeStatusRequest{
+				completedMergeStatusRequestForTest("todo-a", 0, "/work/frontend", "todo/fix-login", "main"),
+			})
+			if err != nil {
+				t.Fatalf("GetCompletedTodoProjectMergeStatuses() error = %v", err)
+			}
+			if len(statuses) != 1 || statuses[0].Status != tt.wantStatus {
+				t.Fatalf("statuses = %#v, want %s", statuses, tt.wantStatus)
+			}
+
+			state, err := app.projects.Load()
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			snapshot := state.Todos[0].ProjectSnapshots[0]
+			if tt.wantPersist {
+				if snapshot.MergeStatus != CompletedTodoProjectMergeStatusConfirmed || snapshot.MergeStatusReason != tt.wantReason {
+					t.Fatalf("snapshot merge status = %q/%q, want confirmed/%s", snapshot.MergeStatus, snapshot.MergeStatusReason, tt.wantReason)
+				}
+			} else if snapshot.MergeStatus != "" || snapshot.MergeStatusReason != "" {
+				t.Fatalf("snapshot merge status = %q/%q, want empty", snapshot.MergeStatus, snapshot.MergeStatusReason)
+			}
+		})
+	}
+}
+
+func TestAppCompletedTodoProjectMergeStatusSkipsStaleOrNonCompletedWriteback(t *testing.T) {
+	tests := []struct {
+		name    string
+		todo    Todo
+		request CompletedTodoProjectMergeStatusRequest
+	}{
+		{
+			name: "fingerprint mismatch",
+			todo: completedTodoWithSnapshotForTest(TodoProjectSnapshot{
+				ProjectID:      "project-a",
+				Name:           "frontend",
+				Path:           "/work/frontend",
+				WorktreeBranch: "todo/fix-login",
+				BaseBranch:     "main",
+			}),
+			request: completedMergeStatusRequestForTest("todo-a", 0, "/work/frontend", "todo/fix-login", "release"),
+		},
+		{
+			name: "todo not completed",
+			todo: Todo{
+				ID:       "todo-a",
+				Title:    "修复登录问题",
+				Priority: TodoPriorityMedium,
+				Status:   TodoStatusInProgress,
+				ProjectSnapshots: []TodoProjectSnapshot{{
+					ProjectID:      "project-a",
+					Name:           "frontend",
+					Path:           "/work/frontend",
+					WorktreeBranch: "todo/fix-login",
+					BaseBranch:     "main",
+				}},
+				CreatedAt: "2026-06-01T00:00:00Z",
+			},
+			request: completedMergeStatusRequestForTest("todo-a", 0, "/work/frontend", "todo/fix-login", "main"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), "projects.json")
+			app := NewAppWithConfigAndShellStarter(
+				configPath,
+				newFakeShellStarter().Start,
+			)
+			writeProjectStateForTest(t, configPath, ProjectState{
+				Version: projectConfigVersion,
+				Todos:   []Todo{tt.todo},
+			})
+			app.gitBranchMerged = func(path string, worktreeBranch string, baseBranch string) (bool, error) {
+				return true, nil
+			}
+
+			if _, err := app.GetCompletedTodoProjectMergeStatuses([]CompletedTodoProjectMergeStatusRequest{tt.request}); err != nil {
+				t.Fatalf("GetCompletedTodoProjectMergeStatuses() error = %v", err)
+			}
+			state, err := app.projects.Load()
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			snapshot := state.Todos[0].ProjectSnapshots[0]
+			if snapshot.MergeStatus != "" || snapshot.MergeStatusReason != "" {
+				t.Fatalf("snapshot merge status = %q/%q, want empty", snapshot.MergeStatus, snapshot.MergeStatusReason)
+			}
+		})
+	}
+}
+
+func TestAppCompletedTodoProjectMergeStatusPersistsMatchingCompletedTodoAfterOtherTodos(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	app := NewAppWithConfigAndShellStarter(
+		configPath,
+		newFakeShellStarter().Start,
+	)
+	matching := completedTodoWithSnapshotForTest(TodoProjectSnapshot{
+		ProjectID:      "project-a",
+		Name:           "frontend",
+		Path:           "/work/frontend",
+		WorktreeBranch: "todo/fix-login",
+		BaseBranch:     "main",
+	})
+	writeProjectStateForTest(t, configPath, ProjectState{
+		Version: projectConfigVersion,
+		Todos: []Todo{
+			{
+				ID:        "todo-other",
+				Title:     "其它任务",
+				Priority:  TodoPriorityMedium,
+				Status:    TodoStatusCompleted,
+				CreatedAt: "2026-06-01T00:00:00Z",
+			},
+			matching,
+		},
+	})
+	app.gitBranchMerged = func(path string, worktreeBranch string, baseBranch string) (bool, error) {
+		return true, nil
+	}
+
+	if _, err := app.GetCompletedTodoProjectMergeStatuses([]CompletedTodoProjectMergeStatusRequest{
+		completedMergeStatusRequestForTest("todo-a", 0, "/work/frontend", "todo/fix-login", "main"),
+	}); err != nil {
+		t.Fatalf("GetCompletedTodoProjectMergeStatuses() error = %v", err)
+	}
+
+	state, err := app.projects.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	snapshot := state.Todos[1].ProjectSnapshots[0]
+	if snapshot.MergeStatus != CompletedTodoProjectMergeStatusConfirmed ||
+		snapshot.MergeStatusReason != CompletedTodoProjectMergeStatusReasonMerged {
+		t.Fatalf("snapshot merge status = %q/%q, want confirmed/merged", snapshot.MergeStatus, snapshot.MergeStatusReason)
+	}
+}
+
+func completedTodoWithSnapshotForTest(snapshot TodoProjectSnapshot) Todo {
+	return Todo{
+		ID:               "todo-a",
+		Title:            "修复登录问题",
+		Priority:         TodoPriorityMedium,
+		Status:           TodoStatusCompleted,
+		ProjectSnapshots: []TodoProjectSnapshot{snapshot},
+		CreatedAt:        "2026-06-01T00:00:00Z",
+		CompletedAt:      "2026-06-02T00:00:00Z",
+		ArchivedAt:       "2026-06-02T00:00:00Z",
+	}
+}
+
+func completedMergeStatusRequestForTest(todoID string, snapshotIndex int, path string, worktreeBranch string, baseBranch string) CompletedTodoProjectMergeStatusRequest {
+	return CompletedTodoProjectMergeStatusRequest{
+		ID:             "todo-a::project-a::" + path + "::0",
+		TodoID:         todoID,
+		SnapshotIndex:  snapshotIndex,
+		Path:           path,
+		WorktreeBranch: worktreeBranch,
+		BaseBranch:     baseBranch,
+		Fingerprint:    completedMergeStatusFingerprintForTest(path, worktreeBranch, baseBranch),
+	}
+}
+
+func completedMergeStatusFingerprintForTest(path string, worktreeBranch string, baseBranch string) string {
+	return strings.Join([]string{path, worktreeBranch, baseBranch}, "::")
+}
+
+func writeProjectStateForTest(t *testing.T, configPath string, state ProjectState) {
+	t.Helper()
+	if state.Projects == nil {
+		state.Projects = []Project{}
+	}
+	if state.TodoProjects == nil {
+		state.TodoProjects = []TodoProject{}
+	}
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		t.Fatalf("MarshalIndent() error = %v", err)
+	}
+	if err := os.WriteFile(configPath, data, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+}
+
 func TestAppInitializesProjectGitRepositoryForAvailableProject(t *testing.T) {
 	projectDir := t.TempDir()
 	app := NewAppWithConfigAndShellStarter(

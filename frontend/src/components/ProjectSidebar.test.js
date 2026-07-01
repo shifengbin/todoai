@@ -792,6 +792,37 @@ describe('ProjectSidebar', () => {
     expect(status.attributes('title')).toBe('Checking merge status')
   })
 
+  it('shows persisted completed snapshot status even when historical branch fields are missing', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        completedMergeStatuses: {
+          'todo-completed::project-legacy::/work/legacy-alpha::0': { id: 'todo-completed::project-legacy::/work/legacy-alpha::0', status: 'merged' }
+        },
+        todos: [
+          {
+            id: 'todo-completed',
+            title: '已完成任务',
+            status: 'completed',
+            completedAt: '2026-06-10T10:00:00Z',
+            projectSnapshots: [
+              {
+                projectId: 'project-legacy',
+                name: 'legacy-alpha',
+                path: '/work/legacy-alpha'
+              }
+            ]
+          }
+        ]
+      }
+    })
+
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
+
+    const status = wrapper.find('[data-testid="completed-project-merge-status-todo-completed-project-legacy-0"]')
+    expect(status.classes()).toContain('merged')
+    expect(status.attributes('title')).toBe('Merged')
+  })
+
   it('shows terminal activity in the TODO tree', () => {
     const wrapper = mountSidebar({
       props: {

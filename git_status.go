@@ -15,7 +15,11 @@ import (
 
 const gitStatusTimeout = 2 * time.Second
 
-var errGitUnavailable = errors.New("Git is not installed")
+var (
+	errGitUnavailable           = errors.New("Git is not installed")
+	errGitWorktreePathMissing   = errors.New("git worktree path is missing")
+	errGitWorktreeBranchMissing = errors.New("git worktree branch is missing")
+)
 
 type gitCommandChecker func() error
 type gitStatusRunner func(context.Context, string) ([]byte, error)
@@ -184,9 +188,26 @@ func gitBranchMergedForPath(path string, worktreeBranch string, baseBranch strin
 		return false, nil
 	}
 	if message := strings.TrimSpace(string(output)); message != "" {
+		if specialErr := classifyGitMergeBaseError(message, worktreeBranch); specialErr != nil {
+			return false, specialErr
+		}
 		return false, fmt.Errorf("git merge-base failed: %w: %s", err, message)
 	}
 	return false, fmt.Errorf("git merge-base failed: %w", err)
+}
+
+func classifyGitMergeBaseError(message string, worktreeBranch string) error {
+	normalized := strings.ToLower(message)
+	switch {
+	case strings.Contains(normalized, "cannot change to") &&
+		(strings.Contains(normalized, "no such file") || strings.Contains(normalized, "not a directory")):
+		return errGitWorktreePathMissing
+	case strings.Contains(normalized, "not a valid object name") &&
+		strings.Contains(normalized, strings.ToLower(worktreeBranch)):
+		return errGitWorktreeBranchMissing
+	default:
+		return nil
+	}
 }
 
 func initializeGitRepositoryForPath(path string, checker gitCommandChecker, runner gitInitRunner) error {

@@ -386,6 +386,66 @@ func TestGitBranchMergedForPathTreatsUnexpectedExitCodeAsUnknown(t *testing.T) {
 	}
 }
 
+func TestGitBranchMergedForPathTreatsMissingWorktreePathAsCleanup(t *testing.T) {
+	errExitTwo := exec.Command("sh", "-c", "exit 2").Run()
+	var exitErr *exec.ExitError
+	if !errors.As(errExitTwo, &exitErr) {
+		t.Fatalf("exit error = %T, want *exec.ExitError", errExitTwo)
+	}
+
+	merged, err := gitBranchMergedForPath("/work/missing", "todo/fix-login", "main", gitAvailable, func(ctx context.Context, path string, worktreeBranch string, baseBranch string) ([]byte, error) {
+		return []byte("fatal: cannot change to '/work/missing': No such file or directory"), exitErr
+	})
+
+	if !errors.Is(err, errGitWorktreePathMissing) {
+		t.Fatalf("gitBranchMergedForPath() error = %v, want errGitWorktreePathMissing", err)
+	}
+	if merged {
+		t.Fatal("merged = true, want false")
+	}
+}
+
+func TestGitBranchMergedForPathTreatsMissingWorktreeBranchAsCleanup(t *testing.T) {
+	errExitTwo := exec.Command("sh", "-c", "exit 2").Run()
+	var exitErr *exec.ExitError
+	if !errors.As(errExitTwo, &exitErr) {
+		t.Fatalf("exit error = %T, want *exec.ExitError", errExitTwo)
+	}
+
+	merged, err := gitBranchMergedForPath("/work/repo", "todo/fix-login", "main", gitAvailable, func(ctx context.Context, path string, worktreeBranch string, baseBranch string) ([]byte, error) {
+		return []byte("fatal: Not a valid object name todo/fix-login"), exitErr
+	})
+
+	if !errors.Is(err, errGitWorktreeBranchMissing) {
+		t.Fatalf("gitBranchMergedForPath() error = %v, want errGitWorktreeBranchMissing", err)
+	}
+	if merged {
+		t.Fatal("merged = true, want false")
+	}
+}
+
+func TestGitBranchMergedForPathKeepsMissingBaseBranchUnknown(t *testing.T) {
+	errExitTwo := exec.Command("sh", "-c", "exit 2").Run()
+	var exitErr *exec.ExitError
+	if !errors.As(errExitTwo, &exitErr) {
+		t.Fatalf("exit error = %T, want *exec.ExitError", errExitTwo)
+	}
+
+	merged, err := gitBranchMergedForPath("/work/repo", "todo/fix-login", "main", gitAvailable, func(ctx context.Context, path string, worktreeBranch string, baseBranch string) ([]byte, error) {
+		return []byte("fatal: Not a valid object name main"), exitErr
+	})
+
+	if err == nil {
+		t.Fatal("gitBranchMergedForPath() error = nil, want unknown error")
+	}
+	if errors.Is(err, errGitWorktreeBranchMissing) {
+		t.Fatalf("gitBranchMergedForPath() error = %v, want generic unknown error", err)
+	}
+	if merged {
+		t.Fatal("merged = true, want false")
+	}
+}
+
 func TestGitBranchMergedForPathTreatsExitOneAsUnmerged(t *testing.T) {
 	errExitOne := exec.Command("sh", "-c", "exit 1").Run()
 	var exitErr *exec.ExitError

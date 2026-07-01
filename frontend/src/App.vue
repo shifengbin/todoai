@@ -2466,16 +2466,28 @@ function completedSnapshotBranchLabel(snapshot) {
 }
 
 function completedMergeStatusRequestFor(todo, snapshot, index) {
-  return {
+  const request = {
     id: completedSnapshotKey(todo, snapshot, index),
+    todoId: (todo?.id || '').trim(),
+    snapshotIndex: index,
     path: (snapshot?.path || '').trim(),
     worktreeBranch: (snapshot?.worktreeBranch || '').trim(),
     baseBranch: (snapshot?.baseBranch || '').trim()
   }
+  request.fingerprint = completedMergeStatusFingerprint(request)
+  return request
 }
 
 function completedMergeStatusFingerprint(request) {
   return [request.path, request.worktreeBranch, request.baseBranch].join('::')
+}
+
+function completedSnapshotPersistedMergeStatus(snapshot) {
+  const mergeStatus = (snapshot?.mergeStatus || '').trim()
+  if (mergeStatus === 'confirmed' || mergeStatus === 'merged') {
+    return 'merged'
+  }
+  return ''
 }
 
 function completedMergeStatusEntries() {
@@ -2483,10 +2495,13 @@ function completedMergeStatusEntries() {
   for (const todo of completedTodosWithSnapshots()) {
     for (const [index, snapshot] of todo.projectSnapshots.entries()) {
       const request = completedMergeStatusRequestFor(todo, snapshot, index)
+      const persistedStatus = completedSnapshotPersistedMergeStatus(snapshot)
       entries.push({
         key: completedSnapshotKey(todo, snapshot, index),
         request,
-        fingerprint: completedMergeStatusFingerprint(request)
+        fingerprint: completedMergeStatusFingerprint(request),
+        persistedStatus,
+        persistedReason: (snapshot?.mergeStatusReason || '').trim()
       })
     }
   }
@@ -2499,9 +2514,19 @@ function scheduleCompletedMergeStatusRefresh(options = {}) {
   })
 }
 
+function retainedTerminalCompletedMergeStatuses(statuses) {
+  const retained = {}
+  for (const [key, value] of Object.entries(statuses || {})) {
+    if (value?.status === 'merged' || value?.status === 'confirmed') {
+      retained[key] = value
+    }
+  }
+  return retained
+}
+
 async function refreshCompletedMergeStatuses(options = {}) {
   if (options.force === true) {
-    completedMergeStatuses.value = {}
+    completedMergeStatuses.value = retainedTerminalCompletedMergeStatuses(completedMergeStatuses.value)
   }
   const entries = completedMergeStatusEntries()
   const entryKeys = new Set(entries.map((entry) => entry.key))
@@ -2509,6 +2534,15 @@ async function refreshCompletedMergeStatuses(options = {}) {
   const requests = []
 
   for (const entry of entries) {
+    if (entry.persistedStatus) {
+      nextStatuses[entry.key] = {
+        id: entry.key,
+        status: entry.persistedStatus,
+        reason: entry.persistedReason,
+        fingerprint: entry.fingerprint
+      }
+      continue
+    }
     const existing = completedMergeStatuses.value[entry.key]
     if (existing?.fingerprint === entry.fingerprint) {
       nextStatuses[entry.key] = existing

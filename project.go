@@ -37,9 +37,14 @@ const (
 )
 
 const (
-	CompletedTodoProjectMergeStatusMerged   = "merged"
-	CompletedTodoProjectMergeStatusUnmerged = "unmerged"
-	CompletedTodoProjectMergeStatusUnknown  = "unknown"
+	CompletedTodoProjectMergeStatusMerged    = "merged"
+	CompletedTodoProjectMergeStatusUnmerged  = "unmerged"
+	CompletedTodoProjectMergeStatusUnknown   = "unknown"
+	CompletedTodoProjectMergeStatusConfirmed = "confirmed"
+
+	CompletedTodoProjectMergeStatusReasonMerged                = "merged"
+	CompletedTodoProjectMergeStatusReasonWorktreeRemoved       = "worktree-removed"
+	CompletedTodoProjectMergeStatusReasonWorktreeBranchRemoved = "worktree-branch-removed"
 )
 
 type Project struct {
@@ -126,18 +131,23 @@ type TodoProject struct {
 }
 
 type TodoProjectSnapshot struct {
-	ProjectID      string `json:"projectId"`
-	Name           string `json:"name"`
-	Path           string `json:"path"`
-	BaseBranch     string `json:"baseBranch,omitempty"`
-	WorktreeBranch string `json:"worktreeBranch,omitempty"`
+	ProjectID         string `json:"projectId"`
+	Name              string `json:"name"`
+	Path              string `json:"path"`
+	BaseBranch        string `json:"baseBranch,omitempty"`
+	WorktreeBranch    string `json:"worktreeBranch,omitempty"`
+	MergeStatus       string `json:"mergeStatus,omitempty"`
+	MergeStatusReason string `json:"mergeStatusReason,omitempty"`
 }
 
 type CompletedTodoProjectMergeStatusRequest struct {
 	ID             string `json:"id"`
+	TodoID         string `json:"todoId,omitempty"`
+	SnapshotIndex  int    `json:"snapshotIndex,omitempty"`
 	Path           string `json:"path,omitempty"`
 	WorktreeBranch string `json:"worktreeBranch,omitempty"`
 	BaseBranch     string `json:"baseBranch,omitempty"`
+	Fingerprint    string `json:"fingerprint,omitempty"`
 }
 
 type CompletedTodoProjectMergeStatus struct {

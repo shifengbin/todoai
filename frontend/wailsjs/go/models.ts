@@ -38,9 +38,12 @@ export namespace main {
 	}
 	export class CompletedTodoProjectMergeStatusRequest {
 	    id: string;
+	    todoId?: string;
+	    snapshotIndex?: number;
 	    path?: string;
 	    worktreeBranch?: string;
 	    baseBranch?: string;
+	    fingerprint?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new CompletedTodoProjectMergeStatusRequest(source);
@@ -49,9 +52,12 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
+	        this.todoId = source["todoId"];
+	        this.snapshotIndex = source["snapshotIndex"];
 	        this.path = source["path"];
 	        this.worktreeBranch = source["worktreeBranch"];
 	        this.baseBranch = source["baseBranch"];
+	        this.fingerprint = source["fingerprint"];
 	    }
 	}
 	export class TodoLifecycleScriptSnapshot {
@@ -356,6 +362,8 @@ export namespace main {
 	    path: string;
 	    baseBranch?: string;
 	    worktreeBranch?: string;
+	    mergeStatus?: string;
+	    mergeStatusReason?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new TodoProjectSnapshot(source);
@@ -368,6 +376,8 @@ export namespace main {
 	        this.path = source["path"];
 	        this.baseBranch = source["baseBranch"];
 	        this.worktreeBranch = source["worktreeBranch"];
+	        this.mergeStatus = source["mergeStatus"];
+	        this.mergeStatusReason = source["mergeStatusReason"];
 	    }
 	}
 	export class Todo {

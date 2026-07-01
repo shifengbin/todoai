@@ -2610,12 +2610,88 @@ describe('App project terminal tree', () => {
     expect(GetCompletedTodoProjectMergeStatuses).toHaveBeenCalledWith([
       {
         id: 'todo-a::project-a::/work/alpha::0',
+        todoId: 'todo-a',
+        snapshotIndex: 0,
         path: '/work/alpha',
         worktreeBranch: 'feature/login',
-        baseBranch: 'main'
+        baseBranch: 'main',
+        fingerprint: '/work/alpha::feature/login::main'
       }
     ])
     expect(wrapper.find('[data-testid="completed-project-merge-status-todo-a-project-a-0"]').classes()).toContain('merged')
+  })
+
+  it('uses persisted completed snapshot merge status without querying again', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        todos: [
+          completedTodo({
+            projectSnapshots: [
+              {
+                projectId: 'project-a',
+                name: 'alpha',
+                path: '/work/alpha',
+                worktreeBranch: 'feature/login',
+                baseBranch: 'main',
+                mergeStatus: 'confirmed',
+                mergeStatusReason: 'worktree-removed'
+              }
+            ]
+          })
+        ],
+        todoProjects: [],
+        terminals: [],
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
+    await flushPromises()
+
+    expect(GetCompletedTodoProjectMergeStatuses).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="completed-project-merge-status-todo-a-project-a-0"]').classes()).toContain('merged')
+  })
+
+  it('does not recheck a completed snapshot after it has shown a checkmark', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        todos: [
+          completedTodo({
+            projectSnapshots: [
+              {
+                projectId: 'project-a',
+                name: 'alpha',
+                path: '/work/alpha',
+                worktreeBranch: 'feature/login',
+                baseBranch: 'main'
+              }
+            ]
+          })
+        ],
+        todoProjects: [],
+        terminals: [],
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      })
+    )
+    appApiMock.GetCompletedTodoProjectMergeStatuses.mockResolvedValue([
+      { id: 'todo-a::project-a::/work/alpha::0', status: 'merged', reason: 'worktree-removed' }
+    ])
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="completed-project-merge-status-todo-a-project-a-0"]').classes()).toContain('merged')
+
+    await wrapper.find('[data-testid="todo-view-not-started"]').trigger('click')
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
+    await flushPromises()
+
+    expect(GetCompletedTodoProjectMergeStatuses).toHaveBeenCalledTimes(1)
   })
 
   it('rechecks completed snapshot merge status when returning to the completed view', async () => {
@@ -2800,9 +2876,12 @@ describe('App project terminal tree', () => {
     expect(GetCompletedTodoProjectMergeStatuses).toHaveBeenLastCalledWith([
       {
         id: 'todo-a::project-b::/work/beta::1',
+        todoId: 'todo-a',
+        snapshotIndex: 1,
         path: '/work/beta',
         worktreeBranch: 'feature/beta',
-        baseBranch: 'main'
+        baseBranch: 'main',
+        fingerprint: '/work/beta::feature/beta::main'
       }
     ])
     expect(wrapper.find('[data-testid="completed-project-merge-status-todo-a-project-a-0"]').classes()).toContain('merged')
@@ -2868,9 +2947,12 @@ describe('App project terminal tree', () => {
     expect(GetCompletedTodoProjectMergeStatuses).toHaveBeenLastCalledWith([
       {
         id: 'todo-a::project-a::/work/alpha::0',
+        todoId: 'todo-a',
+        snapshotIndex: 0,
         path: '/work/alpha',
         worktreeBranch: 'feature/login',
-        baseBranch: 'release/2026'
+        baseBranch: 'release/2026',
+        fingerprint: '/work/alpha::feature/login::release/2026'
       }
     ])
     expect(wrapper.find('[data-testid="completed-project-merge-status-todo-a-project-a-0"]').classes()).toContain('unmerged')

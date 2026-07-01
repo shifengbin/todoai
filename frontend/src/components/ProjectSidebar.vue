@@ -1088,10 +1088,16 @@ function completedSnapshotBranchLabel(snapshot) {
 function completedMergeStatus(todo, snapshot, index) {
   const key = completedSnapshotKey(todo, snapshot, index)
   const status = props.completedMergeStatuses[key]?.status || ''
+  if (status === 'confirmed') {
+    return 'merged'
+  }
+  if (['merged', 'unmerged', 'unknown'].includes(status)) {
+    return status
+  }
   if (!snapshot?.worktreeBranch || !snapshot?.baseBranch) {
     return 'unknown'
   }
-  return ['merged', 'unmerged', 'unknown'].includes(status) ? status : 'checking'
+  return 'checking'
 }
 
 function completedMergeStatusTitle(status) {

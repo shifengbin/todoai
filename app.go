@@ -1248,15 +1248,74 @@ func (a *App) completedTodoProjectMergeStatus(request CompletedTodoProjectMergeS
 	}
 	merged, err := a.gitBranchMerged(path, worktreeBranch, baseBranch)
 	if err != nil {
+		if errors.Is(err, errGitWorktreePathMissing) {
+			return a.confirmedCompletedTodoProjectMergeStatus(request, status, CompletedTodoProjectMergeStatusReasonWorktreeRemoved)
+		}
+		if errors.Is(err, errGitWorktreeBranchMissing) {
+			return a.confirmedCompletedTodoProjectMergeStatus(request, status, CompletedTodoProjectMergeStatusReasonWorktreeBranchRemoved)
+		}
 		status.Reason = err.Error()
 		return status
 	}
 	if merged {
-		status.Status = CompletedTodoProjectMergeStatusMerged
-		return status
+		return a.confirmedCompletedTodoProjectMergeStatus(request, status, CompletedTodoProjectMergeStatusReasonMerged)
 	}
 	status.Status = CompletedTodoProjectMergeStatusUnmerged
 	return status
+}
+
+func (a *App) confirmedCompletedTodoProjectMergeStatus(request CompletedTodoProjectMergeStatusRequest, status CompletedTodoProjectMergeStatus, reason string) CompletedTodoProjectMergeStatus {
+	status.Status = CompletedTodoProjectMergeStatusMerged
+	status.Reason = reason
+	a.persistCompletedTodoProjectMergeStatus(request, reason)
+	return status
+}
+
+func (a *App) persistCompletedTodoProjectMergeStatus(request CompletedTodoProjectMergeStatusRequest, reason string) {
+	todoID := strings.TrimSpace(request.TodoID)
+	fingerprint := strings.TrimSpace(request.Fingerprint)
+	if todoID == "" || fingerprint == "" || request.SnapshotIndex < 0 {
+		return
+	}
+
+	a.projects.mu.Lock()
+	defer a.projects.mu.Unlock()
+
+	state, err := a.projects.loadLocked()
+	if err != nil {
+		return
+	}
+	for todoIndex := range state.Todos {
+		todo := &state.Todos[todoIndex]
+		if todo.ID != todoID {
+			continue
+		}
+		if todo.Status != TodoStatusCompleted {
+			return
+		}
+		if request.SnapshotIndex >= len(todo.ProjectSnapshots) {
+			return
+		}
+		snapshot := &todo.ProjectSnapshots[request.SnapshotIndex]
+		if completedTodoProjectSnapshotFingerprint(*snapshot) != fingerprint {
+			return
+		}
+		if snapshot.MergeStatus == CompletedTodoProjectMergeStatusConfirmed {
+			return
+		}
+		snapshot.MergeStatus = CompletedTodoProjectMergeStatusConfirmed
+		snapshot.MergeStatusReason = reason
+		_ = a.projects.saveLocked(state)
+		return
+	}
+}
+
+func completedTodoProjectSnapshotFingerprint(snapshot TodoProjectSnapshot) string {
+	return strings.Join([]string{
+		strings.TrimSpace(snapshot.Path),
+		strings.TrimSpace(snapshot.WorktreeBranch),
+		strings.TrimSpace(snapshot.BaseBranch),
+	}, "::")
 }
 
 func (a *App) InitializeProjectGitRepository(projectID string) error {
