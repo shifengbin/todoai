@@ -166,6 +166,7 @@ export namespace main {
 	    behind: number;
 	    pathUnavailable?: boolean;
 	    gitUnavailable?: boolean;
+	    worktreeCleared?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new GitStatus(source);
@@ -184,6 +185,7 @@ export namespace main {
 	        this.behind = source["behind"];
 	        this.pathUnavailable = source["pathUnavailable"];
 	        this.gitUnavailable = source["gitUnavailable"];
+	        this.worktreeCleared = source["worktreeCleared"];
 	    }
 	}
 	export class Project {

@@ -616,6 +616,79 @@ describe('ProjectSidebar', () => {
     expect(todoProjectRow.text()).not.toContain('/work/alpha-copy')
   })
 
+  it('shows cleared worktree state in the TODO project branch suffix', async () => {
+    const wrapper = mountInProgressSidebar({
+      props: {
+        todoProjectBranches: {
+          'todo-project-a': 'feature/stale-worktree'
+        },
+        todoProjects: [
+          {
+            id: 'todo-project-a',
+            todoId: 'todo-a',
+            projectId: 'project-a',
+            worktreeStatus: 'cleared',
+            worktreeBranch: 'todo/stale-worktree',
+            worktreePath: '/work/customer-a/tasks/abc123/alpha'
+          }
+        ]
+      }
+    })
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+
+    const label = wrapper.find('[data-testid="todo-project-name-todo-project-a"]').text()
+    expect(label).toBe('alpha(worktree已清除)')
+    expect(label).not.toContain('todo/stale-worktree')
+    expect(label).not.toContain('feature/stale-worktree')
+  })
+
+  it('keeps launch menu available only for eligible TODO project rows', async () => {
+    const wrapper = mountInProgressSidebar({
+      props: {
+        projects: [
+          { id: 'project-a', name: 'alpha', path: '/work/alpha', available: true },
+          { id: 'project-b', name: 'beta', path: '/work/beta', available: true },
+          { id: 'project-c', name: 'gamma', path: '/missing/gamma', available: false }
+        ],
+        todoProjects: [
+          {
+            id: 'todo-project-cleared',
+            todoId: 'todo-a',
+            projectId: 'project-a',
+            worktreeStatus: 'cleared',
+            worktreePath: '/work/customer-a/tasks/abc123/alpha'
+          },
+          {
+            id: 'todo-project-failed',
+            todoId: 'todo-a',
+            projectId: 'project-b',
+            worktreeStatus: 'failed',
+            worktreeError: 'worktree failed'
+          },
+          {
+            id: 'todo-project-unavailable',
+            todoId: 'todo-a',
+            projectId: 'project-c',
+            worktreeStatus: 'cleared'
+          }
+        ],
+        terminals: [],
+        activeTodoProjectId: 'todo-project-cleared',
+        launchProfiles: [{ name: 'codex', command: 'codex', enabled: true }]
+      }
+    })
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+    await wrapper.find('[data-testid="add-terminal-todo-project-cleared"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="terminal-launch-menu-todo-project-cleared"]').text()).toContain('Terminal')
+    expect(wrapper.find('[data-testid="terminal-launch-menu-todo-project-cleared"]').text()).toContain('codex')
+    expect(wrapper.find('[data-testid="add-terminal-todo-project-failed"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-testid="add-terminal-todo-project-unavailable"]').exists()).toBe(false)
+  })
+
   it('collapses and expands a TODO branch independently', async () => {
     const wrapper = mountSidebar()
 

@@ -769,9 +769,11 @@ func (manager *ShellSessionManager) registerTerminalLocked(todoProject TodoProje
 	shellPath := manager.shellPathResolver()
 	now := manager.now().UTC().Format(time.RFC3339)
 	// A TODO project terminal runs inside its prepared worktree so its file
-	// changes are isolated from the original project checkout.
+	// changes are isolated from the original project checkout. If that worktree
+	// has since been cleared, the app-level terminal gate falls back to the
+	// original project path before registering the terminal.
 	workingDir := project.Path
-	if todoProject.WorktreePath != "" {
+	if todoProject.WorktreeStatus == WorktreeStatusReady && todoProject.WorktreePath != "" {
 		workingDir = todoProject.WorktreePath
 	}
 	terminal := &ProjectTerminal{

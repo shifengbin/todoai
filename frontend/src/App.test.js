@@ -591,6 +591,46 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="terminal-terminal-b"]').classes()).toContain('active')
   })
 
+  it('creates a cleared TODO project terminal without showing project path unavailable', async () => {
+    const clearedState = inProgressProjectState({
+      todoProjects: [
+        todoProject({
+          id: 'todo-project-a',
+          todoId: 'todo-a',
+          projectId: 'project-a',
+          path: '/work/alpha',
+          available: true,
+          worktreeStatus: 'cleared',
+          worktreePath: '/work/customer-a/tasks/abc123/alpha'
+        })
+      ]
+    })
+    appApiMock.ListProjects.mockResolvedValue(clearedState)
+    appApiMock.CreateTodoTerminal.mockResolvedValue(
+      inProgressProjectState({
+        todoProjects: clearedState.todoProjects,
+        terminals: [
+          terminal({ id: 'terminal-a' }),
+          terminal({ id: 'terminal-b', todoProjectId: 'todo-project-a', projectId: 'project-a', state: 'running' })
+        ],
+        activeTerminalId: 'terminal-b'
+      })
+    )
+    appApiMock.GetProjectGitStatus.mockResolvedValue(gitStatus({ projectId: 'project-a', branch: 'main', changedCount: 0 }))
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+    await wrapper.find('[data-testid="add-terminal-todo-project-a"]').trigger('click')
+    await wrapper.find('[data-testid="terminal-launch-option-todo-project-a-0"]').trigger('click')
+    await flushPromises()
+
+    expect(CreateTodoTerminal).toHaveBeenCalledWith('todo-project-a', 100, 32)
+    expect(GetProjectGitStatus).toHaveBeenCalledWith('project-a')
+    expect(wrapper.find('[data-testid="terminal-terminal-b"]').classes()).toContain('active')
+    expect(wrapper.find('[data-testid="project-git-status"]').text()).not.toContain('Project path unavailable')
+    expect(wrapper.find('[data-testid="status-chip-branch"]').text()).toContain('main')
+  })
+
   it('creates a terminal for available TODO projects without loaded worktree metadata', async () => {
     appApiMock.ListProjects.mockResolvedValue(
       inProgressProjectState({
@@ -4113,6 +4153,52 @@ describe('App project terminal tree', () => {
       'todo/static-worktree-branch'
     )
     expect(wrapper.find('.heading-name').text()).toBe('Fix login / alpha')
+  })
+
+  it('shows the TODO project sidebar cleared label from persisted worktree state', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        todoProjects: [
+          todoProject({
+            id: 'todo-project-a',
+            todoId: 'todo-a',
+            projectId: 'project-a',
+            worktreeStatus: 'cleared',
+            worktreeBranch: 'todo/static-worktree-branch'
+          })
+        ]
+      })
+    )
+
+    const wrapper = await mountReadyApp()
+
+    expect(GetTodoProjectGitStatus).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="todo-project-name-todo-project-a"]').text()).toBe(
+      'alpha(worktree已清除)'
+    )
+    expect(wrapper.find('[data-testid="todo-project-name-todo-project-a"]').text()).not.toContain(
+      'todo/static-worktree-branch'
+    )
+  })
+
+  it('shows the TODO project sidebar cleared label from git status refresh results', async () => {
+    appApiMock.GetTodoProjectGitStatus.mockResolvedValue(
+      gitStatus({
+        branch: 'todo/static-worktree-branch',
+        pathUnavailable: true,
+        worktreeCleared: true
+      })
+    )
+
+    const wrapper = await mountReadyApp()
+
+    expect(GetTodoProjectGitStatus).toHaveBeenCalledWith('todo-project-a')
+    expect(wrapper.find('[data-testid="todo-project-name-todo-project-a"]').text()).toBe(
+      'alpha(worktree已清除)'
+    )
+    expect(wrapper.find('[data-testid="todo-project-name-todo-project-a"]').text()).not.toContain(
+      'todo/static-worktree-branch'
+    )
   })
 
   it('refreshes the TODO project sidebar branch when its worktree terminal command ends', async () => {

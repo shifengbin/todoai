@@ -40,6 +40,7 @@ type GitStatus struct {
 	Behind          int    `json:"behind"`
 	PathUnavailable bool   `json:"pathUnavailable,omitempty"`
 	GitUnavailable  bool   `json:"gitUnavailable,omitempty"`
+	WorktreeCleared bool   `json:"worktreeCleared,omitempty"`
 }
 
 func parseGitStatusPorcelainV2(output string) GitStatus {
@@ -259,7 +260,7 @@ func runGitStatusCommand(ctx context.Context, path string) ([]byte, error) {
 }
 
 func runGitBranchesCommand(ctx context.Context, path string) ([]byte, error) {
-	cmd := newBackgroundCommand(ctx, "git", "-C", path, "branch", "--format=%(refname:short)", "--list", "--remotes")
+	cmd := newBackgroundCommand(ctx, "git", "-C", path, "for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes")
 	return cmd.CombinedOutput()
 }
 

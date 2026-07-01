@@ -143,6 +143,7 @@ const launchMenuViewportPadding = 8
 const todoContextMenuViewportPadding = 8
 const todoContextMenuWidth = 180
 const todoContextMenuHeight = 160
+const clearedWorktreeLabel = 'worktree已清除'
 
 const terminalLaunchOptions = computed(() => [
   { name: 'Terminal', command: '' },
@@ -280,6 +281,9 @@ function projectForTodoProject(todoProject) {
 
 function todoProjectDisplayName(todoProject) {
   const projectName = projectForTodoProject(todoProject)?.name || 'Missing project'
+  if (todoProjectWorktreeCleared(todoProject)) {
+    return `${projectName}(${clearedWorktreeLabel})`
+  }
   const branch = (props.todoProjectBranches?.[todoProject.id] || '').trim()
   return branch ? `${projectName}(${branch})` : projectName
 }
@@ -336,8 +340,16 @@ function todoProjectWorktreeFailed(todoProject) {
   return todoProject?.worktreeStatus === 'failed'
 }
 
+function todoProjectWorktreeCleared(todoProject) {
+  return todoProject?.worktreeStatus === 'cleared'
+}
+
 function todoProjectCanCreateTerminal(todoProject) {
-  return !todoProjectWorktreeFailed(todoProject)
+  if (todoProjectWorktreeFailed(todoProject)) {
+    return false
+  }
+  const worktreeStatus = (todoProject?.worktreeStatus || '').trim()
+  return worktreeStatus === '' || worktreeStatus === 'ready' || worktreeStatus === 'cleared'
 }
 
 function isTodoCollapsed(todoId) {

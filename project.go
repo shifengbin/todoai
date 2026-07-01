@@ -34,6 +34,7 @@ const (
 	WorktreeStatusPending = "pending"
 	WorktreeStatusReady   = "ready"
 	WorktreeStatusFailed  = "failed"
+	WorktreeStatusCleared = "cleared"
 )
 
 const (

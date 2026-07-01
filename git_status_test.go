@@ -150,6 +150,33 @@ func TestGitBranchesForPathReturnsLocalAndRemoteBranches(t *testing.T) {
 	}
 }
 
+func TestQueryGitBranchesIncludesLocalWorktreeBranches(t *testing.T) {
+	if err := gitCommandAvailable(); err != nil {
+		t.Skipf("git not available: %v", err)
+	}
+	t.Setenv("GIT_AUTHOR_NAME", "Todo Helper Test")
+	t.Setenv("GIT_AUTHOR_EMAIL", "todo-helper-test@example.invalid")
+	t.Setenv("GIT_COMMITTER_NAME", "Todo Helper Test")
+	t.Setenv("GIT_COMMITTER_EMAIL", "todo-helper-test@example.invalid")
+
+	projectDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectDir, "app.txt"), []byte("source file\n"), 0o600); err != nil {
+		t.Fatalf("write app.txt: %v", err)
+	}
+	if err := initializeGitRepository(projectDir); err != nil {
+		t.Fatalf("initializeGitRepository() error = %v", err)
+	}
+	runGitForTest(t, projectDir, "branch", "todo/fix-login/frontend-app")
+
+	branches, err := queryGitBranches(projectDir)
+	if err != nil {
+		t.Fatalf("queryGitBranches() error = %v", err)
+	}
+	if !containsString(branches, "todo/fix-login/frontend-app") {
+		t.Fatalf("branches = %#v, want local worktree branch", branches)
+	}
+}
+
 func TestPathHasGitRepositoryMetadataDetectsGitDirectory(t *testing.T) {
 	repoDir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(repoDir, ".git"), 0o755); err != nil {

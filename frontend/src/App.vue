@@ -95,6 +95,7 @@ let completedMergeStatusRequestGeneration = 0
 let lastFocusGitRefreshContextKey = ''
 let lastFocusGitRefreshAt = 0
 const focusGitRefreshDedupeMs = 500
+const clearedWorktreeBranchLabel = 'worktree已清除'
 const gitOnlyImportToastText = '只能导入 Git 仓库'
 const bulkGitImportTooltip = '仅导入一级子目录中的 Git 仓库'
 const toastDurationMs = 2000
@@ -1952,6 +1953,10 @@ function todoProjectCanLoadGitStatus(todoProject) {
   )
 }
 
+function todoProjectWorktreeCleared(todoProject) {
+  return todoProject?.worktreeStatus === 'cleared'
+}
+
 function branchFromGitStatus(status) {
   if (!status?.isRepo || status.pathUnavailable || status.gitUnavailable) {
     return ''
@@ -1961,6 +1966,10 @@ function branchFromGitStatus(status) {
 
 function setTodoProjectGitBranch(todoProjectId, status) {
   if (!todoProjectId) {
+    return
+  }
+  if (status?.worktreeCleared) {
+    todoProjectGitBranches[todoProjectId] = clearedWorktreeBranchLabel
     return
   }
   const branch = branchFromGitStatus(status)
@@ -1978,9 +1987,17 @@ function clearTodoProjectGitBranch(todoProjectId) {
 }
 
 function pruneTodoProjectGitBranches() {
-  const availableTodoProjectIds = new Set(
-    todoProjects.value.filter((todoProject) => todoProjectCanLoadGitStatus(todoProject)).map((todoProject) => todoProject.id)
-  )
+  const availableTodoProjectIds = new Set()
+  for (const todoProject of todoProjects.value) {
+    if (todoProjectWorktreeCleared(todoProject)) {
+      todoProjectGitBranches[todoProject.id] = clearedWorktreeBranchLabel
+      availableTodoProjectIds.add(todoProject.id)
+      continue
+    }
+    if (todoProjectCanLoadGitStatus(todoProject)) {
+      availableTodoProjectIds.add(todoProject.id)
+    }
+  }
   for (const todoProjectId of Object.keys(todoProjectGitBranches)) {
     if (!availableTodoProjectIds.has(todoProjectId)) {
       delete todoProjectGitBranches[todoProjectId]
@@ -1990,6 +2007,10 @@ function pruneTodoProjectGitBranches() {
 
 async function refreshTodoProjectBranchStatus(todoProjectId, options = {}) {
   const todoProject = todoProjects.value.find((candidate) => candidate.id === todoProjectId)
+  if (todoProjectWorktreeCleared(todoProject)) {
+    todoProjectGitBranches[todoProjectId] = clearedWorktreeBranchLabel
+    return
+  }
   if (!todoProjectCanLoadGitStatus(todoProject)) {
     clearTodoProjectGitBranch(todoProjectId)
     return
@@ -2006,6 +2027,10 @@ async function refreshTodoProjectBranchStatus(todoProjectId, options = {}) {
       return
     }
     const currentTodoProject = todoProjects.value.find((candidate) => candidate.id === todoProjectId)
+    if (todoProjectWorktreeCleared(currentTodoProject)) {
+      todoProjectGitBranches[todoProjectId] = clearedWorktreeBranchLabel
+      return
+    }
     if (!todoProjectCanLoadGitStatus(currentTodoProject)) {
       clearTodoProjectGitBranch(todoProjectId)
       return
@@ -2026,6 +2051,10 @@ function refreshTodoProjectBranchStatuses(options = {}) {
   const activeTodoProjectBranchId =
     activeGitStatusContext.value?.type === 'todo-project' ? activeGitStatusContext.value.todoProjectId : ''
   for (const todoProject of todoProjects.value) {
+    if (todoProjectWorktreeCleared(todoProject)) {
+      todoProjectGitBranches[todoProject.id] = clearedWorktreeBranchLabel
+      continue
+    }
     if (!todoProjectCanLoadGitStatus(todoProject)) {
       clearTodoProjectGitBranch(todoProject.id)
       continue
@@ -2121,11 +2150,14 @@ function todoProjectDisplayProject(todoProject) {
   const sourceProject = projects.value.find((project) => project.id === todoProject.projectId) || null
   if (todoProject.name || todoProject.path || todoProject.worktreePath || sourceProject) {
     const hasReadyWorktree = todoProject.worktreeStatus === 'ready' && normalizeProjectPath(todoProject.worktreePath)
+    const hasClearedSourceProject = todoProject.worktreeStatus === 'cleared' && normalizeProjectPath(todoProject.path || sourceProject?.path)
     return {
       id: todoProject.projectId,
       name: todoProject.name || sourceProject?.name || 'Missing project',
       path: hasReadyWorktree ? todoProject.worktreePath : todoProject.path || sourceProject?.path || todoProject.projectId,
-      available: todoProject.available !== false && (!todoProject.worktreeStatus || Boolean(hasReadyWorktree))
+      available:
+        todoProject.available !== false &&
+        (!todoProject.worktreeStatus || Boolean(hasReadyWorktree) || Boolean(hasClearedSourceProject))
     }
   }
   return sourceProject
@@ -2146,6 +2178,14 @@ const activeGitStatusContext = computed(() => {
   if (todoProject) {
     const hasReadyWorktree =
       todoProject.worktreeStatus === 'ready' && normalizeProjectPath(todoProject.worktreePath)
+    if (todoProject.worktreeStatus === 'cleared') {
+      return {
+        type: 'project',
+        key: `todo-project-source:${todoProject.id}`,
+        projectId: todoProject.projectId,
+        available: todoProject.available !== false && Boolean(normalizeProjectPath(todoProject.path || activeProject.value?.path))
+      }
+    }
     return {
       type: 'todo-project',
       key: `todo-project:${todoProject.id}`,

@@ -356,6 +356,10 @@ func (a *App) ListProjects() (ProjectState, error) {
 	if err != nil {
 		return ProjectState{}, err
 	}
+	state, err = a.repairAvailableClearedTodoProjectWorktrees(state)
+	if err != nil {
+		return ProjectState{}, err
+	}
 	a.shells.RestoreTerminals(state)
 	return a.withShellState(state), nil
 }
@@ -639,28 +643,28 @@ func (a *App) CreateTodoTerminal(todoProjectID string, cols int, rows int) (Proj
 	if err != nil {
 		return ProjectState{}, err
 	}
-	if err := requireReadyTodoProjectTerminal(todoProject); err != nil {
+	workingDir, err := todoProjectTerminalWorkingDir(todoProject, project)
+	if err != nil {
 		return ProjectState{}, err
 	}
 	if _, err := a.shells.CreateTodoProjectTerminal(todoProject, project, normalizeTerminalSize(cols, rows)); err != nil {
 		return ProjectState{}, err
 	}
-	// The worktree has its own .claude/settings.json; install the status hook
-	// there now so the claude in this terminal is monitored from its first event
-	// (don't wait for the next app restart).
-	if todoProject.WorktreePath != "" {
-		_ = ensureClaudeStatusHook(todoProject.WorktreePath)
-	}
+	_ = ensureClaudeStatusHook(workingDir)
 	a.activeTerminalID = ""
 	return a.withShellState(state), nil
 }
 
 func (a *App) ensureTodoProjectWorktreeReady(todoProject TodoProject) error {
 	if todoProject.WorktreeStatus == WorktreeStatusReady {
+		_, _, err := a.recordClearedTodoProjectWorktreeIfNeeded(todoProject)
+		return err
+	}
+	if todoProject.WorktreeStatus == WorktreeStatusCleared {
 		return nil
 	}
 	if todoProject.WorktreeStatus == WorktreeStatusFailed {
-		return requireReadyTodoProjectTerminal(todoProject)
+		return todoProjectWorktreeUnavailableError(todoProject)
 	}
 	a.prepareTodoWorkspace(todoProject.TodoID)
 	state, err := a.projects.Load()
@@ -671,25 +675,123 @@ func (a *App) ensureTodoProjectWorktreeReady(todoProject TodoProject) error {
 	if !ok {
 		return os.ErrNotExist
 	}
-	return requireReadyTodoProjectTerminal(refreshedTodoProject)
+	if refreshedTodoProject.WorktreeStatus == WorktreeStatusReady {
+		_, _, err := a.recordClearedTodoProjectWorktreeIfNeeded(refreshedTodoProject)
+		return err
+	}
+	if refreshedTodoProject.WorktreeStatus == WorktreeStatusCleared {
+		return nil
+	}
+	return todoProjectWorktreeUnavailableError(refreshedTodoProject)
 }
 
-// requireReadyTodoProjectTerminal enforces the worktree-isolation contract: a
-// TODO project terminal may only start when the project has a prepared (ready)
-// worktree whose directory still exists on disk. Pending or failed worktrees
-// are rejected so terminal file changes never leak into the original project
-// checkout.
-func requireReadyTodoProjectTerminal(todoProject TodoProject) error {
+func (a *App) recordClearedTodoProjectWorktreeIfNeeded(todoProject TodoProject) (TodoProject, bool, error) {
+	if todoProject.WorktreeStatus == WorktreeStatusCleared {
+		return todoProject, true, nil
+	}
 	if todoProject.WorktreeStatus != WorktreeStatusReady {
-		if todoProject.WorktreeStatus == WorktreeStatusFailed && todoProject.WorktreeError != "" {
-			return fmt.Errorf("project worktree preparation failed: %s", todoProject.WorktreeError)
+		return todoProject, false, nil
+	}
+	cleared := a.readyTodoProjectWorktreeCleared(todoProject)
+	if !cleared {
+		return todoProject, false, nil
+	}
+	state, err := a.projects.RecordTodoWorkspace(todoProject.TodoID, "", []TodoProjectWorktreeUpdate{
+		{
+			TodoProjectID:  todoProject.ID,
+			WorktreeStatus: WorktreeStatusCleared,
+			WorktreeError:  "",
+		},
+	})
+	if err != nil {
+		return todoProject, false, err
+	}
+	updatedTodoProject, ok := todoProjectByID(state.TodoProjects, todoProject.ID)
+	if !ok {
+		return TodoProject{}, false, os.ErrNotExist
+	}
+	return updatedTodoProject, true, nil
+}
+
+func (a *App) repairAvailableClearedTodoProjectWorktrees(state ProjectState) (ProjectState, error) {
+	updatesByTodoID := map[string][]TodoProjectWorktreeUpdate{}
+	for _, todoProject := range state.TodoProjects {
+		if todoProject.WorktreeStatus != WorktreeStatusCleared || !a.clearedTodoProjectWorktreeAvailable(todoProject) {
+			continue
 		}
-		return errors.New("project worktree is not ready")
+		updatesByTodoID[todoProject.TodoID] = append(updatesByTodoID[todoProject.TodoID], TodoProjectWorktreeUpdate{
+			TodoProjectID:  todoProject.ID,
+			WorktreeStatus: WorktreeStatusReady,
+			WorktreeError:  "",
+		})
 	}
-	if !directoryAvailable(todoProject.WorktreePath) {
-		return errors.New("project worktree path is unavailable")
+	for todoID, updates := range updatesByTodoID {
+		var err error
+		state, err = a.projects.RecordTodoWorkspace(todoID, "", updates)
+		if err != nil {
+			return ProjectState{}, err
+		}
 	}
-	return nil
+	return state, nil
+}
+
+func (a *App) readyTodoProjectWorktreeCleared(todoProject TodoProject) bool {
+	if strings.TrimSpace(todoProject.WorktreePath) == "" || !directoryAvailable(todoProject.WorktreePath) {
+		return true
+	}
+	worktreeBranch := strings.TrimSpace(todoProject.WorktreeBranch)
+	if worktreeBranch == "" {
+		return false
+	}
+	branchExists, ok := a.todoProjectWorktreeBranchExists(todoProject)
+	return ok && !branchExists
+}
+
+func (a *App) clearedTodoProjectWorktreeAvailable(todoProject TodoProject) bool {
+	if strings.TrimSpace(todoProject.WorktreePath) == "" || !directoryAvailable(todoProject.WorktreePath) {
+		return false
+	}
+	if strings.TrimSpace(todoProject.WorktreeBranch) == "" {
+		return true
+	}
+	branchExists, ok := a.todoProjectWorktreeBranchExists(todoProject)
+	return ok && branchExists
+}
+
+func (a *App) todoProjectWorktreeBranchExists(todoProject TodoProject) (bool, bool) {
+	worktreeBranch := strings.TrimSpace(todoProject.WorktreeBranch)
+	if worktreeBranch == "" || a.gitBranches == nil {
+		return false, false
+	}
+	branches, err := a.gitBranches(todoProject.Path)
+	if err != nil {
+		return false, false
+	}
+	return containsString(branches, worktreeBranch), true
+}
+
+func todoProjectTerminalWorkingDir(todoProject TodoProject, project Project) (string, error) {
+	if !project.Available || !directoryAvailable(project.Path) {
+		return "", errors.New("project path is unavailable")
+	}
+	switch todoProject.WorktreeStatus {
+	case WorktreeStatusReady:
+		if !directoryAvailable(todoProject.WorktreePath) {
+			return "", errors.New("project worktree path is unavailable")
+		}
+		return todoProject.WorktreePath, nil
+	case WorktreeStatusCleared:
+		return project.Path, nil
+	default:
+		return "", todoProjectWorktreeUnavailableError(todoProject)
+	}
+}
+
+func todoProjectWorktreeUnavailableError(todoProject TodoProject) error {
+	if todoProject.WorktreeStatus == WorktreeStatusFailed && todoProject.WorktreeError != "" {
+		return fmt.Errorf("project worktree preparation failed: %s", todoProject.WorktreeError)
+	}
+	return errors.New("project worktree is not ready")
 }
 
 func (a *App) CreateWorkspaceTerminal(cols int, rows int) (ProjectState, error) {
@@ -771,18 +873,15 @@ func (a *App) StartTodoProjectBackgroundCommand(todoProjectID string, command st
 	if err := a.ensureTodoProjectWorktreeReady(terminalTodoProject); err != nil {
 		return err
 	}
-	refreshedState, err := a.projects.Load()
+	refreshedTodoProject, project, err := a.projects.TodoProject(todoProjectID)
 	if err != nil {
 		return err
 	}
-	refreshedTodoProject, ok := todoProjectByID(refreshedState.TodoProjects, todoProjectID)
-	if !ok {
-		return os.ErrNotExist
-	}
-	if err := requireReadyTodoProjectTerminal(refreshedTodoProject); err != nil {
+	workingDir, err := todoProjectTerminalWorkingDir(refreshedTodoProject, project)
+	if err != nil {
 		return err
 	}
-	return a.startBackgroundCommand(refreshedTodoProject.WorktreePath, command)
+	return a.startBackgroundCommand(workingDir, command)
 }
 
 func (a *App) StartTaskBackgroundCommand(todoID string, command string) error {
@@ -1167,6 +1266,15 @@ func (a *App) GetTodoProjectGitStatus(todoProjectID string) (GitStatus, error) {
 		return GitStatus{}, err
 	}
 	status := GitStatus{ProjectID: todoProject.ProjectID}
+	todoProject, cleared, err := a.recordClearedTodoProjectWorktreeIfNeeded(todoProject)
+	if err != nil {
+		return GitStatus{}, err
+	}
+	if cleared {
+		status.PathUnavailable = true
+		status.WorktreeCleared = true
+		return status, nil
+	}
 	if todoProject.WorktreeStatus != WorktreeStatusReady ||
 		strings.TrimSpace(todoProject.WorktreePath) == "" ||
 		!directoryAvailable(todoProject.WorktreePath) {
@@ -1734,4 +1842,13 @@ func todoProjectByID(todoProjects []TodoProject, todoProjectID string) (TodoProj
 		}
 	}
 	return TodoProject{}, false
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

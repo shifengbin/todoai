@@ -494,6 +494,107 @@ func TestAppCreatesAndSelectsTodoProjectTerminals(t *testing.T) {
 	}
 }
 
+func TestAppRecordsClearedWorktreeAndCreatesTodoProjectTerminalInSourceProject(t *testing.T) {
+	workspaceDir := t.TempDir()
+	projectDir := t.TempDir()
+	starter := newFakeShellStarter()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		starter.Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-1")),
+	)
+	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	_, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", state.Projects[0].ID)
+	state, err = app.projects.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	todoProject := findTodoProjectByIDForApp(t, state.TodoProjects, todoProjectID)
+	if todoProject.WorktreeStatus != WorktreeStatusReady || todoProject.WorktreePath == "" {
+		t.Fatalf("todoProject worktree = %#v, want ready worktree", todoProject)
+	}
+	removedWorktreePath := todoProject.WorktreePath
+	if err := os.RemoveAll(removedWorktreePath); err != nil {
+		t.Fatalf("RemoveAll(worktree) error = %v", err)
+	}
+
+	state, err = app.CreateTodoTerminal(todoProjectID, 80, 24)
+	if err != nil {
+		t.Fatalf("CreateTodoTerminal() error = %v", err)
+	}
+
+	if len(starter.requests) != 1 {
+		t.Fatalf("shell start count = %d, want 1", len(starter.requests))
+	}
+	if starter.requests[0].WorkingDir != mustAbs(t, projectDir) {
+		t.Fatalf("todo project terminal cwd = %q, want source project %q", starter.requests[0].WorkingDir, mustAbs(t, projectDir))
+	}
+	if _, err := os.Stat(removedWorktreePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("removed worktree path stat error = %v, want path to stay removed", err)
+	}
+	todoProject = findTodoProjectByIDForApp(t, state.TodoProjects, todoProjectID)
+	if todoProject.WorktreeStatus != WorktreeStatusCleared {
+		t.Fatalf("WorktreeStatus = %q, want %q", todoProject.WorktreeStatus, WorktreeStatusCleared)
+	}
+}
+
+func TestAppListProjectsRepairsFalseClearedWorktreeWhenPathAndBranchStillExist(t *testing.T) {
+	workspaceDir := t.TempDir()
+	projectDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
+	)
+	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	_, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", state.Projects[0].ID)
+	state, err = app.projects.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	todoProject := findTodoProjectByIDForApp(t, state.TodoProjects, todoProjectID)
+	if todoProject.WorktreeStatus != WorktreeStatusReady || todoProject.WorktreePath == "" || todoProject.WorktreeBranch == "" {
+		t.Fatalf("todoProject worktree = %#v, want ready worktree", todoProject)
+	}
+	for index := range state.TodoProjects {
+		if state.TodoProjects[index].ID == todoProjectID {
+			state.TodoProjects[index].WorktreeStatus = WorktreeStatusCleared
+		}
+	}
+	if err := app.projects.saveLocked(state); err != nil {
+		t.Fatalf("save false cleared todo project: %v", err)
+	}
+	app.gitBranches = func(path string) ([]string, error) {
+		if path != todoProject.Path {
+			t.Fatalf("git branches path = %q, want source project path %q", path, todoProject.Path)
+		}
+		return []string{todoProject.WorktreeBranch}, nil
+	}
+
+	state, err = app.ListProjects()
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+
+	todoProject = findTodoProjectByIDForApp(t, state.TodoProjects, todoProjectID)
+	if todoProject.WorktreeStatus != WorktreeStatusReady {
+		t.Fatalf("WorktreeStatus = %q, want %q", todoProject.WorktreeStatus, WorktreeStatusReady)
+	}
+}
+
 func TestAppCreatesTaskTerminalInTaskWorkspaceWithoutChangingTodoProjectContext(t *testing.T) {
 	workspaceDir := t.TempDir()
 	projectDir := t.TempDir()
@@ -591,6 +692,53 @@ func TestAppStartsTodoProjectBackgroundCommandInPreparedWorktreeWithoutAddingTer
 	}
 	if state.ActiveTodoID != todoID || state.ActiveTodoProjectID != todoProjectID {
 		t.Fatalf("active TODO context = %q/%q, want %q/%q", state.ActiveTodoID, state.ActiveTodoProjectID, todoID, todoProjectID)
+	}
+}
+
+func TestAppStartsTodoProjectBackgroundCommandInSourceProjectForClearedWorktree(t *testing.T) {
+	workspaceDir := t.TempDir()
+	projectDir := t.TempDir()
+	shellPath := executableFile(t, "zsh")
+	background := newFakeBackgroundCommandRunner()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
+		WithBackgroundCommandRunner(background.Start),
+	)
+	if _, err := app.SaveTerminalShell(shellPath, ShellSourceManual); err != nil {
+		t.Fatalf("SaveTerminalShell() error = %v", err)
+	}
+	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	_, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", state.Projects[0].ID)
+	state, err = app.projects.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	for index := range state.TodoProjects {
+		if state.TodoProjects[index].ID == todoProjectID {
+			state.TodoProjects[index].WorktreeStatus = WorktreeStatusCleared
+		}
+	}
+	if err := app.projects.saveLocked(state); err != nil {
+		t.Fatalf("save cleared todo project: %v", err)
+	}
+
+	if err := app.StartTodoProjectBackgroundCommand(todoProjectID, "npm run sync"); err != nil {
+		t.Fatalf("StartTodoProjectBackgroundCommand() error = %v", err)
+	}
+
+	if len(background.requests) != 1 {
+		t.Fatalf("background command count = %d, want 1", len(background.requests))
+	}
+	if background.requests[0].WorkingDir != mustAbs(t, projectDir) {
+		t.Fatalf("background working dir = %q, want source project %q", background.requests[0].WorkingDir, mustAbs(t, projectDir))
 	}
 }
 
@@ -2923,6 +3071,63 @@ func TestAppGetTodoProjectGitStatusRequiresReadyAvailableWorktree(t *testing.T) 
 	}
 	if !status.PathUnavailable {
 		t.Fatal("PathUnavailable = false, want true")
+	}
+}
+
+func TestAppGetTodoProjectGitStatusRecordsClearedWhenWorktreeBranchIsMissing(t *testing.T) {
+	workspaceDir := t.TempDir()
+	projectDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
+	)
+	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	projectID := state.Projects[0].ID
+	_, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", projectID)
+	state, err = app.projects.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	todoProject := findTodoProjectByIDForApp(t, state.TodoProjects, todoProjectID)
+	if todoProject.WorktreeStatus != WorktreeStatusReady || todoProject.WorktreeBranch == "" {
+		t.Fatalf("todoProject worktree = %#v, want ready branch", todoProject)
+	}
+	app.gitBranches = func(path string) ([]string, error) {
+		if path != todoProject.Path {
+			t.Fatalf("git branches path = %q, want source project path %q", path, todoProject.Path)
+		}
+		return []string{"main", "develop"}, nil
+	}
+	app.gitStatus = func(path string) (GitStatus, error) {
+		t.Fatalf("git status called for cleared worktree path %q", path)
+		return GitStatus{}, nil
+	}
+
+	status, err := app.GetTodoProjectGitStatus(todoProjectID)
+	if err != nil {
+		t.Fatalf("GetTodoProjectGitStatus() error = %v", err)
+	}
+
+	if status.ProjectID != projectID {
+		t.Fatalf("ProjectID = %q, want source project %q", status.ProjectID, projectID)
+	}
+	if !status.WorktreeCleared {
+		t.Fatal("WorktreeCleared = false, want true")
+	}
+	state, err = app.projects.Load()
+	if err != nil {
+		t.Fatalf("Load() after git status error = %v", err)
+	}
+	todoProject = findTodoProjectByIDForApp(t, state.TodoProjects, todoProjectID)
+	if todoProject.WorktreeStatus != WorktreeStatusCleared {
+		t.Fatalf("WorktreeStatus = %q, want %q", todoProject.WorktreeStatus, WorktreeStatusCleared)
 	}
 }
 
