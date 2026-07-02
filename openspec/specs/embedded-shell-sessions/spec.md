@@ -831,7 +831,7 @@ The system SHALL provide command state events for Windows `pwsh` and `powershell
 
 ### Requirement: Create Todo Task Terminal
 
-The system SHALL allow the user to create task-level terminal sessions for an `in-progress` TODO whose task workspace directory exists. Each task-level terminal SHALL start an independent shell process in the TODO task workspace directory. Task-level terminals SHALL belong to the TODO but SHALL NOT belong to any TODO project.
+The system SHALL allow the user to create task-level terminal sessions for an `in-progress` TODO whose task workspace directory exists. Each task-level terminal SHALL start an independent shell process in the TODO task workspace directory. Task-level terminals SHALL belong to the TODO but SHALL NOT belong to any TODO project. Selecting or creating a task-level terminal SHALL make the owning TODO the active task context and SHALL clear the active TODO project and active project context.
 
 #### Scenario: User creates task terminal for in-progress todo
 
@@ -841,6 +841,9 @@ The system SHALL allow the user to create task-level terminal sessions for an `i
 - **THEN** the system starts a new shell process with working directory `/home/user/work/customer-a/tasks/abc123`
 - **AND** the terminal records TODO `fix-login` as owner
 - **AND** the terminal does not record a TODO project owner
+- **AND** the task terminal becomes the active terminal
+- **AND** TODO `fix-login` becomes the active task context
+- **AND** the active TODO project and active project context are empty
 
 #### Scenario: Not-started todo cannot create task terminal
 
@@ -850,10 +853,10 @@ The system SHALL allow the user to create task-level terminal sessions for an `i
 - **AND** no shell process is started
 - **AND** no task terminal is added to TODO `fix-login`
 
-#### Scenario: Task terminal does not change todo project context
+#### Scenario: Task terminal selects todo task context
 
 - **WHEN** current TODO project context is TODO `fix-login` under project `frontend-app`
 - **AND** the user selects a task terminal under TODO `fix-login`
 - **THEN** the task terminal becomes the active terminal
-- **AND** current TODO project context remains TODO `fix-login` under project `frontend-app`
-
+- **AND** TODO `fix-login` becomes the active task context
+- **AND** the active TODO project and active project context are empty
