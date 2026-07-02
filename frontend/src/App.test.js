@@ -4109,6 +4109,27 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="project-git-status"]').text()).not.toContain('Not a git repository')
   })
 
+  it('shows task terminal heading and task workspace path for active task context', async () => {
+    appApiMock.GetProjectGitStatus.mockResolvedValue(gitStatus({ branch: 'previous-project', changedCount: 4 }))
+    appApiMock.GetTodoGitStatus.mockResolvedValue(gitStatus({ projectId: '', branch: 'todo/root', changedCount: 0 }))
+    appApiMock.ListProjects.mockResolvedValue(
+      inProgressProjectState({
+        activeProjectId: '',
+        activeTodoId: 'todo-a',
+        activeTodoProjectId: '',
+        todos: [todo({ status: 'in-progress', workspaceDirName: 'abc123' })],
+        terminals: [taskTerminal({ id: 'task-terminal-a', state: 'running' })],
+        activeTerminalId: 'task-terminal-a'
+      })
+    )
+
+    const wrapper = await mountReadyApp()
+
+    expect(wrapper.find('.heading-name').text()).toBe('Fix login / 任务终端')
+    expect(wrapper.find('.heading-path').text()).toBe('/work/customer-a/tasks/abc123')
+    expect(wrapper.find('.heading-path').text()).not.toContain('/work/alpha')
+  })
+
   it('shows the TODO workspace git branch and changed file count for task terminals', async () => {
     appApiMock.GetProjectGitStatus.mockResolvedValue(gitStatus({ branch: 'previous-project', changedCount: 4 }))
     appApiMock.GetTodoGitStatus.mockResolvedValue(gitStatus({ projectId: '', branch: 'todo/root', changedCount: 1 }))

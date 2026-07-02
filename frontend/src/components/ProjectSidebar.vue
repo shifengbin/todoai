@@ -131,13 +131,16 @@ const visibleDescriptionTooltipTodoId = ref('')
 const descriptionTooltipPosition = ref({ x: 0, y: 0 })
 const launchMenuPlacement = ref('down')
 const launchMenuMaxHeight = ref('')
+const launchMenuFixedStyle = ref({})
 
 const descriptionTooltipLayer = createTodoDescriptionTooltipLayer()
 let descriptionTooltipTimer = null
 const descriptionTooltipDelayMs = 600
 const descriptionTooltipOffset = 12
 const launchMenuBorderHeight = 2
+const launchMenuGap = 4
 const launchMenuMinimumHeight = 32
+const launchMenuMinimumWidth = 132
 const launchMenuOptionHeight = 32
 const launchMenuViewportPadding = 8
 const todoContextMenuViewportPadding = 8
@@ -328,8 +331,28 @@ function hasTodoProjectTerminals(todoProjectId) {
   return todoProjectTerminals(todoProjectId).length > 0
 }
 
+function activeTaskTerminalTodoId() {
+  const terminal = props.terminals.find((candidate) => (
+    candidate.id === props.activeTerminalId &&
+    !candidate.todoProjectId &&
+    !candidate.workspaceTerminal
+  ))
+  return terminal?.todoId || ''
+}
+
+function isTodoActive(todo) {
+  const taskTodoId = activeTaskTerminalTodoId()
+  if (taskTodoId) {
+    return todo.id === taskTodoId
+  }
+  return todo.id === props.activeTodoId
+}
+
 function todoHasActiveTerminal(todo) {
-  return props.terminals.some((terminal) => terminal.todoId === todo.id && terminal.id === props.activeTerminalId)
+  return props.terminals.some((terminal) => (
+    terminal.id === props.activeTerminalId &&
+    terminal.todoId === todo.id
+  ))
 }
 
 function todoProjectHasActiveTerminal(todoProject) {
@@ -848,6 +871,7 @@ function createTodoDescriptionTooltipLayer() {
 function resetTerminalLaunchMenuPlacement() {
   launchMenuPlacement.value = 'down'
   launchMenuMaxHeight.value = ''
+  launchMenuFixedStyle.value = {}
 }
 
 function updateTerminalLaunchMenuPlacement(trigger) {
@@ -864,12 +888,33 @@ function updateTerminalLaunchMenuPlacement(trigger) {
   const spaceAbove = Math.max(0, triggerRect.top - listRect.top - launchMenuViewportPadding)
   const opensUp = spaceBelow < desiredMenuHeight && spaceAbove > spaceBelow
   const availableHeight = opensUp ? spaceAbove : spaceBelow
+  const menuHeight = Math.min(desiredMenuHeight, Math.max(availableHeight, launchMenuMinimumHeight))
+  const minLeft = listRect.left + launchMenuViewportPadding
+  const maxLeft = Math.max(minLeft, listRect.right - launchMenuMinimumWidth - launchMenuViewportPadding)
+  const left = clampNumber(triggerRect.right - launchMenuMinimumWidth, minLeft, maxLeft)
+  const rawTop = opensUp
+    ? triggerRect.top - menuHeight - launchMenuGap
+    : triggerRect.bottom + launchMenuGap
+  const minTop = listRect.top + launchMenuViewportPadding
+  const maxTop = Math.max(minTop, listRect.bottom - menuHeight - launchMenuViewportPadding)
+  const top = clampNumber(rawTop, minTop, maxTop)
 
   launchMenuPlacement.value = opensUp ? 'up' : 'down'
   launchMenuMaxHeight.value =
     availableHeight < desiredMenuHeight
       ? `${Math.max(availableHeight, launchMenuMinimumHeight)}px`
       : ''
+  launchMenuFixedStyle.value = {
+    position: 'fixed',
+    left: `${Math.round(left)}px`,
+    top: `${Math.round(top)}px`,
+    right: 'auto',
+    bottom: 'auto'
+  }
+}
+
+function clampNumber(value, min, max) {
+  return Math.min(Math.max(value, min), max)
 }
 
 function terminalLaunchMenuClass() {
@@ -881,7 +926,10 @@ function terminalLaunchMenuClass() {
 }
 
 function terminalLaunchMenuStyle() {
-  return launchMenuMaxHeight.value ? { maxHeight: launchMenuMaxHeight.value } : {}
+  return {
+    ...launchMenuFixedStyle.value,
+    ...(launchMenuMaxHeight.value ? { maxHeight: launchMenuMaxHeight.value } : {})
+  }
 }
 
 function terminalDisplayName(terminal) {
@@ -1127,12 +1175,16 @@ function completedMergeStatusTitle(status) {
 
 onMounted(() => {
   window.addEventListener('click', closeFloatingMenus)
+  window.addEventListener('resize', closeTerminalLaunchMenu)
+  window.addEventListener('scroll', closeTerminalLaunchMenu, true)
 })
 
 onBeforeUnmount(() => {
   hideTodoDescriptionTooltip()
   descriptionTooltipLayer.remove()
   window.removeEventListener('click', closeFloatingMenus)
+  window.removeEventListener('resize', closeTerminalLaunchMenu)
+  window.removeEventListener('scroll', closeTerminalLaunchMenu, true)
 })
 
 watch(
@@ -1397,7 +1449,7 @@ watch(
           :key="todo.id"
           class="todo-node"
           :class="{
-            active: todo.id === activeTodoId,
+            active: isTodoActive(todo),
             'has-active-terminal': todoHasActiveTerminal(todo),
             'is-collapsed': isTodoCollapsed(todo.id),
             'is-expanded': isTodoExpanded(todo.id)
@@ -1405,7 +1457,7 @@ watch(
         >
           <div
             class="todo-header-row"
-            :class="[{ active: todo.id === activeTodoId }, todoPriorityClass(todo), collapsedTodoActivityClass(todo)]"
+            :class="[{ active: isTodoActive(todo) }, todoPriorityClass(todo), collapsedTodoActivityClass(todo)]"
             :data-activity-state="collapsedTodoFeedbackState(todo) || null"
             @dblclick="toggleTodoBranch(todo.id)"
           >
@@ -1426,7 +1478,7 @@ watch(
 
             <div
               class="todo-row"
-              :class="{ active: todo.id === activeTodoId }"
+              :class="{ active: isTodoActive(todo) }"
               :data-activity-state="collapsedTodoActivityState(todo) || null"
               :data-testid="`todo-${todo.id}`"
               :title="collapsedTodoActivityState(todo) ? collapsedTodoActivityLabel(todo) : null"
