@@ -121,6 +121,131 @@ describe('ProjectSidebar', () => {
     expect(wrapper.emitted('create-task-terminal')[0]).toEqual(['todo-a', { name: 'codex', command: 'codex', enabled: true }])
   })
 
+  it('highlights the owning TODO for an active task terminal without selecting a TODO project', async () => {
+    const wrapper = mountInProgressSidebar({
+      props: {
+        activeProjectId: '',
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: 'task-terminal-a',
+        terminals: [
+          {
+            id: 'task-terminal-a',
+            projectId: '',
+            todoId: 'todo-a',
+            todoProjectId: '',
+            shellName: 'zsh',
+            currentCommand: '',
+            state: 'running'
+          }
+        ]
+      }
+    })
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+
+    expect(todoHeaderFor(wrapper, 'todo-a').classes()).toContain('active')
+    expect(wrapper.find('[data-testid="todo-todo-a"]').classes()).toContain('active')
+    expect(wrapper.find('[data-testid="task-terminal-task-terminal-a"]').classes()).toContain('active')
+    expect(wrapper.find('[data-testid="todo-project-todo-project-a"]').classes()).not.toContain('active')
+  })
+
+  it('positions task terminal launch menus as fixed overlays near the list bottom', async () => {
+    const wrapper = mountInProgressSidebar({
+      attachTo: document.body,
+      props: {
+        launchProfiles: [
+          { name: 'codex', command: 'codex', enabled: true },
+          { name: 'claude', command: 'claude', enabled: true }
+        ]
+      }
+    })
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+
+    const projectList = wrapper.find('.project-list').element
+    projectList.getBoundingClientRect = () => ({
+      left: 0,
+      top: 0,
+      right: 300,
+      bottom: 260,
+      width: 300,
+      height: 260
+    })
+
+    const trigger = wrapper.find('[data-testid="add-task-terminal-todo-a"]').element
+    trigger.getBoundingClientRect = () => ({
+      left: 250,
+      top: 228,
+      right: 280,
+      bottom: 258,
+      width: 30,
+      height: 30
+    })
+
+    await wrapper.find('[data-testid="add-task-terminal-todo-a"]').trigger('click')
+    await nextTick()
+
+    const menu = wrapper.find('[data-testid="terminal-launch-menu-task-todo-a"]')
+    expect(menu.exists()).toBe(true)
+    expect(menu.classes()).toContain('terminal-launch-menu--up')
+    expect(menu.element.style.position).toBe('fixed')
+    expect(menu.element.style.right).toBe('auto')
+    expect(menu.element.style.bottom).toBe('auto')
+    expect(menu.element.style.left).toBe('148px')
+    expect(menu.element.style.top).toBe('126px')
+  })
+
+  it('positions TODO project launch menus as fixed overlays near the list bottom', async () => {
+    const wrapper = mountInProgressSidebar({
+      attachTo: document.body,
+      props: {
+        launchProfiles: [
+          { name: 'codex', command: 'codex', enabled: true },
+          { name: 'claude', command: 'claude', enabled: true }
+        ]
+      }
+    })
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+
+    const projectList = wrapper.find('.project-list').element
+    projectList.getBoundingClientRect = () => ({
+      left: 0,
+      top: 0,
+      right: 300,
+      bottom: 260,
+      width: 300,
+      height: 260
+    })
+
+    const trigger = wrapper.find('[data-testid="add-terminal-todo-project-a"]').element
+    trigger.getBoundingClientRect = () => ({
+      left: 250,
+      top: 228,
+      right: 280,
+      bottom: 258,
+      width: 30,
+      height: 30
+    })
+
+    await wrapper.find('[data-testid="add-terminal-todo-project-a"]').trigger('click')
+    await nextTick()
+
+    const menu = wrapper.find('[data-testid="terminal-launch-menu-todo-project-a"]')
+    expect(menu.exists()).toBe(true)
+    expect(menu.classes()).toContain('terminal-launch-menu--up')
+    expect(menu.element.style.position).toBe('fixed')
+    expect(menu.element.style.right).toBe('auto')
+    expect(menu.element.style.bottom).toBe('auto')
+    expect(menu.element.style.left).toBe('148px')
+    expect(menu.element.style.top).toBe('126px')
+
+    await wrapper.find('[data-testid="terminal-launch-option-todo-project-a-0"]').trigger('click')
+
+    expect(wrapper.emitted('create-terminal')[0]).toEqual(['todo-project-a', null])
+  })
+
   it('uses terminal iconography for task and project terminal creation controls', async () => {
     const wrapper = mountInProgressSidebar()
 

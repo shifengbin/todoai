@@ -595,7 +595,7 @@ func TestAppListProjectsRepairsFalseClearedWorktreeWhenPathAndBranchStillExist(t
 	}
 }
 
-func TestAppCreatesTaskTerminalInTaskWorkspaceWithoutChangingTodoProjectContext(t *testing.T) {
+func TestAppCreatesTaskTerminalInTaskWorkspaceAndSelectsTaskContext(t *testing.T) {
 	workspaceDir := t.TempDir()
 	projectDir := t.TempDir()
 	starter := newFakeShellStarter()
@@ -632,12 +632,31 @@ func TestAppCreatesTaskTerminalInTaskWorkspaceWithoutChangingTodoProjectContext(
 	if state.ActiveTerminalID != "task-terminal" {
 		t.Fatalf("ActiveTerminalID = %q, want task-terminal", state.ActiveTerminalID)
 	}
-	if state.ActiveTodoProjectID != todoProjectID || state.ActiveProjectID != state.Projects[0].ID {
-		t.Fatalf("active project context changed to %q/%q, want %q/%q", state.ActiveTodoProjectID, state.ActiveProjectID, todoProjectID, state.Projects[0].ID)
+	if state.ActiveTodoID != todoID || state.ActiveTodoProjectID != "" || state.ActiveProjectID != "" {
+		t.Fatalf("active task context = todo:%q todoProject:%q project:%q, want todo:%q with empty project context", state.ActiveTodoID, state.ActiveTodoProjectID, state.ActiveProjectID, todoID)
 	}
 	terminal := findTerminalByID(state.Terminals, "task-terminal")
 	if terminal.TodoID != todoID || terminal.TodoProjectID != "" || terminal.ProjectID != "" {
 		t.Fatalf("task terminal identity = %#v, want todo-only terminal", terminal)
+	}
+
+	state, err = app.SelectTerminal("project-terminal")
+	if err != nil {
+		t.Fatalf("SelectTerminal(project-terminal) error = %v", err)
+	}
+	if state.ActiveTerminalID != "project-terminal" || state.ActiveTodoProjectID != todoProjectID || state.ActiveProjectID != state.Projects[0].ID {
+		t.Fatalf("project terminal context = terminal:%q todoProject:%q project:%q, want project-terminal/%q/%q", state.ActiveTerminalID, state.ActiveTodoProjectID, state.ActiveProjectID, todoProjectID, state.Projects[0].ID)
+	}
+
+	state, err = app.SelectTerminal("task-terminal")
+	if err != nil {
+		t.Fatalf("SelectTerminal(task-terminal) error = %v", err)
+	}
+	if state.ActiveTerminalID != "task-terminal" {
+		t.Fatalf("ActiveTerminalID after select = %q, want task-terminal", state.ActiveTerminalID)
+	}
+	if state.ActiveTodoID != todoID || state.ActiveTodoProjectID != "" || state.ActiveProjectID != "" {
+		t.Fatalf("selected task terminal context = todo:%q todoProject:%q project:%q, want todo:%q with empty project context", state.ActiveTodoID, state.ActiveTodoProjectID, state.ActiveProjectID, todoID)
 	}
 }
 

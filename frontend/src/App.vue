@@ -279,6 +279,16 @@ const activeTerminalIsTaskTerminal = computed(() => {
   return Boolean(terminal && !terminal.workspaceTerminal && terminal.todoId && !terminal.todoProjectId)
 })
 
+const activeTaskTerminalTodo = computed(() => {
+  const terminal = activeTerminal.value
+  if (!activeTerminalIsTaskTerminal.value || !terminal?.todoId) {
+    return null
+  }
+  return todos.value.find((todo) => todo.id === terminal.todoId) || null
+})
+
+const activeTaskWorkspacePath = computed(() => todoTaskWorkspacePath(activeTaskTerminalTodo.value))
+
 const activeTerminalState = computed(() => {
   return activeTerminal.value ? terminalState(activeTerminal.value.id) : ''
 })
@@ -2222,6 +2232,15 @@ function normalizeProjectPath(path) {
   return (path || '').trim()
 }
 
+function todoTaskWorkspacePath(todo) {
+  const workspacePath = normalizeProjectPath(currentWorkspace.value?.path)
+  const workspaceDirName = (todo?.workspaceDirName || '').trim()
+  if (!workspacePath || !workspaceDirName) {
+    return ''
+  }
+  return `${workspacePath.replace(/[\\/]+$/, '')}/tasks/${workspaceDirName.replace(/^[\\/]+/, '')}`
+}
+
 function normalizeSearch(value) {
   return (value || '').trim().toLowerCase()
 }
@@ -3138,6 +3157,10 @@ function clearToastTimer() {
     <section class="workspace">
       <header class="workspace-header">
         <div v-if="!hasWorkspace" class="project-heading muted">Open a project</div>
+        <div v-else-if="activeTerminalIsTaskTerminal && activeTaskTerminalTodo" class="project-heading">
+          <span class="heading-name">{{ activeTaskTerminalTodo.title || 'TODO' }} / 任务终端</span>
+          <span class="heading-path">{{ activeTaskWorkspacePath }}</span>
+        </div>
         <div v-else-if="activeTodoProject && activeTodoProjectProject" class="project-heading">
           <span class="heading-name">{{ activeTodo?.title || 'TODO' }} / {{ activeTodoProjectProject.name }}</span>
           <span class="heading-path">{{ activeTodoProjectProject.path }}</span>

@@ -848,6 +848,9 @@ func (a *App) CreateTaskTerminal(todoID string, cols int, rows int) (ProjectStat
 		_ = ensureClaudeStatusHook(taskDir)
 	}
 	a.activeTerminalID = terminal.ID
+	state.ActiveTodoID = todoID
+	state.ActiveTodoProjectID = ""
+	state.ActiveProjectID = ""
 	return a.withShellStateForActiveTerminal(state, terminal.ID), nil
 }
 
@@ -1002,12 +1005,16 @@ func (a *App) SelectTerminal(terminalID string) (ProjectState, error) {
 		return a.withShellStateForActiveTerminal(state, terminal.ID), nil
 	}
 	if terminal.TodoID != "" && terminal.TodoProjectID == "" {
-		// Task-level terminal: no project to select, just surface the
-		// current workspace state.
 		state, err := a.projects.Load()
 		if err != nil {
 			return ProjectState{}, err
 		}
+		if _, ok := openTodoByID(state.Todos, terminal.TodoID); !ok {
+			return ProjectState{}, errors.New("todo not found")
+		}
+		state.ActiveTodoID = terminal.TodoID
+		state.ActiveTodoProjectID = ""
+		state.ActiveProjectID = ""
 		a.activeTerminalID = terminal.ID
 		return a.withShellStateForActiveTerminal(state, terminal.ID), nil
 	}
