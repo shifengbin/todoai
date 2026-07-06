@@ -297,6 +297,59 @@ func TestShellSessionManagerStartsShellWithEmbeddedTerminalEnvironment(t *testin
 	}
 }
 
+func TestEmbeddedTerminalEnvFillsAndPreservesUTF8Locale(t *testing.T) {
+	t.Run("fills missing locale values", func(t *testing.T) {
+		env := EmbeddedTerminalEnv([]string{"PATH=/bin"})
+
+		assertUTF8EnvValue(t, env, "LANG")
+		assertUTF8EnvValue(t, env, "LC_CTYPE")
+	})
+
+	t.Run("preserves existing UTF-8 locale values", func(t *testing.T) {
+		env := EmbeddedTerminalEnv([]string{
+			"LANG=zh_CN.UTF-8",
+			"LC_CTYPE=zh_CN.UTF-8",
+		})
+
+		if got := envValue(env, "LANG"); got != "zh_CN.UTF-8" {
+			t.Fatalf("LANG = %q, want zh_CN.UTF-8", got)
+		}
+		if got := envValue(env, "LC_CTYPE"); got != "zh_CN.UTF-8" {
+			t.Fatalf("LC_CTYPE = %q, want zh_CN.UTF-8", got)
+		}
+	})
+
+	t.Run("replaces non UTF-8 locale values", func(t *testing.T) {
+		env := EmbeddedTerminalEnv([]string{
+			"LANG=C",
+			"LC_CTYPE=POSIX",
+		})
+
+		assertUTF8EnvValue(t, env, "LANG")
+		assertUTF8EnvValue(t, env, "LC_CTYPE")
+		if got := envValue(env, "LANG"); got == "C" {
+			t.Fatal("LANG preserved non UTF-8 value C")
+		}
+		if got := envValue(env, "LC_CTYPE"); got == "POSIX" {
+			t.Fatal("LC_CTYPE preserved non UTF-8 value POSIX")
+		}
+	})
+}
+
+func TestEnsureProcessUTF8LocaleFillsMissingAndReplacesNonUTF8Values(t *testing.T) {
+	t.Setenv("LANG", "C")
+	t.Setenv("LC_CTYPE", "")
+
+	ensureProcessUTF8Locale()
+
+	if got := os.Getenv("LANG"); !strings.Contains(strings.ToUpper(got), "UTF-8") {
+		t.Fatalf("LANG = %q, want UTF-8 value", got)
+	}
+	if got := os.Getenv("LC_CTYPE"); !strings.Contains(strings.ToUpper(got), "UTF-8") {
+		t.Fatalf("LC_CTYPE = %q, want UTF-8 value", got)
+	}
+}
+
 func TestShellSessionManagerStartsShellWithTerminalIdentityEnvironment(t *testing.T) {
 	starter := newFakeShellStarter()
 	manager := NewShellSessionManager(
@@ -411,6 +464,50 @@ func TestShellSessionManagerEmitsOutputWithProjectAndTerminalID(t *testing.T) {
 	}
 }
 
+func TestShellSessionManagerPreservesSplitUTF8OutputInEventsAndHistory(t *testing.T) {
+	starter := newFakeShellStarter()
+	outputs := make(chan TerminalOutputEvent, 2)
+	store := NewTerminalHistoryStore(t.TempDir())
+	manager := NewShellSessionManager(
+		starter.Start,
+		ShellSessionCallbacks{
+			OnOutput: func(event TerminalOutputEvent) {
+				outputs <- event
+			},
+		},
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-1")),
+		WithTerminalHistoryStore(store),
+	)
+	project := Project{ID: "project-a", Path: t.TempDir(), Available: true}
+
+	if _, err := manager.CreateTerminal(project, TerminalSize{Cols: 80, Rows: 24}); err != nil {
+		t.Fatalf("CreateTerminal() error = %v", err)
+	}
+	starter.processes[0].emit(string([]byte{0xe4, 0xb8}))
+	assertNoTerminalOutput(t, outputs)
+	starter.processes[0].emit(string([]byte{0xad}) + "文 ✓")
+
+	select {
+	case event := <-outputs:
+		if event.Data != "中文 ✓" {
+			t.Fatalf("Data = %q, want 中文 ✓", event.Data)
+		}
+		if strings.ContainsRune(event.Data, '\uFFFD') {
+			t.Fatalf("Data contains replacement character: %q", event.Data)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for terminal output event")
+	}
+
+	eventually(t, func() bool {
+		history, err := store.Load()
+		if err != nil || len(history.Records) != 1 {
+			return false
+		}
+		return history.Records[0].Output == "中文 ✓" && !strings.ContainsRune(history.Records[0].Output, '\uFFFD')
+	})
+}
+
 func TestShellSessionManagerFiltersCommandStatePayloadFromOutputAndHistory(t *testing.T) {
 	starter := newFakeShellStarter()
 	outputs := make(chan TerminalOutputEvent, 1)
@@ -466,6 +563,52 @@ func TestShellSessionManagerFiltersCommandStatePayloadFromOutputAndHistory(t *te
 			return false
 		}
 		return history.Records[0].Output == "beforeafter"
+	})
+}
+
+func TestShellSessionManagerFiltersCommandStateWhilePreservingSplitUTF8Output(t *testing.T) {
+	starter := newFakeShellStarter()
+	outputs := make(chan TerminalOutputEvent, 4)
+	commandStates := make(chan TerminalCommandStateEvent, 1)
+	store := NewTerminalHistoryStore(t.TempDir())
+	manager := NewShellSessionManager(
+		starter.Start,
+		ShellSessionCallbacks{
+			OnOutput: func(event TerminalOutputEvent) {
+				outputs <- event
+			},
+			OnCommandState: func(event TerminalCommandStateEvent) {
+				commandStates <- event
+			},
+		},
+		WithShellTerminalIDGenerator(sequenceIDs("terminal-1")),
+		WithTerminalHistoryStore(store),
+	)
+	project := Project{ID: "project-a", Path: t.TempDir(), Available: true}
+
+	if _, err := manager.CreateTerminal(project, TerminalSize{Cols: 80, Rows: 24}); err != nil {
+		t.Fatalf("CreateTerminal() error = %v", err)
+	}
+	starter.processes[0].emit(string([]byte{0xe4, 0xb8}))
+	assertNoTerminalOutput(t, outputs)
+	starter.processes[0].emit(string([]byte{0xad}) + "\x1b]777;todoai;command-start;Y29kZXg=\a" + string([]byte{0xe6, 0x96}))
+	starter.processes[0].emit(string([]byte{0x87}) + "后")
+
+	select {
+	case event := <-commandStates:
+		if event.Type != "command-start" || event.Command != "codex" {
+			t.Fatalf("Command state = %#v, want command-start codex", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for command-state event")
+	}
+
+	eventually(t, func() bool {
+		history, err := store.Load()
+		if err != nil || len(history.Records) != 1 {
+			return false
+		}
+		return history.Records[0].Output == "中文后" && !strings.ContainsRune(history.Records[0].Output, '\uFFFD')
 	})
 }
 
@@ -1169,6 +1312,22 @@ func envValue(env []string, key string) string {
 		}
 	}
 	return ""
+}
+
+func assertUTF8EnvValue(t *testing.T, env []string, key string) {
+	t.Helper()
+	if got := envValue(env, key); !strings.Contains(strings.ToUpper(got), "UTF-8") {
+		t.Fatalf("%s = %q, want UTF-8 value", key, got)
+	}
+}
+
+func assertNoTerminalOutput(t *testing.T, outputs <-chan TerminalOutputEvent) {
+	t.Helper()
+	select {
+	case event := <-outputs:
+		t.Fatalf("unexpected terminal output before UTF-8 sequence completed: %#v", event)
+	case <-time.After(50 * time.Millisecond):
+	}
 }
 
 func eventually(t *testing.T, condition func() bool) {

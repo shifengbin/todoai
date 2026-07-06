@@ -406,20 +406,21 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="terminal-menu-copy"]').attributes('disabled')).toBeDefined()
   })
 
-  it('copies selected terminal text from the context menu', async () => {
+  it('copies selected Unicode terminal text from the context menu', async () => {
     const wrapper = await mountReadyApp()
-    xtermMock.sessions.get('terminal-a').terminal.selection = 'selected output'
+    xtermMock.sessions.get('terminal-a').terminal.selection = '中文 ✓ 🔧   '
 
     await openTerminalMenu(wrapper)
     await wrapper.find('[data-testid="terminal-menu-copy"]').trigger('click')
     await flushPromises()
 
-    expect(ClipboardSetText).toHaveBeenCalledWith('selected output')
+    expect(ClipboardSetText).toHaveBeenCalledWith('中文 ✓ 🔧   ')
     expect(wrapper.find('[data-testid="terminal-context-menu"]').exists()).toBe(false)
   })
 
-  it('pastes clipboard text into the active shell from the context menu', async () => {
-    runtimeMock.ClipboardGetText.mockResolvedValue('echo hi\n')
+  it('pastes Unicode clipboard text into the active shell from the context menu', async () => {
+    const text = "printf '中文 ✓ 🔧   \\n'"
+    runtimeMock.ClipboardGetText.mockResolvedValue(text)
     const wrapper = await mountReadyApp()
 
     await openTerminalMenu(wrapper)
@@ -427,7 +428,7 @@ describe('App project terminal tree', () => {
     await flushPromises()
 
     expect(ClipboardGetText).toHaveBeenCalled()
-    expect(SendTerminalInput).toHaveBeenCalledWith('terminal-a', 'echo hi\n')
+    expect(SendTerminalInput).toHaveBeenCalledWith('terminal-a', text)
     expect(wrapper.find('[data-testid="terminal-context-menu"]').exists()).toBe(false)
     expect(xtermMock.sessions.get('terminal-a').terminal.focus).toHaveBeenCalledTimes(1)
   })
@@ -3181,6 +3182,57 @@ describe('App project terminal tree', () => {
     expect(OpenTodoFolder).toHaveBeenCalledWith('todo-a')
   })
 
+  it('copies Unicode TODO title and description from the TODO row menu', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      inProgressProjectState({
+        todos: [
+          todo({
+            title: '修复登录问题 ✓',
+            description: '登录后跳回首页 🔧 ',
+            status: 'in-progress'
+          })
+        ]
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+    await openTodoContextMenu(wrapper, 'todo-a')
+    await wrapper.find('[data-testid="todo-menu-copy-title-description-todo-a"]').trigger('click')
+    await flushPromises()
+
+    expect(ClipboardSetText).toHaveBeenCalledWith('修复登录问题 ✓\n登录后跳回首页 🔧 ')
+    expect(wrapper.find('[data-testid="todo-context-menu-todo-a"]').exists()).toBe(false)
+  })
+
+  it('reports TODO clipboard copy failures without changing TODO data', async () => {
+    runtimeMock.ClipboardSetText.mockRejectedValueOnce(new Error('clipboard unavailable'))
+    appApiMock.ListProjects.mockResolvedValue(
+      inProgressProjectState({
+        todos: [
+          todo({
+            title: '修复登录问题',
+            description: '登录后跳回首页',
+            status: 'in-progress'
+          })
+        ]
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+    const beforeText = wrapper.find('[data-testid="todo-todo-a"]').text()
+    await openTodoContextMenu(wrapper, 'todo-a')
+    await wrapper.find('[data-testid="todo-menu-copy-title-description-todo-a"]').trigger('click')
+    await flushPromises()
+
+    expect(ClipboardSetText).toHaveBeenCalledWith('修复登录问题\n登录后跳回首页')
+    expect(wrapper.find('.status-error').text()).toContain('clipboard unavailable')
+    expect(wrapper.find('[data-testid="todo-todo-a"]').text()).toBe(beforeText)
+    expect(UpdateTodo).not.toHaveBeenCalled()
+    expect(ChangeTodoStatus).not.toHaveBeenCalled()
+  })
+
   it('shows failed worktree status and blocks project terminal creation', async () => {
     appApiMock.ListProjects.mockResolvedValue(
       inProgressProjectState({
@@ -3466,6 +3518,26 @@ describe('App project terminal tree', () => {
       priority: 'medium',
       projects: []
     })
+  })
+
+  it('accepts Unicode paste text in the create TODO name and description fields', async () => {
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="new-todo"]').trigger('click')
+    const nameInput = wrapper.find('[data-testid="todo-name-input"]')
+    const descriptionInput = wrapper.find('[data-testid="todo-description-input"]')
+
+    await nameInput.trigger('paste', {
+      clipboardData: { getData: () => '修复登录问题' }
+    })
+    await nameInput.setValue('修复登录问题')
+    await descriptionInput.trigger('paste', {
+      clipboardData: { getData: () => '登录后跳回首页 🔧' }
+    })
+    await descriptionInput.setValue('登录后跳回首页 🔧')
+
+    expect(nameInput.element.value).toBe('修复登录问题')
+    expect(descriptionInput.element.value).toBe('登录后跳回首页 🔧')
   })
 
   it('selects an existing project candidate when single import skips a duplicate', async () => {

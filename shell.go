@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
@@ -19,6 +20,7 @@ const (
 	ShellStateUnsupported = "unsupported"
 
 	WorkspaceTerminalContextID = "__workspace__"
+	defaultUTF8Locale          = "en_US.UTF-8"
 )
 
 var ErrEmbeddedShellUnsupported = errors.New("embedded terminal is not supported on this platform")
@@ -135,6 +137,7 @@ type ShellSession struct {
 	cleanup           func()
 	cleanupOnce       sync.Once
 	outputFilter      *commandStateOutputFilter
+	outputDecoder     utf8ChunkDecoder
 }
 
 func NewShellSessionManager(starter ShellStarter, callbacks ShellSessionCallbacks, opts ...ShellSessionManagerOption) *ShellSessionManager {
@@ -986,27 +989,35 @@ func (manager *ShellSessionManager) readOutput(session *ShellSession) {
 	for {
 		n, err := session.process.Read(buffer)
 		if n > 0 {
-			result := session.outputFilter.Filter(string(buffer[:n]))
-			for _, event := range result.Events {
-				manager.emitCommandState(session, event)
-			}
-			if result.Data != "" && manager.callbacks.OnOutput != nil {
-				manager.callbacks.OnOutput(TerminalOutputEvent{
-					ProjectID:         session.projectID,
-					TodoID:            session.todoID,
-					TodoProjectID:     session.todoProjectID,
-					WorkspaceTerminal: session.workspaceTerminal,
-					TerminalID:        session.terminalID,
-					Data:              result.Data,
-				})
-			}
-			if result.Data != "" {
-				manager.appendOutputToHistory(session.terminalID, result.Data)
-			}
+			manager.handleDecodedOutput(session, session.outputDecoder.Decode(buffer[:n]))
 		}
 		if err != nil {
+			manager.handleDecodedOutput(session, session.outputDecoder.Flush())
 			return
 		}
+	}
+}
+
+func (manager *ShellSessionManager) handleDecodedOutput(session *ShellSession, data string) {
+	if data == "" {
+		return
+	}
+	result := session.outputFilter.Filter(data)
+	for _, event := range result.Events {
+		manager.emitCommandState(session, event)
+	}
+	if result.Data != "" && manager.callbacks.OnOutput != nil {
+		manager.callbacks.OnOutput(TerminalOutputEvent{
+			ProjectID:         session.projectID,
+			TodoID:            session.todoID,
+			TodoProjectID:     session.todoProjectID,
+			WorkspaceTerminal: session.workspaceTerminal,
+			TerminalID:        session.terminalID,
+			Data:              result.Data,
+		})
+	}
+	if result.Data != "" {
+		manager.appendOutputToHistory(session.terminalID, result.Data)
 	}
 }
 
@@ -1457,10 +1468,38 @@ func fileExists(path string) bool {
 }
 
 func EmbeddedTerminalEnv(base []string) []string {
-	return envWithOverrides(base, map[string]string{
+	return envWithUTF8Locale(envWithOverrides(base, map[string]string{
 		"TERM":      "xterm-256color",
 		"COLORTERM": "truecolor",
-	})
+	}))
+}
+
+func ensureProcessUTF8Locale() {
+	if !isUTF8Locale(os.Getenv("LANG")) {
+		_ = os.Setenv("LANG", defaultUTF8Locale)
+	}
+	if !isUTF8Locale(os.Getenv("LC_CTYPE")) {
+		_ = os.Setenv("LC_CTYPE", defaultUTF8Locale)
+	}
+}
+
+func envWithUTF8Locale(env []string) []string {
+	overrides := map[string]string{}
+	if !isUTF8Locale(envValueFromList(env, "LANG")) {
+		overrides["LANG"] = defaultUTF8Locale
+	}
+	if !isUTF8Locale(envValueFromList(env, "LC_CTYPE")) {
+		overrides["LC_CTYPE"] = defaultUTF8Locale
+	}
+	if len(overrides) == 0 {
+		return env
+	}
+	return envWithOverrides(env, overrides)
+}
+
+func isUTF8Locale(value string) bool {
+	normalized := strings.ToUpper(strings.TrimSpace(value))
+	return strings.Contains(normalized, "UTF-8") || strings.Contains(normalized, "UTF8")
 }
 
 func envWithOverrides(base []string, overrides map[string]string) []string {
@@ -1515,4 +1554,47 @@ func envValueFromList(env []string, key string) string {
 		}
 	}
 	return ""
+}
+
+type utf8ChunkDecoder struct {
+	pending []byte
+}
+
+func (decoder *utf8ChunkDecoder) Decode(chunk []byte) string {
+	if len(chunk) == 0 {
+		return ""
+	}
+	data := make([]byte, 0, len(decoder.pending)+len(chunk))
+	data = append(data, decoder.pending...)
+	data = append(data, chunk...)
+
+	completeLen := completeUTF8PrefixLen(data)
+	decoder.pending = append(decoder.pending[:0], data[completeLen:]...)
+	if completeLen == 0 {
+		return ""
+	}
+	return string(data[:completeLen])
+}
+
+func (decoder *utf8ChunkDecoder) Flush() string {
+	if len(decoder.pending) == 0 {
+		return ""
+	}
+	data := string(decoder.pending)
+	decoder.pending = nil
+	return data
+}
+
+func completeUTF8PrefixLen(data []byte) int {
+	if len(data) == 0 {
+		return 0
+	}
+	start := len(data) - 1
+	for start >= 0 && !utf8.RuneStart(data[start]) {
+		start--
+	}
+	if start < 0 || utf8.FullRune(data[start:]) {
+		return len(data)
+	}
+	return start
 }

@@ -1231,7 +1231,7 @@ async function deleteCompletedTodos(todoIds) {
   }
 }
 
-function copyTodoDescription(todoId) {
+async function copyTodoDescription(todoId) {
   const todo = todos.value.find((candidate) => candidate.id === todoId)
   if (!todo) {
     return
@@ -1239,7 +1239,11 @@ function copyTodoDescription(todoId) {
   const title = todo.title || ''
   const description = todo.description || ''
   const text = description ? `${title}\n${description}` : title
-  ClipboardSetText(text)
+  try {
+    await ClipboardSetText(text)
+  } catch (error) {
+    showError(error)
+  }
 }
 
 async function changeTodoStatus(todoId, status) {

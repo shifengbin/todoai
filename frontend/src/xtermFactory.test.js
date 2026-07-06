@@ -62,6 +62,17 @@ describe('createXtermSession', () => {
     expect(terminalMock.lastTerminal.options.convertEol).toBeUndefined()
   })
 
+  it('configures Unicode font fallbacks for macOS terminal characters', () => {
+    createXtermSession('terminal-a', vi.fn(), vi.fn(), vi.fn(), vi.fn())
+
+    const fontFamily = terminalMock.lastTerminal.options.fontFamily
+    expect(fontFamily).toContain('Cascadia Mono')
+    expect(fontFamily).toContain('Menlo')
+    expect(fontFamily).toContain('PingFang SC')
+    expect(fontFamily).toContain('Apple Color Emoji')
+    expect(fontFamily).toContain('Symbols Nerd Font')
+  })
+
   it('intercepts Ctrl+Shift+C for copy', () => {
     const onShortcut = vi.fn()
 

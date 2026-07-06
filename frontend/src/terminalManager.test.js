@@ -144,7 +144,7 @@ describe('TerminalSessionManager', () => {
     expect(sendInput).toHaveBeenCalledWith('terminal-b', 'pwd\n')
   })
 
-  it('copies selected terminal text through the clipboard writer', async () => {
+  it('copies selected Unicode terminal text through the clipboard writer', async () => {
     const writeText = vi.fn()
     const factory = createFakeTerminalFactory()
     const manager = new TerminalSessionManager({
@@ -155,28 +155,29 @@ describe('TerminalSessionManager', () => {
     })
 
     manager.activate('terminal-a', document.createElement('div'))
-    factory.sessions.get('terminal-a').terminal.selection = 'git status'
+    factory.sessions.get('terminal-a').terminal.selection = '中文 ✓ 🔧   '
 
     await manager.copySelection('terminal-a')
 
-    expect(writeText).toHaveBeenCalledWith('git status')
+    expect(writeText).toHaveBeenCalledWith('中文 ✓ 🔧   ')
   })
 
-  it('pastes non-empty clipboard text into the owning project shell', async () => {
+  it('pastes non-empty Unicode clipboard text into the owning project shell', async () => {
     const sendInput = vi.fn()
     const factory = createFakeTerminalFactory()
+    const text = "printf '中文 ✓ 🔧   \\n'"
     const manager = new TerminalSessionManager({
       createSession: factory.createSession,
       sendInput,
       resizeTerminal: vi.fn(),
-      clipboard: { readText: vi.fn().mockResolvedValue('npm test\n') }
+      clipboard: { readText: vi.fn().mockResolvedValue(text) }
     })
 
     manager.activate('terminal-b', document.createElement('div'))
 
     await manager.paste('terminal-b')
 
-    expect(sendInput).toHaveBeenCalledWith('terminal-b', 'npm test\n')
+    expect(sendInput).toHaveBeenCalledWith('terminal-b', text)
   })
 
   it('ignores empty clipboard text when pasting', async () => {

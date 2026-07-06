@@ -28,7 +28,8 @@ const terminalTheme = {
 export function createXtermSession(terminalId, onData, onShortcut, onCommandState, onTitleChange) {
   const terminal = new Terminal({
     cursorBlink: true,
-    fontFamily: '"Cascadia Mono", "JetBrains Mono", "SFMono-Regular", monospace',
+    fontFamily:
+      '"Cascadia Mono", "JetBrains Mono", "SFMono-Regular", Menlo, Monaco, "Symbols Nerd Font", "Nerd Font Symbols", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Apple Color Emoji", "Segoe UI Emoji", monospace',
     fontSize: 13,
     lineHeight: 1.15,
     scrollback: 4000,

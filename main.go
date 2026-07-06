@@ -23,6 +23,8 @@ func main() {
 		os.Exit(exitCode)
 	}
 
+	ensureProcessUTF8Locale()
+
 	// Create an instance of the app structure
 	app := NewApp()
 

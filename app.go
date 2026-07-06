@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -264,7 +265,16 @@ func (a *App) pollClaudeStatus() {
 }
 
 func (a *App) applicationMenu() *menu.Menu {
+	return a.applicationMenuForPlatform(runtime.GOOS)
+}
+
+func (a *App) applicationMenuForPlatform(goos string) *menu.Menu {
 	appMenu := menu.NewMenu()
+	if goos == "darwin" {
+		appMenu.Append(menu.AppMenu())
+		appMenu.Append(menu.EditMenu())
+		appMenu.Append(menu.WindowMenu())
+	}
 	fileMenu := appMenu.AddSubmenu("文件")
 	fileMenu.AddText("打开项目", nil, func(_ *menu.CallbackData) {
 		_, _ = a.OpenWorkspaceFromDialog()
