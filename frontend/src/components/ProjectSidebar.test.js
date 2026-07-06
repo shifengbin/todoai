@@ -491,6 +491,8 @@ describe('ProjectSidebar', () => {
     expect(scrollRule).toContain('flex: 1 1 auto;')
     expect(scrollRule).toContain('min-height: 0;')
     expect(scrollRule).toContain('overflow-y: auto;')
+    expect(scrollRule).toContain('padding-right: 10px;')
+    expect(scrollRule).toContain('scrollbar-gutter: stable;')
     expect(actionsRule).toContain('display: inline-flex;')
     expect(actionsRule).toContain('flex-wrap: nowrap;')
   })

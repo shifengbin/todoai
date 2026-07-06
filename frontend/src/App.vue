@@ -254,6 +254,16 @@ const activeProjectPath = computed(() => activeProject.value?.path || '')
 
 const hasWorkspace = computed(() => Boolean(currentWorkspace.value?.path))
 
+const modalOverlayVisible = computed(() => Boolean(
+  todoForm.visible ||
+  todoDetail.visible ||
+  projectPicker.visible ||
+  recentWorkspacePicker.visible ||
+  settingsPanel.visible ||
+  initializationFileManagement.visible ||
+  lifecycleScriptManagement.visible
+))
+
 const activeTodo = computed(() => {
   return todos.value.find((todo) => todo.id === activeTodoId.value) || null
 })
@@ -3009,7 +3019,12 @@ function clearToastTimer() {
 </script>
 
 <template>
-  <main class="app-shell" :data-theme="currentTheme" :style="{ '--sidebar-width': `${sidebarWidth}px` }">
+  <main
+    class="app-shell"
+    :class="{ 'has-modal-overlay': modalOverlayVisible }"
+    :data-theme="currentTheme"
+    :style="{ '--sidebar-width': `${sidebarWidth}px` }"
+  >
     <ProjectSidebar
       :projects="projects"
       :todos="todos"
@@ -3552,6 +3567,7 @@ function clearToastTimer() {
                     aria-label="Base branch"
                     @focus="openProjectBranchPicker('todo-create', project.id)"
                     @input="updateProjectBranchInput('todo-create', project.id, $event.target.value)"
+                    @blur="closeProjectBranchPicker"
                     @keydown.escape.stop.prevent="closeProjectBranchPicker"
                   />
                   <div
@@ -3798,6 +3814,7 @@ function clearToastTimer() {
                     aria-label="Base branch"
                     @focus="openProjectBranchPicker('todo-detail', project.id)"
                     @input="updateProjectBranchInput('todo-detail', project.id, $event.target.value)"
+                    @blur="closeProjectBranchPicker"
                     @keydown.escape.stop.prevent="closeProjectBranchPicker"
                   />
                   <div
@@ -3977,6 +3994,7 @@ function clearToastTimer() {
                   aria-label="Base branch"
                   @focus="openProjectBranchPicker('project-picker', project.id)"
                   @input="updateProjectBranchInput('project-picker', project.id, $event.target.value)"
+                  @blur="closeProjectBranchPicker"
                   @keydown.escape.stop.prevent="closeProjectBranchPicker"
                 />
                 <div

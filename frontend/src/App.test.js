@@ -1515,6 +1515,47 @@ describe('App project terminal tree', () => {
     expect(options).toEqual(['release'])
   })
 
+  it('closes project branch candidates after a custom create TODO branch input loses focus', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'frontend-app', path: '/work/frontend-app', available: true }
+        ]
+      })
+    )
+    appApiMock.ListProjectBranches.mockResolvedValue(['main', 'develop'])
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="new-todo"]').trigger('click')
+    await nextTick()
+    await wrapper.find('[data-testid="todo-name-input"]').setValue('Write tests')
+    await wrapper.find('[data-testid="todo-project-option-project-a"]').trigger('click')
+    await flushPromises()
+
+    const input = wrapper.find('[data-testid="todo-selected-project-branch-project-a"]')
+    await input.trigger('focus')
+    await input.setValue('feature/manual-branch')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="project-branch-picker-options-todo-create-project-a"]').exists()).toBe(true)
+
+    await input.trigger('blur')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="project-branch-picker-options-todo-create-project-a"]').exists()).toBe(false)
+    expect(input.element.value).toBe('feature/manual-branch')
+
+    await wrapper.find('[data-testid="todo-create-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(CreateTodo).toHaveBeenCalledWith({
+      title: 'Write tests',
+      description: '',
+      priority: 'medium',
+      projects: [{ projectId: 'project-a', baseBranch: 'feature/manual-branch' }]
+    })
+  })
+
   it('uses opaque branch picker backgrounds', () => {
     const styles = readFileSync('src/style.css', 'utf8')
     const inputRule = styles.match(/\.todo-branch-input\s*{([^}]*)}/s)?.[1] || ''
@@ -1954,6 +1995,48 @@ describe('App project terminal tree', () => {
 
     expect(AddProjectSelectionsToTodo).toHaveBeenCalledWith('todo-a', [
       { projectId: 'project-b', baseBranch: 'origin/release' }
+    ])
+  })
+
+  it('closes project branch candidates after a custom add-project branch input loses focus', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        projects: [
+          { id: 'project-a', name: 'frontend-app', path: '/work/frontend-app', available: true },
+          { id: 'project-b', name: 'api-service', path: '/work/api-service', available: true }
+        ],
+        todoProjects: [todoProject({ projectId: 'project-a' })],
+        terminals: [],
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      })
+    )
+    appApiMock.ListProjectBranches.mockResolvedValue(['develop', 'origin/develop'])
+    const wrapper = await mountReadyApp()
+
+    await selectTodoMenuAction(wrapper, 'add-project', 'todo-a')
+    await nextTick()
+    await wrapper.find('[data-testid="todo-project-picker-option-project-b"]').trigger('click')
+    await flushPromises()
+
+    const input = wrapper.find('[data-testid="todo-project-picker-branch-project-b"]')
+    await input.trigger('focus')
+    await input.setValue('feature/manual-branch')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="project-branch-picker-options-project-picker-project-b"]').exists()).toBe(true)
+
+    await input.trigger('blur')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="project-branch-picker-options-project-picker-project-b"]').exists()).toBe(false)
+    expect(input.element.value).toBe('feature/manual-branch')
+
+    await wrapper.find('[data-testid="todo-project-picker-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(AddProjectSelectionsToTodo).toHaveBeenCalledWith('todo-a', [
+      { projectId: 'project-b', baseBranch: 'feature/manual-branch' }
     ])
   })
 
@@ -3286,6 +3369,23 @@ describe('App project terminal tree', () => {
     await wrapper.find('[data-testid="todo-project-picker-close"]').trigger('click')
     await nextTick()
     expect(wrapper.find('[data-testid="import-single-project-candidate"]').exists()).toBe(false)
+  })
+
+  it('hides the TODO workspace scrollbar while a TODO dialog is open', async () => {
+    const wrapper = await mountReadyApp()
+
+    expect(wrapper.find('.app-shell').classes()).not.toContain('has-modal-overlay')
+
+    await wrapper.find('[data-testid="new-todo"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="todo-create-dialog"]').exists()).toBe(true)
+    expect(wrapper.find('.app-shell').classes()).toContain('has-modal-overlay')
+
+    const styles = readFileSync('src/style.css', 'utf8')
+    const modalScrollRule = styles.match(/\.app-shell\.has-modal-overlay\s+\.todo-workspace-scroll\s*{([^}]*)}/s)?.[1] || ''
+
+    expect(modalScrollRule).toContain('overflow-y: hidden;')
   })
 
   it('imports a single project candidate without refreshing git status immediately', async () => {
