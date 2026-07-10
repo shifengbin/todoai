@@ -69,7 +69,7 @@ TBD - created by archiving change add-todo-initialization-files. Update Purpose 
 
 ### Requirement: Write Selected Initialization Files Into Todo Workspace
 
-系统 SHALL 将 TODO 保存的初始化文件快照写入任务文件夹根目录。每个初始化文件 SHALL 使用快照中的文件名创建，文件内容 SHALL 等于快照中的文本内容。系统 SHALL 继续生成和维护 `README.md`。若任务文件夹中已经存在同名初始化文件，系统 SHALL NOT 覆盖该文件。对于包含关联 TODO project 的 TODO，系统 MUST 在该 TODO 的所有关联 TODO project worktree 都创建完成且状态为 ready 后，才写入初始化文件。若任一关联 TODO project worktree 尚未 ready、正在准备或准备失败，系统 SHALL 延迟写入初始化文件。对于没有关联 TODO project 的 TODO，系统 SHALL 在任务文件夹创建后写入初始化文件。
+系统 SHALL 将 TODO 保存的初始化文件快照写入任务文件夹根目录。每个初始化文件 SHALL 使用快照中的文件名创建，文件内容 SHALL 等于快照中的文本内容。若任务文件夹中已经存在同名初始化文件，系统 SHALL NOT 覆盖该文件。对于包含关联 TODO project 的 TODO，系统 MUST 在该 TODO 的所有关联 TODO project worktree 都创建完成且状态为 ready 后，才写入初始化文件，并 SHALL 继续生成和维护 `README.md`。若任一关联 TODO project worktree 尚未 ready、正在准备或准备失败，系统 SHALL 延迟写入初始化文件。对于没有关联 TODO project 的 TODO，系统 SHALL 在任务文件夹创建后写入初始化文件，但 SHALL NOT 生成 `README.md`。对于没有关联 TODO project 且没有选中初始化文件的 TODO，系统 SHALL NOT 只为 `README.md` 创建任务文件夹。
 
 #### Scenario: Selected initialization files are created after all worktrees are ready
 
@@ -92,13 +92,14 @@ TBD - created by archiving change add-todo-initialization-files. Update Purpose 
 - **WHEN** `api-service` 的 TODO project worktree 后续达到 ready
 - **THEN** 系统写入 `AGENTS.md`
 
-#### Scenario: Todo without associated projects writes initialization files after task workspace creation
+#### Scenario: Todo without associated projects writes initialization files without readme
 
 - **WHEN** TODO `整理文档` 保存了初始化文件快照，文件名为 `AGENTS.md`，内容为 `请先阅读任务说明`
 - **AND** TODO `整理文档` 没有关联 TODO project
 - **AND** 用户将该 TODO 标记为 `in-progress`
 - **THEN** 系统创建该 TODO 的任务文件夹
 - **AND** 任务文件夹中包含 `AGENTS.md`
+- **AND** 任务文件夹中不包含 `README.md`
 
 #### Scenario: Existing initialization file is not overwritten
 
@@ -110,12 +111,12 @@ TBD - created by archiving change add-todo-initialization-files. Update Purpose 
 - **THEN** 系统不覆盖 `AGENTS.md`
 - **AND** `AGENTS.md` 的内容仍为 `用户修改内容`
 
-#### Scenario: Todo without selected initialization files only creates readme
+#### Scenario: Todo without associated projects and selected initialization files creates no task files
 
 - **WHEN** 用户创建 TODO 时未选择任何初始化文件模板
+- **AND** TODO 没有关联 TODO project
 - **AND** 用户将该 TODO 标记为 `in-progress`
-- **AND** 该 TODO 的所有关联 TODO project worktree 均已 ready
-- **THEN** 系统创建该 TODO 的任务文件夹
-- **AND** 系统生成 `README.md`
+- **THEN** 系统不创建该 TODO 的任务文件夹
+- **AND** 系统不生成 `README.md`
 - **AND** 系统不额外创建初始化文件
 
