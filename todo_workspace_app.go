@@ -51,6 +51,16 @@ func writeTodoWorkspaceInitializationFilesWhenReady(todo Todo, todoProjects []To
 	}
 }
 
+func todoNeedsTaskWorkspace(todo Todo, todoProjects []TodoProject) bool {
+	if len(todoProjects) > 0 || len(todo.InitializationFiles) > 0 {
+		return true
+	}
+	if todo.LifecycleScript == nil {
+		return false
+	}
+	return strings.TrimSpace(todo.LifecycleScript.InitScript) != "" || strings.TrimSpace(todo.LifecycleScript.CompleteScript) != ""
+}
+
 // workspacePathOrEmpty returns the current workspace root path or an empty
 // string when no workspace is bound.
 func (a *App) workspacePathOrEmpty() string {
@@ -94,8 +104,21 @@ func (a *App) ensureTaskWorkspaceDir(todo Todo, workspacePath string) (string, e
 		if todo.Status != TodoStatusInProgress {
 			return "", errors.New("task workspace has not been created")
 		}
+		state, err := a.projects.Load()
+		if err != nil {
+			return "", err
+		}
+		for _, candidate := range state.Todos {
+			if candidate.ID == todo.ID {
+				todo = candidate
+				break
+			}
+		}
+		if !todoNeedsTaskWorkspace(todo, todoProjectsForTodoID(state.TodoProjects, todo.ID)) {
+			return "", errors.New("task workspace has not been created")
+		}
 		dirName := todoWorkspaceDirName(todo.Title, todo.Description)
-		state, err := a.projects.RecordTodoWorkspace(todo.ID, dirName, nil)
+		state, err = a.projects.RecordTodoWorkspace(todo.ID, dirName, nil)
 		if err != nil {
 			return "", err
 		}
@@ -121,7 +144,7 @@ func (a *App) ensureTaskWorkspaceDir(todo Todo, workspacePath string) (string, e
 // projects are skipped and an existing task directory is reused.
 func (a *App) prepareTodoWorkspace(todoID string) {
 	workspacePath := a.workspacePathOrEmpty()
-	if workspacePath == "" || a.worktreePreparer == nil {
+	if workspacePath == "" {
 		return
 	}
 	state, err := a.projects.Load()
@@ -130,6 +153,13 @@ func (a *App) prepareTodoWorkspace(todoID string) {
 	}
 	todo, ok := openTodoByID(state.Todos, todoID)
 	if !ok || todo.Status != TodoStatusInProgress {
+		return
+	}
+	todoProjects := todoProjectsForTodoID(state.TodoProjects, todoID)
+	if !todoNeedsTaskWorkspace(todo, todoProjects) {
+		return
+	}
+	if len(todoProjects) > 0 && a.worktreePreparer == nil {
 		return
 	}
 
@@ -143,7 +173,7 @@ func (a *App) prepareTodoWorkspace(todoID string) {
 	}
 
 	updates := []TodoProjectWorktreeUpdate{}
-	for _, todoProject := range todoProjectsForTodoID(state.TodoProjects, todoID) {
+	for _, todoProject := range todoProjects {
 		if todoProject.WorktreeStatus == WorktreeStatusReady {
 			continue
 		}
@@ -191,6 +221,22 @@ func (a *App) refreshTodoReadme(todoID string) {
 	a.writeTodoReadmeFromState(state, todoID, workspacePath)
 }
 
+func (a *App) refreshTodoReadmeAfterProjectRemoval(todoID string) {
+	workspacePath := a.workspacePathOrEmpty()
+	if workspacePath == "" {
+		return
+	}
+	state, err := a.projects.Load()
+	if err != nil {
+		return
+	}
+	if len(todoProjectsForTodoID(state.TodoProjects, todoID)) == 0 {
+		a.removeTodoReadmeFromState(state, todoID, workspacePath)
+		return
+	}
+	a.writeTodoReadmeFromState(state, todoID, workspacePath)
+}
+
 // writeTodoReadmeFromState regenerates the README for a TODO using the supplied
 // state snapshot. Projects are listed in their stored order.
 func (a *App) writeTodoReadmeFromState(state ProjectState, todoID string, workspacePath string) {
@@ -207,5 +253,18 @@ func (a *App) writeTodoReadmeFromState(state ProjectState, todoID string, worksp
 		return
 	}
 	writeTodoWorkspaceInitializationFilesWhenReady(todo, state.TodoProjects, workspacePath)
-	_ = writeTodoWorkspaceReadme(todo, todoProjectsForTodoID(state.TodoProjects, todoID), workspacePath)
+	todoProjects := todoProjectsForTodoID(state.TodoProjects, todoID)
+	if len(todoProjects) == 0 {
+		return
+	}
+	_ = writeTodoWorkspaceReadme(todo, todoProjects, workspacePath)
+}
+
+func (a *App) removeTodoReadmeFromState(state ProjectState, todoID string, workspacePath string) {
+	for _, todo := range state.Todos {
+		if todo.ID == todoID {
+			removeTodoWorkspaceReadme(todo, workspacePath)
+			return
+		}
+	}
 }

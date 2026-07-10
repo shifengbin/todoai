@@ -121,6 +121,17 @@ func writeTodoWorkspaceReadme(todo Todo, todoProjects []TodoProject, workspacePa
 	return os.Rename(tempPath, readmePath)
 }
 
+func removeTodoWorkspaceReadme(todo Todo, workspacePath string) {
+	dirPath, ok := todoWorkspacePath(todo, workspacePath)
+	if !ok {
+		return
+	}
+	err := os.Remove(filepath.Join(dirPath, todoWorkspaceReadmeFileName))
+	if err != nil && !os.IsNotExist(err) {
+		return
+	}
+}
+
 func writeTodoWorkspaceInitializationFiles(todo Todo, workspacePath string) error {
 	dirPath, ok := todoWorkspacePath(todo, workspacePath)
 	if !ok {

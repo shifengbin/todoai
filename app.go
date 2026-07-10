@@ -520,7 +520,11 @@ func (a *App) UpdateTodo(request UpdateTodoRequest) (ProjectState, error) {
 	for _, todoProjectID := range removedTodoProjectIDs {
 		a.shells.DeleteTodoProjectTerminals(todoProjectID)
 	}
-	a.refreshTodoReadme(request.ID)
+	if len(removedTodoProjectIDs) > 0 {
+		a.refreshTodoReadmeAfterProjectRemoval(request.ID)
+	} else {
+		a.refreshTodoReadme(request.ID)
+	}
 	return a.withShellState(state), nil
 }
 
@@ -564,6 +568,13 @@ func (a *App) AddProjectSelectionsToTodo(todoID string, projectSelections []Todo
 	if err != nil {
 		return ProjectState{}, err
 	}
+	if todo, ok := openTodoByID(state.Todos, todoID); ok && todo.Status == TodoStatusInProgress {
+		a.prepareTodoWorkspace(todoID)
+		state, err = a.projects.Load()
+		if err != nil {
+			return ProjectState{}, err
+		}
+	}
 	return a.withShellState(state), nil
 }
 
@@ -586,7 +597,7 @@ func (a *App) RemoveTodoProject(todoProjectID string) (ProjectState, error) {
 	if len(removedTodoProjectIDs) > 0 {
 		_ = a.deleteTodoProjectUIState(removedTodoProjectIDs)
 		if hadTodoProject {
-			a.refreshTodoReadme(removedTodoProject.TodoID)
+			a.refreshTodoReadmeAfterProjectRemoval(removedTodoProject.TodoID)
 		}
 	}
 	return a.withShellState(state), nil

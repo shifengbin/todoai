@@ -660,6 +660,38 @@ func TestAppCreatesTaskTerminalInTaskWorkspaceAndSelectsTaskContext(t *testing.T
 	}
 }
 
+func TestAppRejectsTaskTerminalForTodoWithoutWorkspaceInputs(t *testing.T) {
+	workspaceDir := t.TempDir()
+	starter := newFakeShellStarter()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		starter.Start,
+		WithShellTerminalIDGenerator(sequenceIDs("task-terminal")),
+	)
+	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err := app.CreateTodo(CreateTodoRequest{Title: "整理文档"})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	todoID := state.Todos[0].ID
+	state, err = app.ChangeTodoStatus(todoID, TodoStatusInProgress)
+	if err != nil {
+		t.Fatalf("ChangeTodoStatus(in-progress) error = %v", err)
+	}
+
+	if _, err := app.CreateTaskTerminal(todoID, 80, 24); err == nil || !strings.Contains(err.Error(), "task workspace has not been created") {
+		t.Fatalf("CreateTaskTerminal() error = %v, want task workspace unavailable error", err)
+	}
+	if len(starter.requests) != 0 {
+		t.Fatalf("shell start count = %d, want no task terminal started", len(starter.requests))
+	}
+	if _, err := os.Stat(filepath.Join(mustAbs(t, workspaceDir), "tasks")); !os.IsNotExist(err) {
+		t.Fatalf("tasks dir stat error = %v, want tasks dir not created", err)
+	}
+}
+
 func TestAppStartsTodoProjectBackgroundCommandInPreparedWorktreeWithoutAddingTerminal(t *testing.T) {
 	workspaceDir := t.TempDir()
 	projectDir := t.TempDir()
@@ -943,12 +975,38 @@ func TestAppWritesTodoInitializationFilesWhenTaskWorkspaceIsPrepared(t *testing.
 	if string(agents) != "用户修改内容" {
 		t.Fatalf("AGENTS.md after reopen = %q, want existing content preserved", string(agents))
 	}
-	readme, err := os.ReadFile(filepath.Join(taskDir, "README.md"))
-	if err != nil {
-		t.Fatalf("read README.md: %v", err)
+	if _, err := os.Stat(filepath.Join(taskDir, "README.md")); !os.IsNotExist(err) {
+		t.Fatalf("README.md stat error = %v, want file not created for todo without projects", err)
 	}
-	if !strings.Contains(string(readme), "# 任务: 修复登录问题") {
-		t.Fatalf("README.md = %q, want generated readme", string(readme))
+}
+
+func TestAppDoesNotCreateTaskWorkspaceForTodoWithoutProjectsOrInitializationFiles(t *testing.T) {
+	workspaceDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
+	)
+	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err := app.CreateTodo(CreateTodoRequest{Title: "整理文档"})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	todoID := state.Todos[0].ID
+
+	state, err = app.ChangeTodoStatus(todoID, TodoStatusInProgress)
+	if err != nil {
+		t.Fatalf("ChangeTodoStatus(in-progress) error = %v", err)
+	}
+
+	if got := state.Todos[0].WorkspaceDirName; got != "" {
+		t.Fatalf("WorkspaceDirName = %q, want empty for todo without projects or initialization files", got)
+	}
+	tasksDir := filepath.Join(mustAbs(t, workspaceDir), "tasks")
+	if _, err := os.Stat(tasksDir); !os.IsNotExist(err) {
+		t.Fatalf("tasks dir stat error = %v, want tasks dir not created", err)
 	}
 }
 
@@ -1023,6 +1081,63 @@ func TestAppDelaysTodoInitializationFilesUntilAllWorktreesReady(t *testing.T) {
 	}
 	if string(agents) != "请先阅读任务说明" {
 		t.Fatalf("AGENTS.md = %q, want snapshot content", string(agents))
+	}
+}
+
+func TestAppAddProjectSelectionsToInProgressTodoPreparesWorktreeAndReadme(t *testing.T) {
+	workspaceDir := t.TempDir()
+	projectDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
+	)
+	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	projectID := state.Projects[0].ID
+	state, err = app.CreateTodo(CreateTodoRequest{Title: "修复登录问题"})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	todoID := state.Todos[0].ID
+	state, err = app.ChangeTodoStatus(todoID, TodoStatusInProgress)
+	if err != nil {
+		t.Fatalf("ChangeTodoStatus(in-progress) error = %v", err)
+	}
+
+	state, err = app.AddProjectSelectionsToTodo(todoID, []TodoProjectSelection{{ProjectID: projectID, BaseBranch: "feature/login-fix"}})
+	if err != nil {
+		t.Fatalf("AddProjectSelectionsToTodo() error = %v", err)
+	}
+
+	if len(state.TodoProjects) != 1 {
+		t.Fatalf("TodoProjects length = %d, want 1", len(state.TodoProjects))
+	}
+	todo := state.Todos[0]
+	if todo.WorkspaceDirName == "" {
+		t.Fatal("WorkspaceDirName = empty, want task workspace created after adding project")
+	}
+	todoProject := state.TodoProjects[0]
+	if todoProject.WorktreeStatus != WorktreeStatusReady || todoProject.WorktreePath == "" {
+		t.Fatalf("todoProject worktree = %#v, want ready path", todoProject)
+	}
+	wantBranch := worktreeBranchName(todoProject.Name, todo.WorkspaceDirName)
+	if todoProject.BaseBranch != "feature/login-fix" || todoProject.WorktreeBranch != wantBranch {
+		t.Fatalf("todoProject branches = %#v, want feature/login-fix -> %s", todoProject, wantBranch)
+	}
+	taskDir := filepath.Join(mustAbs(t, workspaceDir), "tasks", todo.WorkspaceDirName)
+	readme, err := os.ReadFile(filepath.Join(taskDir, "README.md"))
+	if err != nil {
+		t.Fatalf("read README.md: %v", err)
+	}
+	wantReadmeLine := "1. " + todoProject.Name + ": base分支为feature/login-fix, 当前worktree分支为" + wantBranch + ";"
+	if !strings.Contains(string(readme), wantReadmeLine) {
+		t.Fatalf("README.md = %q, want project branch line %q", string(readme), wantReadmeLine)
 	}
 }
 
@@ -1957,6 +2072,50 @@ func TestAppUpdateTodoRemovesProjectAndClosesOnlyThatTodoProjectTerminals(t *tes
 	}
 }
 
+func TestAppUpdateHistoricalNoProjectTodoPreservesExistingReadme(t *testing.T) {
+	workspaceDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err := app.CreateTodo(CreateTodoRequest{
+		Title:               "整理文档",
+		InitializationFiles: []TodoInitializationFileSnapshot{{Name: "Agent Rules", FileName: "AGENTS.md", Content: "请先阅读任务说明"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	todoID := state.Todos[0].ID
+	state, err = app.ChangeTodoStatus(todoID, TodoStatusInProgress)
+	if err != nil {
+		t.Fatalf("ChangeTodoStatus(in-progress) error = %v", err)
+	}
+	readmePath := filepath.Join(mustAbs(t, workspaceDir), "tasks", state.Todos[0].WorkspaceDirName, "README.md")
+	if err := os.WriteFile(readmePath, []byte("historical readme"), 0o644); err != nil {
+		t.Fatalf("WriteFile(historical README.md) error = %v", err)
+	}
+
+	if _, err := app.UpdateTodo(UpdateTodoRequest{
+		ID:          todoID,
+		Title:       "整理文档更新",
+		Description: "保留历史 README",
+		Priority:    TodoPriorityHigh,
+	}); err != nil {
+		t.Fatalf("UpdateTodo() error = %v", err)
+	}
+
+	data, err := os.ReadFile(readmePath)
+	if err != nil {
+		t.Fatalf("read historical README.md: %v", err)
+	}
+	if string(data) != "historical readme" {
+		t.Fatalf("README.md = %q, want historical content preserved", string(data))
+	}
+}
+
 func TestAppRemoveTodoProjectClosesOnlyThatTodoProjectTerminals(t *testing.T) {
 	projectDir := t.TempDir()
 	starter := newFakeShellStarter()
@@ -1996,6 +2155,69 @@ func TestAppRemoveTodoProjectClosesOnlyThatTodoProjectTerminals(t *testing.T) {
 	}
 	if len(state.Terminals) != 1 || state.Terminals[0].TodoProjectID != todoProjectBID {
 		t.Fatalf("Terminals = %#v, want only todo-project B terminal", state.Terminals)
+	}
+}
+
+func TestAppRemoveLastTodoProjectRemovesGeneratedReadme(t *testing.T) {
+	workspaceDir := t.TempDir()
+	projectDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+		WithWorktreePreparer(newReadyWorktreePreparer()),
+	)
+	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err := app.AddProjectFromPath(projectDir)
+	if err != nil {
+		t.Fatalf("AddProjectFromPath() error = %v", err)
+	}
+	projectID := state.Projects[0].ID
+	state, err = app.CreateTodo(CreateTodoRequest{
+		Title: "修复登录问题",
+		Projects: []TodoProjectSelection{
+			{ProjectID: projectID, BaseBranch: "main"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	todoID := state.Todos[0].ID
+	todoProjectID := state.TodoProjects[0].ID
+	state, err = app.ChangeTodoStatus(todoID, TodoStatusInProgress)
+	if err != nil {
+		t.Fatalf("ChangeTodoStatus(in-progress) error = %v", err)
+	}
+	readmePath := filepath.Join(mustAbs(t, workspaceDir), "tasks", state.Todos[0].WorkspaceDirName, "README.md")
+	if _, err := os.Stat(readmePath); err != nil {
+		t.Fatalf("README.md stat before removal error = %v", err)
+	}
+	notesPath := filepath.Join(filepath.Dir(readmePath), "notes.md")
+	if err := os.WriteFile(notesPath, []byte("user notes"), 0o644); err != nil {
+		t.Fatalf("WriteFile(notes.md) error = %v", err)
+	}
+
+	state, err = app.RemoveTodoProject(todoProjectID)
+	if err != nil {
+		t.Fatalf("RemoveTodoProject() error = %v", err)
+	}
+
+	if len(state.TodoProjects) != 0 {
+		t.Fatalf("TodoProjects = %#v, want empty after removing last project", state.TodoProjects)
+	}
+	if _, err := os.Stat(readmePath); !os.IsNotExist(err) {
+		t.Fatalf("README.md stat after removal error = %v, want generated readme removed", err)
+	}
+	if _, err := os.Stat(filepath.Dir(readmePath)); err != nil {
+		t.Fatalf("task dir stat after removal error = %v, want task directory preserved", err)
+	}
+	notes, err := os.ReadFile(notesPath)
+	if err != nil {
+		t.Fatalf("read notes.md after removal: %v", err)
+	}
+	if string(notes) != "user notes" {
+		t.Fatalf("notes.md = %q, want user file preserved", string(notes))
 	}
 }
 
@@ -3159,7 +3381,10 @@ func TestAppGetTodoGitStatusUsesTaskWorkspaceRootRepository(t *testing.T) {
 	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
 		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
 	}
-	state, err := app.CreateTodo(CreateTodoRequest{Title: "修复登录问题"})
+	state, err := app.CreateTodo(CreateTodoRequest{
+		Title:               "修复登录问题",
+		InitializationFiles: []TodoInitializationFileSnapshot{{Name: "Agent Rules", FileName: "AGENTS.md", Content: "请先阅读任务说明"}},
+	})
 	if err != nil {
 		t.Fatalf("CreateTodo() error = %v", err)
 	}
@@ -3204,7 +3429,10 @@ func TestAppGetTodoGitStatusDoesNotSearchNestedRepositories(t *testing.T) {
 	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
 		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
 	}
-	state, err := app.CreateTodo(CreateTodoRequest{Title: "修复登录问题"})
+	state, err := app.CreateTodo(CreateTodoRequest{
+		Title:               "修复登录问题",
+		InitializationFiles: []TodoInitializationFileSnapshot{{Name: "Agent Rules", FileName: "AGENTS.md", Content: "请先阅读任务说明"}},
+	})
 	if err != nil {
 		t.Fatalf("CreateTodo() error = %v", err)
 	}
