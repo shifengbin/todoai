@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -341,7 +342,16 @@ func TestSettingsManagerSavesTodoLifecycleScriptsAndPreservesOtherSettings(t *te
 	}
 
 	scripts := []TodoLifecycleScriptTemplate{
-		{Name: "Node setup", Description: "安装依赖", InitScript: "npm install", CompleteScript: "npm test", DefaultSelected: true},
+		{
+			Name:           "Node setup",
+			Description:    "安装依赖",
+			InitScript:     "npm install",
+			CompleteScript: "npm test",
+			Parameters: []TodoLifecycleScriptParameter{
+				{Name: "branch_name", Label: "分支名", Description: "工作分支", DefaultValue: "feature/demo", Required: true},
+			},
+			DefaultSelected: true,
+		},
 		{Name: "Cleanup", Description: "清理缓存", CompleteScript: "rm -rf tmp"},
 	}
 	state, err := manager.SaveTodoLifecycleScripts(scripts)
@@ -480,6 +490,37 @@ func TestSettingsManagerRejectsInvalidTodoLifecycleScripts(t *testing.T) {
 				{Name: "Two", CompleteScript: "echo two", DefaultSelected: true},
 			},
 			want: "only one lifecycle script can be default selected",
+		},
+		{
+			name: "missing parameter name",
+			scripts: []TodoLifecycleScriptTemplate{
+				{Name: "With params", InitScript: "echo {{branch_name}}", Parameters: []TodoLifecycleScriptParameter{{Label: "分支名"}}},
+			},
+			want: "lifecycle script parameter name is required",
+		},
+		{
+			name: "invalid parameter name",
+			scripts: []TodoLifecycleScriptTemplate{
+				{Name: "With params", InitScript: "echo {{branch-name}}", Parameters: []TodoLifecycleScriptParameter{{Name: "branch-name"}}},
+			},
+			want: "lifecycle script parameter name is invalid",
+		},
+		{
+			name: "reserved parameter name",
+			scripts: []TodoLifecycleScriptTemplate{
+				{Name: "With params", InitScript: "echo {{__proto__}}", Parameters: []TodoLifecycleScriptParameter{{Name: "__proto__"}}},
+			},
+			want: "lifecycle script parameter name is reserved",
+		},
+		{
+			name: "duplicate parameter name",
+			scripts: []TodoLifecycleScriptTemplate{
+				{Name: "With params", InitScript: "echo {{branch_name}}", Parameters: []TodoLifecycleScriptParameter{
+					{Name: "branch_name"},
+					{Name: "branch_name"},
+				}},
+			},
+			want: "lifecycle script parameter name is duplicated",
 		},
 	}
 	for _, tc := range tests {
@@ -962,7 +1003,7 @@ func assertTodoLifecycleScripts(t *testing.T, got []TodoLifecycleScriptTemplate,
 		t.Fatalf("len(TodoLifecycleScripts) = %d, want %d: %#v", len(got), len(want), got)
 	}
 	for index := range want {
-		if got[index] != want[index] {
+		if !reflect.DeepEqual(got[index], want[index]) {
 			t.Fatalf("TodoLifecycleScripts[%d] = %#v, want %#v", index, got[index], want[index])
 		}
 	}

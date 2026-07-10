@@ -2427,6 +2427,67 @@ button {
     color: var(--text-strong);
 }
 
+.todo-lifecycle-script-parameters {
+    display: grid;
+    gap: 8px;
+}
+
+.todo-lifecycle-script-parameter-field {
+    margin: 0;
+}
+
+.settings-help {
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.lifecycle-script-parameter-heading {
+    display: inline-flex;
+    min-width: 0;
+    align-items: center;
+    gap: 6px;
+}
+
+.lifecycle-script-parameter-help {
+    position: relative;
+    display: inline-flex;
+    flex: 0 0 auto;
+}
+
+.lifecycle-script-parameter-help-trigger {
+    width: 24px;
+    height: 24px;
+    border-color: transparent;
+    background: transparent;
+    color: var(--text-muted);
+}
+
+.lifecycle-script-parameter-help-tooltip {
+    position: fixed;
+    z-index: 80;
+    display: grid;
+    width: min(340px, calc(100vw - 32px));
+    gap: 4px;
+    padding: 10px 12px;
+    border: 1px solid var(--control-border);
+    border-radius: 6px;
+    background: var(--surface-bg);
+    box-shadow: 0 12px 24px var(--shadow);
+    color: var(--text);
+    font-size: 12px;
+    line-height: 1.45;
+    opacity: 1;
+    overflow-wrap: anywhere;
+    pointer-events: none;
+    visibility: visible;
+}
+
+.lifecycle-script-parameter-help-tooltip strong {
+    color: var(--text-strong);
+    font-size: 12px;
+}
+
 .todo-selected-project-tags {
     display: flex;
     min-width: 0;
@@ -2815,9 +2876,79 @@ button {
 .lifecycle-script-row {
     display: grid;
     min-width: 0;
-    grid-template-columns: 64px minmax(110px, 0.8fr) minmax(140px, 1fr) minmax(180px, 1.2fr) minmax(180px, 1.2fr) 32px 32px 32px;
+    gap: 8px;
+    padding: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface-bg);
+}
+
+.lifecycle-script-row.expanded {
+    background: var(--surface-muted);
+}
+
+.lifecycle-script-summary-row {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: 64px minmax(0, 1fr) 32px 32px 32px 32px;
     gap: 6px;
-    align-items: start;
+    align-items: center;
+}
+
+.lifecycle-script-summary {
+    display: grid;
+    min-width: 0;
+    height: 32px;
+    grid-template-columns: minmax(110px, 0.8fr) minmax(130px, 1fr) minmax(130px, 1.1fr) minmax(130px, 1.1fr) max-content;
+    gap: 8px;
+    align-items: center;
+    padding: 0 9px;
+    border: 1px solid var(--control-border);
+    background: var(--surface-bg);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+    text-align: left;
+}
+
+.lifecycle-script-summary:hover,
+.lifecycle-script-summary:focus-visible {
+    border-color: var(--accent);
+    color: var(--text-strong);
+    outline: none;
+}
+
+.lifecycle-script-summary-title {
+    color: var(--text-strong);
+    font-weight: 800;
+}
+
+.lifecycle-script-summary-description,
+.lifecycle-script-summary-title,
+.lifecycle-script-summary-chip {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.lifecycle-script-summary-chip {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.lifecycle-script-editor {
+    display: grid;
+    min-width: 0;
+    gap: 8px;
+}
+
+.lifecycle-script-fields {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: minmax(160px, 0.8fr) minmax(200px, 1fr);
+    gap: 6px;
 }
 
 .lifecycle-script-row input[type="text"],
@@ -2829,6 +2960,10 @@ button {
     color: var(--text);
     font: inherit;
     font-size: 13px;
+}
+
+.lifecycle-script-fields .lifecycle-script-textarea {
+    grid-column: span 1;
 }
 
 .lifecycle-script-row input[type="text"] {
@@ -2846,6 +2981,43 @@ button {
 .lifecycle-script-textarea:focus {
     border-color: var(--accent);
     outline: none;
+}
+
+.lifecycle-script-parameters {
+    display: grid;
+    min-width: 0;
+    gap: 6px;
+    padding: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface-bg);
+}
+
+.launch-profile-header.compact {
+    min-height: 28px;
+}
+
+.lifecycle-script-parameter-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.lifecycle-script-parameter-toggle {
+    min-width: 88px;
+}
+
+.lifecycle-script-parameter-list {
+    display: grid;
+    min-width: 0;
+    gap: 6px;
+}
+
+.lifecycle-script-parameter-row {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: minmax(100px, 0.8fr) minmax(110px, 0.9fr) minmax(140px, 1fr) minmax(120px, 0.9fr) 70px 32px;
+    gap: 6px;
+    align-items: center;
 }
 
 .initialization-file-upload-cell {
@@ -2872,32 +3044,60 @@ button {
 }
 
 @media (max-width: 920px) {
-    .initialization-file-row,
-    .lifecycle-script-row {
+    .initialization-file-row {
         grid-template-columns: 64px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.4fr) 32px 32px 32px;
     }
 
-    .lifecycle-script-textarea {
+    .lifecycle-script-summary {
+        grid-template-columns: minmax(100px, 0.9fr) minmax(120px, 1fr) minmax(120px, 1fr) max-content;
+    }
+
+    .lifecycle-script-summary-chip:nth-of-type(4) {
+        display: none;
+    }
+
+    .lifecycle-script-fields {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .lifecycle-script-fields .lifecycle-script-textarea {
         grid-column: 1 / -1;
+    }
+
+    .lifecycle-script-parameter-row {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 70px 32px;
+    }
+
+    .lifecycle-script-parameter-row .initialization-file-description-input {
+        grid-column: span 2;
     }
 }
 
 @media (max-width: 720px) {
-    .initialization-file-row,
-    .lifecycle-script-row {
+    .initialization-file-row {
         grid-template-columns: 64px minmax(0, 1fr) 32px 32px 32px;
     }
 
-    .initialization-file-name-input,
-    .lifecycle-script-row .initialization-file-name-input {
+    .initialization-file-name-input {
         grid-column: 2 / 3;
     }
 
     .initialization-file-description-input,
-    .initialization-file-upload-cell,
-    .lifecycle-script-row .initialization-file-description-input,
-    .lifecycle-script-textarea {
+    .initialization-file-upload-cell {
         grid-column: 1 / -1;
+    }
+
+    .lifecycle-script-summary-row {
+        grid-template-columns: 64px minmax(0, 1fr) 32px 32px 32px 32px;
+    }
+
+    .lifecycle-script-summary {
+        grid-template-columns: minmax(0, 1fr) max-content;
+    }
+
+    .lifecycle-script-summary-description,
+    .lifecycle-script-summary-chip:not(:last-child) {
+        display: none;
     }
 
     .initialization-file-move-up {
@@ -2913,6 +3113,14 @@ button {
     .initialization-file-remove {
         grid-column: 5 / 6;
         grid-row: 1;
+    }
+
+    .lifecycle-script-parameter-row {
+        grid-template-columns: minmax(0, 1fr) 70px 32px;
+    }
+
+    .lifecycle-script-parameter-row .initialization-file-description-input {
+        grid-column: 1 / -1;
     }
 }
 

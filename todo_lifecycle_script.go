@@ -23,13 +23,15 @@ const (
 )
 
 type TodoLifecycleScriptRunRequest struct {
-	TodoID     string
-	Phase      string
-	ScriptName string
-	Script     string
-	WorkingDir string
-	ShellPath  string
-	GOOS       string
+	TodoID          string
+	Phase           string
+	ScriptName      string
+	Script          string
+	WorkingDir      string
+	ShellPath       string
+	GOOS            string
+	Parameters      []TodoLifecycleScriptParameter
+	ParameterValues map[string]string
 }
 
 type TodoLifecycleScriptRunResult struct {
@@ -212,6 +214,16 @@ func normalizeTodoLifecycleScriptRunRequest(request TodoLifecycleScriptRunReques
 	request.WorkingDir = strings.TrimSpace(request.WorkingDir)
 	request.ShellPath = strings.TrimSpace(request.ShellPath)
 	request.GOOS = strings.TrimSpace(request.GOOS)
+	parameters, err := normalizeTodoLifecycleScriptParameters(request.Parameters)
+	if err != nil {
+		return TodoLifecycleScriptRunRequest{}, err
+	}
+	request.Parameters = parameters
+	parameterValues, err := normalizeTodoLifecycleScriptParameterValues(parameters, request.ParameterValues)
+	if err != nil {
+		return TodoLifecycleScriptRunRequest{}, err
+	}
+	request.ParameterValues = parameterValues
 	if request.TodoID == "" {
 		return TodoLifecycleScriptRunRequest{}, errors.New("todo id is required")
 	}
@@ -264,6 +276,16 @@ func normalizeTodoLifecycleScriptCommandRequest(request TodoLifecycleScriptRunRe
 	request.WorkingDir = strings.TrimSpace(request.WorkingDir)
 	request.ShellPath = strings.TrimSpace(request.ShellPath)
 	request.GOOS = strings.TrimSpace(request.GOOS)
+	parameters, err := normalizeTodoLifecycleScriptParameters(request.Parameters)
+	if err != nil {
+		return TodoLifecycleScriptRunRequest{}, err
+	}
+	request.Parameters = parameters
+	parameterValues, err := normalizeTodoLifecycleScriptParameterValues(parameters, request.ParameterValues)
+	if err != nil {
+		return TodoLifecycleScriptRunRequest{}, err
+	}
+	request.ParameterValues = parameterValues
 	if request.Script == "" {
 		return TodoLifecycleScriptRunRequest{}, errors.New("lifecycle script is required")
 	}
@@ -276,14 +298,57 @@ func normalizeTodoLifecycleScriptCommandRequest(request TodoLifecycleScriptRunRe
 	if request.GOOS == "" {
 		request.GOOS = runtime.GOOS
 	}
+	request.Script = renderTodoLifecycleScriptParameters(request.Script, request.Parameters, request.ParameterValues, request.GOOS, request.ShellPath)
 	return request, nil
 }
 
-func todoLifecycleScriptShellArgs(goos string, shellPath string, script string) []string {
+func renderTodoLifecycleScriptParameters(script string, parameters []TodoLifecycleScriptParameter, values map[string]string, goos string, shellPath string) string {
+	if len(parameters) == 0 {
+		return script
+	}
+	for _, parameter := range parameters {
+		value := values[parameter.Name]
+		script = strings.ReplaceAll(script, "{{"+parameter.Name+"}}", todoLifecycleScriptShellStringLiteral(value, goos, shellPath))
+	}
+	return script
+}
+
+func todoLifecycleScriptShellStringLiteral(value string, goos string, shellPath string) string {
+	switch shellNameFromPath(shellPath) {
+	case "pwsh", "powershell":
+		return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+	}
 	if goos == "windows" {
 		switch shellNameFromPath(shellPath) {
-		case "pwsh", "powershell":
-			return []string{"-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script}
+		case "cmd":
+			return todoLifecycleScriptCmdStringLiteral(value)
+		}
+		return todoLifecycleScriptCmdStringLiteral(value)
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func todoLifecycleScriptCmdStringLiteral(value string) string {
+	replacer := strings.NewReplacer(
+		"^", "^^",
+		`"`, `^"`,
+		"%", "^%",
+		"!", "^!",
+		"&", "^&",
+		"|", "^|",
+		"<", "^<",
+		">", "^>",
+	)
+	return `"` + replacer.Replace(value) + `"`
+}
+
+func todoLifecycleScriptShellArgs(goos string, shellPath string, script string) []string {
+	switch shellNameFromPath(shellPath) {
+	case "pwsh", "powershell":
+		return []string{"-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script}
+	}
+	if goos == "windows" {
+		switch shellNameFromPath(shellPath) {
 		case "cmd":
 			return []string{"/d", "/s", "/c", script}
 		}

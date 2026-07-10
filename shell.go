@@ -1427,7 +1427,7 @@ func shellNameFromPath(shellPath string) string {
 	if isWindowsExecutableExtension(filepath.Ext(name)) {
 		name = strings.TrimSuffix(name, filepath.Ext(name))
 	}
-	return name
+	return strings.ToLower(name)
 }
 
 func DefaultShellPath() string {

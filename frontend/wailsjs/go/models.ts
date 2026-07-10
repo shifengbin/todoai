@@ -1,16 +1,16 @@
 export namespace main {
-	
+
 	export class ClaudeHookState {
 	    installed: boolean;
 	    command: string;
 	    expectedCommand: string;
 	    eventsCovered: number;
 	    stale: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ClaudeHookState(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.installed = source["installed"];
@@ -24,11 +24,11 @@ export namespace main {
 	    id: string;
 	    status: string;
 	    reason?: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new CompletedTodoProjectMergeStatus(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -44,11 +44,11 @@ export namespace main {
 	    worktreeBranch?: string;
 	    baseBranch?: string;
 	    fingerprint?: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new CompletedTodoProjectMergeStatusRequest(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -60,34 +60,76 @@ export namespace main {
 	        this.fingerprint = source["fingerprint"];
 	    }
 	}
+	export class TodoLifecycleScriptParameter {
+	    name: string;
+	    label?: string;
+	    description?: string;
+	    defaultValue?: string;
+	    required?: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new TodoLifecycleScriptParameter(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.label = source["label"];
+	        this.description = source["description"];
+	        this.defaultValue = source["defaultValue"];
+	        this.required = source["required"];
+	    }
+	}
 	export class TodoLifecycleScriptSnapshot {
 	    name: string;
 	    description?: string;
 	    initScript?: string;
 	    completeScript?: string;
-	
+	    parameters?: TodoLifecycleScriptParameter[];
+	    parameterValues?: Record<string, string>;
+
 	    static createFrom(source: any = {}) {
 	        return new TodoLifecycleScriptSnapshot(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
 	        this.description = source["description"];
 	        this.initScript = source["initScript"];
 	        this.completeScript = source["completeScript"];
+	        this.parameters = this.convertValues(source["parameters"], TodoLifecycleScriptParameter);
+	        this.parameterValues = source["parameterValues"];
 	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class TodoInitializationFileSnapshot {
 	    name: string;
 	    description?: string;
 	    fileName: string;
 	    content: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new TodoInitializationFileSnapshot(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -99,11 +141,11 @@ export namespace main {
 	export class TodoProjectSelection {
 	    projectId: string;
 	    baseBranch?: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new TodoProjectSelection(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectId = source["projectId"];
@@ -119,11 +161,11 @@ export namespace main {
 	    projects?: TodoProjectSelection[];
 	    initializationFiles?: TodoInitializationFileSnapshot[];
 	    lifecycleScript?: TodoLifecycleScriptSnapshot;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new CreateTodoRequest(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.title = source["title"];
@@ -135,7 +177,7 @@ export namespace main {
 	        this.initializationFiles = this.convertValues(source["initializationFiles"], TodoInitializationFileSnapshot);
 	        this.lifecycleScript = this.convertValues(source["lifecycleScript"], TodoLifecycleScriptSnapshot);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -167,11 +209,11 @@ export namespace main {
 	    pathUnavailable?: boolean;
 	    gitUnavailable?: boolean;
 	    worktreeCleared?: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new GitStatus(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectId = source["projectId"];
@@ -195,11 +237,11 @@ export namespace main {
 	    available: boolean;
 	    createdAt: string;
 	    lastSelectedAt: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Project(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -212,11 +254,11 @@ export namespace main {
 	}
 	export class ProjectBranchPreference {
 	    baseBranch: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ProjectBranchPreference(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.baseBranch = source["baseBranch"];
@@ -228,11 +270,11 @@ export namespace main {
 	    skippedCount: number;
 	    added?: Project[];
 	    skippedPaths?: string[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ProjectImportSummary(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.parentPath = source["parentPath"];
@@ -241,7 +283,7 @@ export namespace main {
 	        this.added = this.convertValues(source["added"], Project);
 	        this.skippedPaths = source["skippedPaths"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -270,11 +312,11 @@ export namespace main {
 	    exitCode?: number;
 	    outputTail?: string;
 	    message?: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new TodoLifecycleScriptStatus(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.todoId = source["todoId"];
@@ -300,11 +342,11 @@ export namespace main {
 	    createdAt: string;
 	    lastSelectedAt: string;
 	    output?: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ProjectTerminal(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -335,11 +377,11 @@ export namespace main {
 	    available: boolean;
 	    createdAt: string;
 	    lastSelectedAt: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new TodoProject(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -366,11 +408,11 @@ export namespace main {
 	    worktreeBranch?: string;
 	    mergeStatus?: string;
 	    mergeStatusReason?: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new TodoProjectSnapshot(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectId = source["projectId"];
@@ -397,11 +439,11 @@ export namespace main {
 	    startedAt?: string;
 	    completedAt?: string;
 	    archivedAt?: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Todo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -419,7 +461,7 @@ export namespace main {
 	        this.completedAt = source["completedAt"];
 	        this.archivedAt = source["archivedAt"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -444,11 +486,11 @@ export namespace main {
 	    dataPath: string;
 	    available: boolean;
 	    lastOpenedAt: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Workspace(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -473,11 +515,11 @@ export namespace main {
 	    activeTerminalId?: string;
 	    lifecycleScriptStatuses?: TodoLifecycleScriptStatus[];
 	    importSummary?: ProjectImportSummary;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ProjectState(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.version = source["version"];
@@ -495,7 +537,7 @@ export namespace main {
 	        this.lifecycleScriptStatuses = this.convertValues(source["lifecycleScriptStatuses"], TodoLifecycleScriptStatus);
 	        this.importSummary = this.convertValues(source["importSummary"], ProjectImportSummary);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -518,18 +560,18 @@ export namespace main {
 	    state?: ProjectState;
 	    requiresGitInitialization?: boolean;
 	    path?: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ProjectImportResult(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.state = this.convertValues(source["state"], ProjectState);
 	        this.requiresGitInitialization = source["requiresGitInitialization"];
 	        this.path = source["path"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -548,9 +590,9 @@ export namespace main {
 		    return a;
 		}
 	}
-	
-	
-	
+
+
+
 	export class ShellStatus {
 	    projectId: string;
 	    todoId?: string;
@@ -558,11 +600,11 @@ export namespace main {
 	    workspaceTerminal?: boolean;
 	    terminalId: string;
 	    state: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ShellStatus(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectId = source["projectId"];
@@ -578,11 +620,11 @@ export namespace main {
 	    command: string;
 	    enabled: boolean;
 	    background: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new TerminalLaunchProfileSetting(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -596,20 +638,40 @@ export namespace main {
 	    description?: string;
 	    initScript?: string;
 	    completeScript?: string;
+	    parameters?: TodoLifecycleScriptParameter[];
 	    defaultSelected?: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new TodoLifecycleScriptTemplate(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
 	        this.description = source["description"];
 	        this.initScript = source["initScript"];
 	        this.completeScript = source["completeScript"];
+	        this.parameters = this.convertValues(source["parameters"], TodoLifecycleScriptParameter);
 	        this.defaultSelected = source["defaultSelected"];
 	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class TodoInitializationFileTemplate {
 	    name: string;
@@ -617,11 +679,11 @@ export namespace main {
 	    fileName: string;
 	    content: string;
 	    defaultSelected?: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new TodoInitializationFileTemplate(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -636,11 +698,11 @@ export namespace main {
 	    displayName: string;
 	    source: string;
 	    available: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new TerminalShellSetting(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.path = source["path"];
@@ -658,11 +720,11 @@ export namespace main {
 	    theme: string;
 	    todoInitializationFiles: TodoInitializationFileTemplate[];
 	    todoLifecycleScripts: TodoLifecycleScriptTemplate[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new TerminalSettingsState(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.version = source["version"];
@@ -674,7 +736,7 @@ export namespace main {
 	        this.todoInitializationFiles = this.convertValues(source["todoInitializationFiles"], TodoInitializationFileTemplate);
 	        this.todoLifecycleScripts = this.convertValues(source["todoLifecycleScripts"], TodoLifecycleScriptTemplate);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -693,23 +755,24 @@ export namespace main {
 		    return a;
 		}
 	}
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
+
+
+
+
+
+
+
+
+
+
+
 	export class TodoProjectUIState {
 	    todoView: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new TodoProjectUIState(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.todoView = source["todoView"];
@@ -719,18 +782,18 @@ export namespace main {
 	    version: number;
 	    sidebarWidth?: number;
 	    todoProjects: Record<string, TodoProjectUIState>;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new TodoProjectUIStateFile(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.version = source["version"];
 	        this.sidebarWidth = source["sidebarWidth"];
 	        this.todoProjects = this.convertValues(source["todoProjects"], TodoProjectUIState, true);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -757,11 +820,11 @@ export namespace main {
 	    projectIds?: string[];
 	    projectBranches?: Record<string, string>;
 	    projects?: TodoProjectSelection[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new UpdateTodoRequest(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -772,7 +835,7 @@ export namespace main {
 	        this.projectBranches = source["projectBranches"];
 	        this.projects = this.convertValues(source["projects"], TodoProjectSelection);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -791,23 +854,23 @@ export namespace main {
 		    return a;
 		}
 	}
-	
+
 	export class WorkspaceState {
 	    version: number;
 	    currentWorkspace?: Workspace;
 	    recentWorkspaces: Workspace[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new WorkspaceState(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.version = source["version"];
 	        this.currentWorkspace = this.convertValues(source["currentWorkspace"], Workspace);
 	        this.recentWorkspaces = this.convertValues(source["recentWorkspaces"], Workspace);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;

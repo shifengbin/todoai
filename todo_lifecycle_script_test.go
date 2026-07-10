@@ -39,6 +39,118 @@ func TestNewTodoLifecycleScriptCommandUsesInteractiveUserShellForZsh(t *testing.
 	assertStringSlice(t, cmd.Args, []string{"/bin/zsh", "-i", "-c", "openspec status\ncodegraph --help"})
 }
 
+func TestNewTodoLifecycleScriptCommandRendersParametersForUnixShell(t *testing.T) {
+	cmd, err := newTodoLifecycleScriptCommand(context.Background(), TodoLifecycleScriptRunRequest{
+		ShellPath:  "/bin/sh",
+		GOOS:       "linux",
+		Script:     "echo {{message}} {{unknown_value}}",
+		WorkingDir: "/work/tasks/task-a",
+		Parameters: []TodoLifecycleScriptParameter{
+			{Name: "message"},
+		},
+		ParameterValues: map[string]string{"message": "say 'hi'; rm -rf /"},
+	})
+	if err != nil {
+		t.Fatalf("newTodoLifecycleScriptCommand() error = %v", err)
+	}
+
+	assertStringSlice(t, cmd.Args, []string{"/bin/sh", "-c", "echo 'say '\\''hi'\\''; rm -rf /' {{unknown_value}}"})
+}
+
+func TestNewTodoLifecycleScriptCommandRendersEmptyParameterValue(t *testing.T) {
+	cmd, err := newTodoLifecycleScriptCommand(context.Background(), TodoLifecycleScriptRunRequest{
+		ShellPath:  "/bin/sh",
+		GOOS:       "linux",
+		Script:     "echo {{optional_value}}",
+		WorkingDir: "/work/tasks/task-a",
+		Parameters: []TodoLifecycleScriptParameter{
+			{Name: "optional_value"},
+		},
+		ParameterValues: map[string]string{"optional_value": ""},
+	})
+	if err != nil {
+		t.Fatalf("newTodoLifecycleScriptCommand() error = %v", err)
+	}
+
+	assertStringSlice(t, cmd.Args, []string{"/bin/sh", "-c", "echo ''"})
+}
+
+func TestNewTodoLifecycleScriptCommandRendersParametersForPowerShell(t *testing.T) {
+	cmd, err := newTodoLifecycleScriptCommand(context.Background(), TodoLifecycleScriptRunRequest{
+		ShellPath:  `C:\Program Files\PowerShell\7\pwsh.exe`,
+		GOOS:       "windows",
+		Script:     "Write-Output {{message}}",
+		WorkingDir: `C:\work\tasks\task-a`,
+		Parameters: []TodoLifecycleScriptParameter{
+			{Name: "message"},
+		},
+		ParameterValues: map[string]string{"message": "say 'hi'; Remove-Item"},
+	})
+	if err != nil {
+		t.Fatalf("newTodoLifecycleScriptCommand() error = %v", err)
+	}
+
+	assertStringSlice(t, cmd.Args, []string{
+		`C:\Program Files\PowerShell\7\pwsh.exe`,
+		"-NoLogo",
+		"-NoProfile",
+		"-ExecutionPolicy",
+		"Bypass",
+		"-Command",
+		"Write-Output 'say ''hi''; Remove-Item'",
+	})
+}
+
+func TestNewTodoLifecycleScriptCommandUsesPowerShellCoreOnUnix(t *testing.T) {
+	cmd, err := newTodoLifecycleScriptCommand(context.Background(), TodoLifecycleScriptRunRequest{
+		ShellPath:  "/usr/local/bin/pwsh",
+		GOOS:       "linux",
+		Script:     "Write-Output {{message}}",
+		WorkingDir: "/work/tasks/task-a",
+		Parameters: []TodoLifecycleScriptParameter{
+			{Name: "message"},
+		},
+		ParameterValues: map[string]string{"message": "don't split"},
+	})
+	if err != nil {
+		t.Fatalf("newTodoLifecycleScriptCommand() error = %v", err)
+	}
+
+	assertStringSlice(t, cmd.Args, []string{
+		"/usr/local/bin/pwsh",
+		"-NoLogo",
+		"-NoProfile",
+		"-ExecutionPolicy",
+		"Bypass",
+		"-Command",
+		"Write-Output 'don''t split'",
+	})
+}
+
+func TestNewTodoLifecycleScriptCommandRendersParametersForCmd(t *testing.T) {
+	cmd, err := newTodoLifecycleScriptCommand(context.Background(), TodoLifecycleScriptRunRequest{
+		ShellPath:  `C:\Windows\System32\cmd.exe`,
+		GOOS:       "windows",
+		Script:     "echo {{message}}",
+		WorkingDir: `C:\work\tasks\task-a`,
+		Parameters: []TodoLifecycleScriptParameter{
+			{Name: "message"},
+		},
+		ParameterValues: map[string]string{"message": `hello "quoted" %USERPROFILE% & dir`},
+	})
+	if err != nil {
+		t.Fatalf("newTodoLifecycleScriptCommand() error = %v", err)
+	}
+
+	assertStringSlice(t, cmd.Args, []string{
+		`C:\Windows\System32\cmd.exe`,
+		"/d",
+		"/s",
+		"/c",
+		`echo "hello ^"quoted^" ^%USERPROFILE^% ^& dir"`,
+	})
+}
+
 func TestNewTodoLifecycleScriptCommandUsesWindowsPowerShellAndWorkingDir(t *testing.T) {
 	cmd, err := newTodoLifecycleScriptCommand(context.Background(), TodoLifecycleScriptRunRequest{
 		ShellPath:  `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`,

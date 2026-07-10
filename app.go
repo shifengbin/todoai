@@ -1217,12 +1217,14 @@ func (a *App) startTodoLifecycleScript(todo Todo, workspacePath string, phase st
 		return TodoLifecycleScriptStatus{}, errors.New("lifecycle script is required")
 	}
 	status, _, err := a.lifecycleScripts.Start(context.Background(), TodoLifecycleScriptRunRequest{
-		TodoID:     todo.ID,
-		Phase:      phase,
-		ScriptName: todo.LifecycleScript.Name,
-		Script:     script,
-		WorkingDir: taskDir,
-		ShellPath:  a.settings.ResolveShellPath(),
+		TodoID:          todo.ID,
+		Phase:           phase,
+		ScriptName:      todo.LifecycleScript.Name,
+		Script:          script,
+		WorkingDir:      taskDir,
+		ShellPath:       a.settings.ResolveShellPath(),
+		Parameters:      todo.LifecycleScript.Parameters,
+		ParameterValues: todo.LifecycleScript.ParameterValues,
 	})
 	return status, err
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1521,7 +1522,11 @@ func TestAppStartsTodoAndRunsInitializationLifecycleScriptAsynchronously(t *test
 		Title: "修复登录问题",
 		LifecycleScript: &TodoLifecycleScriptSnapshot{
 			Name:       "Node setup",
-			InitScript: "npm install",
+			InitScript: "git checkout -b {{branch_name}}",
+			Parameters: []TodoLifecycleScriptParameter{
+				{Name: "branch_name", Label: "分支名", DefaultValue: "feature/demo", Required: true},
+			},
+			ParameterValues: map[string]string{"branch_name": "feature/login"},
 		},
 	})
 	if err != nil {
@@ -1542,8 +1547,14 @@ func TestAppStartsTodoAndRunsInitializationLifecycleScriptAsynchronously(t *test
 		t.Fatalf("LifecycleScriptStatuses = %#v, want running init status", state.LifecycleScriptStatuses)
 	}
 	request := receiveLifecycleScriptRequest(t, requests)
-	if request.TodoID != todoID || request.Phase != TodoLifecycleScriptPhaseInit || request.Script != "npm install" {
+	if request.TodoID != todoID || request.Phase != TodoLifecycleScriptPhaseInit || request.Script != "git checkout -b {{branch_name}}" {
 		t.Fatalf("request = %#v, want init script for todo", request)
+	}
+	if !reflect.DeepEqual(request.Parameters, []TodoLifecycleScriptParameter{{Name: "branch_name", Label: "分支名", DefaultValue: "feature/demo", Required: true}}) {
+		t.Fatalf("request.Parameters = %#v, want todo parameter snapshot", request.Parameters)
+	}
+	if !reflect.DeepEqual(request.ParameterValues, map[string]string{"branch_name": "feature/login"}) {
+		t.Fatalf("request.ParameterValues = %#v, want todo parameter values", request.ParameterValues)
 	}
 	if request.WorkingDir == "" || !strings.Contains(request.WorkingDir, string(os.PathSeparator)+"tasks"+string(os.PathSeparator)) {
 		t.Fatalf("WorkingDir = %q, want todo task workspace", request.WorkingDir)
