@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { ChevronDown, ChevronUp, FileText, FolderInput, FolderPlus, GitBranch, Plus, RotateCcw, Settings, TerminalSquare, Trash2, X } from '@lucide/vue'
+import { ChevronDown, ChevronUp, CircleQuestionMark, FileText, FolderInput, FolderPlus, GitBranch, Plus, RotateCcw, Settings, TerminalSquare, Trash2, X } from '@lucide/vue'
 import ProjectSidebar from './components/ProjectSidebar.vue'
 import {
   AGENT_CONFIDENCE,
@@ -141,6 +141,12 @@ const todoPriorities = [
   { value: 'medium', label: '中' },
   { value: 'low', label: '低' }
 ]
+const lifecycleScriptParameterHelp = Object.freeze({
+  usageTitle: '使用方法',
+  usage: '在脚本中使用 {{参数名}} 引用参数，例如 git checkout -b {{branch_name}}。',
+  noticeTitle: '注意事项',
+  notice: '不要再额外加引号，系统会按当前 shell 自动转义。未定义的占位符会保持原样。参数明文保存，请不要填写密码或密钥。'
+})
 const appearanceThemes = ['light', 'dark']
 const currentTheme = ref('light')
 const terminalSettings = ref(null)
@@ -184,7 +190,16 @@ const lifecycleScriptManagement = reactive({
   loading: false,
   saving: false,
   scripts: [],
+  expandedScripts: Object.create(null),
+  expandedParameters: Object.create(null),
   error: ''
+})
+let lifecycleScriptManagementKeyCounter = 0
+const lifecycleScriptParameterHelpTooltip = reactive({
+  visible: false,
+  source: '',
+  x: 0,
+  y: 0
 })
 const todoForm = reactive({
   visible: false,
@@ -872,6 +887,7 @@ async function createTodo() {
     todoForm.lifecycleScripts = cloneTodoLifecycleScripts(lifecycleScripts)
     const defaultIndex = todoForm.lifecycleScripts.findIndex((script) => script.defaultSelected === true)
     todoForm.selectedLifecycleScriptIndex = defaultIndex >= 0 ? String(defaultIndex) : ''
+    resetSelectedTodoFormLifecycleScriptParameterValues()
   } catch (error) {
     showError(error)
   }
@@ -892,6 +908,11 @@ async function submitTodoForm() {
   const title = todoForm.title.trim()
   if (!title) {
     showError('TODO title is required')
+    return
+  }
+  const parameterError = lifecycleScriptParameterValidationError(selectedTodoFormLifecycleScript.value)
+  if (parameterError) {
+    showError(parameterError)
     return
   }
 
@@ -1575,8 +1596,118 @@ function cloneTodoLifecycleScripts(scripts = []) {
     description: script.description || '',
     initScript: script.initScript || '',
     completeScript: script.completeScript || '',
+    parameters: cloneTodoLifecycleScriptParameters(script.parameters || []),
+    parameterValues: initialLifecycleScriptParameterValues(script.parameters || [], script.parameterValues || {}),
     defaultSelected: script.defaultSelected === true
   }))
+}
+
+function cloneTodoLifecycleScriptsForManagement(scripts = []) {
+  return cloneTodoLifecycleScripts(scripts).map((script) => attachLifecycleScriptManagementKey(script))
+}
+
+function attachLifecycleScriptManagementKey(script) {
+  return {
+    ...script,
+    _uiKey: `lifecycle-script-${lifecycleScriptManagementKeyCounter++}`
+  }
+}
+
+function cloneTodoLifecycleScriptParameters(parameters = []) {
+  return parameters.map((parameter) => ({
+    name: parameter.name || '',
+    label: parameter.label || '',
+    description: parameter.description || '',
+    defaultValue: parameter.defaultValue || '',
+    required: parameter.required === true
+  }))
+}
+
+function initialLifecycleScriptParameterValues(parameters = [], existingValues = {}) {
+  return parameters.reduce((values, parameter) => {
+    const name = (parameter.name || '').trim()
+    if (!name) {
+      return values
+    }
+    values[name] = Object.prototype.hasOwnProperty.call(existingValues, name)
+      ? existingValues[name]
+      : parameter.defaultValue || ''
+    return values
+  }, Object.create(null))
+}
+
+function lifecycleScriptManagementKey(script, index) {
+  return script?._uiKey || `lifecycle-script-index-${index}`
+}
+
+function lifecycleScriptExpansionKey(index) {
+  return lifecycleScriptManagementKey(lifecycleScriptManagement.scripts[index], index)
+}
+
+function isTodoLifecycleScriptExpanded(index) {
+  return lifecycleScriptManagement.expandedScripts[lifecycleScriptExpansionKey(index)] === true
+}
+
+function setTodoLifecycleScriptExpanded(index, expanded) {
+  const key = lifecycleScriptExpansionKey(index)
+  if (expanded) {
+    lifecycleScriptManagement.expandedScripts[key] = true
+    return
+  }
+  delete lifecycleScriptManagement.expandedScripts[key]
+}
+
+function toggleTodoLifecycleScriptExpanded(index) {
+  setTodoLifecycleScriptExpanded(index, !isTodoLifecycleScriptExpanded(index))
+}
+
+function isTodoLifecycleScriptParametersExpanded(index) {
+  return lifecycleScriptManagement.expandedParameters[lifecycleScriptExpansionKey(index)] === true
+}
+
+function setTodoLifecycleScriptParametersExpanded(index, expanded) {
+  const key = lifecycleScriptExpansionKey(index)
+  if (expanded) {
+    lifecycleScriptManagement.expandedParameters[key] = true
+    return
+  }
+  delete lifecycleScriptManagement.expandedParameters[key]
+}
+
+function toggleTodoLifecycleScriptParametersExpanded(index) {
+  setTodoLifecycleScriptParametersExpanded(index, !isTodoLifecycleScriptParametersExpanded(index))
+}
+
+function resetLifecycleScriptManagementExpansion() {
+  lifecycleScriptManagement.expandedScripts = Object.create(null)
+  lifecycleScriptManagement.expandedParameters = Object.create(null)
+}
+
+function lifecycleScriptSummary(value) {
+  const text = (value || '').trim()
+  if (!text) {
+    return '未设置'
+  }
+  return text.length > 48 ? `${text.slice(0, 48)}...` : text
+}
+
+function lifecycleScriptParameterCountLabel(script) {
+  return `参数 ${(script?.parameters || []).length}`
+}
+
+function showLifecycleScriptParameterHelp(event, source) {
+  const rect = event.currentTarget.getBoundingClientRect()
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 1024
+  const tooltipWidth = Math.min(340, Math.max(240, viewportWidth - 32))
+  lifecycleScriptParameterHelpTooltip.source = source
+  lifecycleScriptParameterHelpTooltip.x = Math.max(16, Math.min(rect.left, viewportWidth - tooltipWidth - 16))
+  lifecycleScriptParameterHelpTooltip.y = Math.max(16, rect.bottom + 6)
+  lifecycleScriptParameterHelpTooltip.visible = true
+}
+
+function hideLifecycleScriptParameterHelp() {
+  lifecycleScriptParameterHelpTooltip.visible = false
+  lifecycleScriptParameterHelpTooltip.source = ''
 }
 
 function addTodoInitializationFile() {
@@ -1627,16 +1758,67 @@ function selectedTodoLifecycleScriptSnapshot(script) {
   if (!script) {
     return null
   }
+  const parameters = normalizedTodoLifecycleScriptParameters(script.parameters || [])
   const snapshot = {
     name: (script.name || '').trim(),
     description: (script.description || '').trim(),
     initScript: (script.initScript || '').trim(),
-    completeScript: (script.completeScript || '').trim()
+    completeScript: (script.completeScript || '').trim(),
+    parameters,
+    parameterValues: normalizedTodoLifecycleScriptParameterValues(parameters, script.parameterValues || {})
   }
   if (!snapshot.name || (!snapshot.initScript && !snapshot.completeScript)) {
     return null
   }
+  if (!snapshot.parameters.length) {
+    delete snapshot.parameters
+    delete snapshot.parameterValues
+  }
   return snapshot
+}
+
+function normalizedTodoLifecycleScriptParameters(parameters = []) {
+  return parameters.map((parameter) => ({
+    name: (parameter.name || '').trim(),
+    label: (parameter.label || '').trim(),
+    description: (parameter.description || '').trim(),
+    defaultValue: parameter.defaultValue || '',
+    required: parameter.required === true
+  }))
+}
+
+function normalizedTodoLifecycleScriptParameterValues(parameters = [], values = {}) {
+  return parameters.reduce((normalized, parameter) => {
+    if (!parameter.name) {
+      return normalized
+    }
+    normalized[parameter.name] = values[parameter.name] || ''
+    return normalized
+  }, Object.create(null))
+}
+
+function lifecycleScriptParameterLabel(parameter) {
+  return (parameter.label || '').trim() || (parameter.name || '').trim() || '参数'
+}
+
+function lifecycleScriptParameterValidationError(script) {
+  if (!script) {
+    return ''
+  }
+  for (const parameter of script.parameters || []) {
+    if (parameter.required !== true) {
+      continue
+    }
+    const name = (parameter.name || '').trim()
+    if (!name) {
+      continue
+    }
+    const value = script.parameterValues?.[name] || ''
+    if (!value.trim()) {
+      return `${lifecycleScriptParameterLabel(parameter)} is required`
+    }
+  }
+  return ''
 }
 
 function lifecycleScriptOptionLabel(script) {
@@ -1658,7 +1840,16 @@ function closeTodoFormLifecycleScriptMenu() {
 
 function selectTodoFormLifecycleScript(index) {
   todoForm.selectedLifecycleScriptIndex = index === '' ? '' : String(index)
+  resetSelectedTodoFormLifecycleScriptParameterValues()
   closeTodoFormLifecycleScriptMenu()
+}
+
+function resetSelectedTodoFormLifecycleScriptParameterValues() {
+  const script = selectedTodoFormLifecycleScript.value
+  if (!script) {
+    return
+  }
+  script.parameterValues = initialLifecycleScriptParameterValues(script.parameters || [], script.parameterValues || {})
 }
 
 async function uploadTodoInitializationFile(index, event) {
@@ -1715,13 +1906,17 @@ async function saveTodoInitializationFileManagement() {
 }
 
 function addTodoLifecycleScript() {
-  lifecycleScriptManagement.scripts.push({
+  const script = attachLifecycleScriptManagementKey({
     name: '',
     description: '',
     initScript: '',
     completeScript: '',
+    parameters: [],
     defaultSelected: false
   })
+  lifecycleScriptManagement.scripts.push(script)
+  const index = lifecycleScriptManagement.scripts.length - 1
+  setTodoLifecycleScriptExpanded(index, true)
 }
 
 function removeTodoLifecycleScript(index) {
@@ -1750,14 +1945,46 @@ function setTodoLifecycleScriptDefault(index, selected) {
   })
 }
 
+function addTodoLifecycleScriptParameter(scriptIndex) {
+  const script = lifecycleScriptManagement.scripts[scriptIndex]
+  if (!script) {
+    return
+  }
+  script.parameters ||= []
+  script.parameters.push({
+    name: '',
+    label: '',
+    description: '',
+    defaultValue: '',
+    required: false
+  })
+  setTodoLifecycleScriptExpanded(scriptIndex, true)
+  setTodoLifecycleScriptParametersExpanded(scriptIndex, true)
+}
+
+function removeTodoLifecycleScriptParameter(scriptIndex, parameterIndex) {
+  const script = lifecycleScriptManagement.scripts[scriptIndex]
+  if (!script?.parameters) {
+    return
+  }
+  script.parameters.splice(parameterIndex, 1)
+}
+
 function normalizedTodoLifecycleScripts() {
-  return lifecycleScriptManagement.scripts.map((script) => ({
-    name: (script.name || '').trim(),
-    description: (script.description || '').trim(),
-    initScript: (script.initScript || '').trim(),
-    completeScript: (script.completeScript || '').trim(),
-    defaultSelected: script.defaultSelected === true
-  }))
+  return lifecycleScriptManagement.scripts.map((script) => {
+    const normalized = {
+      name: (script.name || '').trim(),
+      description: (script.description || '').trim(),
+      initScript: (script.initScript || '').trim(),
+      completeScript: (script.completeScript || '').trim(),
+      defaultSelected: script.defaultSelected === true
+    }
+    const parameters = normalizedTodoLifecycleScriptParameters(script.parameters || [])
+    if (parameters.length) {
+      normalized.parameters = parameters
+    }
+    return normalized
+  })
 }
 
 async function openTodoLifecycleScriptManagement() {
@@ -1768,8 +1995,10 @@ async function openTodoLifecycleScriptManagement() {
   lifecycleScriptManagement.loading = true
   lifecycleScriptManagement.error = ''
   lifecycleScriptManagement.scripts = []
+  resetLifecycleScriptManagementExpansion()
+  hideLifecycleScriptParameterHelp()
   try {
-    lifecycleScriptManagement.scripts = cloneTodoLifecycleScripts(await LoadTodoLifecycleScripts())
+    lifecycleScriptManagement.scripts = cloneTodoLifecycleScriptsForManagement(await LoadTodoLifecycleScripts())
   } catch (error) {
     lifecycleScriptManagement.error = errorMessageFrom(error)
   } finally {
@@ -1780,6 +2009,8 @@ async function openTodoLifecycleScriptManagement() {
 function closeTodoLifecycleScriptManagement() {
   lifecycleScriptManagement.visible = false
   lifecycleScriptManagement.error = ''
+  resetLifecycleScriptManagementExpansion()
+  hideLifecycleScriptParameterHelp()
 }
 
 async function saveTodoLifecycleScriptManagement() {
@@ -3084,6 +3315,24 @@ function clearToastTimer() {
     </div>
 
     <div
+      v-if="lifecycleScriptParameterHelpTooltip.visible"
+      :id="lifecycleScriptParameterHelpTooltip.source"
+      class="lifecycle-script-parameter-help-tooltip"
+      data-testid="todo-lifecycle-script-parameter-help-floating"
+      :data-help-source="lifecycleScriptParameterHelpTooltip.source"
+      role="tooltip"
+      :style="{
+        left: `${lifecycleScriptParameterHelpTooltip.x}px`,
+        top: `${lifecycleScriptParameterHelpTooltip.y}px`
+      }"
+    >
+      <strong>{{ lifecycleScriptParameterHelp.usageTitle }}</strong>
+      <span>{{ lifecycleScriptParameterHelp.usage }}</span>
+      <strong>{{ lifecycleScriptParameterHelp.noticeTitle }}</strong>
+      <span>{{ lifecycleScriptParameterHelp.notice }}</span>
+    </div>
+
+    <div
       v-if="gitInitializationPrompt.visible"
       class="git-init-confirm-overlay"
       data-testid="git-init-confirm-overlay"
@@ -3504,6 +3753,48 @@ function clearToastTimer() {
                   {{ lifecycleScriptOptionLabel(script) }}
                 </button>
               </div>
+            </div>
+            <div
+              v-if="selectedTodoFormLifecycleScript?.parameters?.length"
+              class="todo-lifecycle-script-parameters"
+              data-testid="todo-lifecycle-script-parameters"
+            >
+              <div class="lifecycle-script-parameter-heading">
+                <span class="settings-label">参数</span>
+                <span class="lifecycle-script-parameter-help">
+                  <button
+                    type="button"
+                    class="icon-button lifecycle-script-parameter-help-trigger"
+                    data-testid="todo-lifecycle-script-parameter-help-create"
+                    title="参数使用方法"
+                    aria-label="查看参数使用方法"
+                    aria-describedby="todo-lifecycle-script-parameter-help-create-tooltip"
+                    @mouseenter="showLifecycleScriptParameterHelp($event, 'todo-lifecycle-script-parameter-help-create-tooltip')"
+                    @mouseleave="hideLifecycleScriptParameterHelp"
+                    @focus="showLifecycleScriptParameterHelp($event, 'todo-lifecycle-script-parameter-help-create-tooltip')"
+                    @blur="hideLifecycleScriptParameterHelp"
+                  >
+                    <CircleQuestionMark :size="14" />
+                  </button>
+                </span>
+              </div>
+              <label
+                v-for="parameter in selectedTodoFormLifecycleScript.parameters"
+                :key="parameter.name"
+                class="settings-field todo-lifecycle-script-parameter-field"
+              >
+                <span class="settings-label">
+                  {{ lifecycleScriptParameterLabel(parameter) }}
+                  <span v-if="parameter.required" class="field-optional">Required</span>
+                </span>
+                <input
+                  v-model="selectedTodoFormLifecycleScript.parameterValues[parameter.name]"
+                  type="text"
+                  class="todo-text-input"
+                  :data-testid="`todo-lifecycle-script-parameter-value-${parameter.name}`"
+                />
+                <small v-if="parameter.description" class="settings-help">{{ parameter.description }}</small>
+              </label>
             </div>
           </div>
 
@@ -4571,79 +4862,217 @@ function clearToastTimer() {
             </div>
             <div
               v-for="(script, index) in lifecycleScriptManagement.scripts"
-              :key="index"
+              :key="lifecycleScriptManagementKey(script, index)"
               class="lifecycle-script-row"
+              :class="{ expanded: isTodoLifecycleScriptExpanded(index) }"
               :data-testid="`todo-lifecycle-script-setting-${index}`"
             >
-              <label
-                class="initialization-file-default"
-                :title="script.defaultSelected ? 'Selected by default' : 'Optional'"
+              <div class="lifecycle-script-summary-row">
+                <label
+                  class="initialization-file-default"
+                  :title="script.defaultSelected ? 'Selected by default' : 'Optional'"
+                >
+                  <input
+                    :checked="script.defaultSelected"
+                    type="checkbox"
+                    :data-testid="`todo-lifecycle-script-default-${index}`"
+                    @change="setTodoLifecycleScriptDefault(index, $event.target.checked)"
+                  />
+                  <span>默认</span>
+                </label>
+                <button
+                  type="button"
+                  class="lifecycle-script-summary"
+                  :data-testid="`todo-lifecycle-script-summary-${index}`"
+                  @click="toggleTodoLifecycleScriptExpanded(index)"
+                >
+                  <span class="lifecycle-script-summary-title">{{ script.name || '未命名脚本' }}</span>
+                  <span class="lifecycle-script-summary-description">{{ script.description || '无描述' }}</span>
+                  <span class="lifecycle-script-summary-chip">初始化: {{ lifecycleScriptSummary(script.initScript) }}</span>
+                  <span class="lifecycle-script-summary-chip">完成: {{ lifecycleScriptSummary(script.completeScript) }}</span>
+                  <span class="lifecycle-script-summary-chip">{{ lifecycleScriptParameterCountLabel(script) }}</span>
+                </button>
+                <button
+                  type="button"
+                  class="icon-button"
+                  :data-testid="`todo-lifecycle-script-expand-${index}`"
+                  :title="isTodoLifecycleScriptExpanded(index) ? 'Collapse lifecycle script' : 'Expand lifecycle script'"
+                  @click="toggleTodoLifecycleScriptExpanded(index)"
+                >
+                  <ChevronUp v-if="isTodoLifecycleScriptExpanded(index)" :size="14" />
+                  <ChevronDown v-else :size="14" />
+                </button>
+                <button
+                  type="button"
+                  class="icon-button initialization-file-move-up"
+                  :data-testid="`todo-lifecycle-script-up-${index}`"
+                  title="Move up"
+                  :disabled="index === 0"
+                  @click="moveTodoLifecycleScript(index, -1)"
+                >
+                  <ChevronUp :size="14" />
+                </button>
+                <button
+                  type="button"
+                  class="icon-button initialization-file-move-down"
+                  :data-testid="`todo-lifecycle-script-down-${index}`"
+                  title="Move down"
+                  :disabled="index === lifecycleScriptManagement.scripts.length - 1"
+                  @click="moveTodoLifecycleScript(index, 1)"
+                >
+                  <ChevronDown :size="14" />
+                </button>
+                <button
+                  type="button"
+                  class="icon-button initialization-file-remove"
+                  :data-testid="`todo-lifecycle-script-remove-${index}`"
+                  title="Remove lifecycle script"
+                  @click="removeTodoLifecycleScript(index)"
+                >
+                  <Trash2 :size="14" />
+                </button>
+              </div>
+              <div
+                v-if="isTodoLifecycleScriptExpanded(index)"
+                class="lifecycle-script-editor"
+                :data-testid="`todo-lifecycle-script-editor-${index}`"
               >
-                <input
-                  :checked="script.defaultSelected"
-                  type="checkbox"
-                  :data-testid="`todo-lifecycle-script-default-${index}`"
-                  @change="setTodoLifecycleScriptDefault(index, $event.target.checked)"
-                />
-                <span>默认</span>
-              </label>
-              <input
-                v-model="script.name"
-                class="initialization-file-name-input"
-                type="text"
-                :data-testid="`todo-lifecycle-script-name-${index}`"
-                placeholder="显示名称"
-              />
-              <input
-                v-model="script.description"
-                class="initialization-file-description-input"
-                type="text"
-                :data-testid="`todo-lifecycle-script-description-${index}`"
-                placeholder="描述"
-              />
-              <textarea
-                v-model="script.initScript"
-                class="lifecycle-script-textarea"
-                rows="3"
-                :data-testid="`todo-lifecycle-script-init-${index}`"
-                placeholder="初始化脚本"
-              ></textarea>
-              <textarea
-                v-model="script.completeScript"
-                class="lifecycle-script-textarea"
-                rows="3"
-                :data-testid="`todo-lifecycle-script-complete-${index}`"
-                placeholder="完成脚本"
-              ></textarea>
-              <button
-                type="button"
-                class="icon-button initialization-file-move-up"
-                :data-testid="`todo-lifecycle-script-up-${index}`"
-                title="Move up"
-                :disabled="index === 0"
-                @click="moveTodoLifecycleScript(index, -1)"
-              >
-                <ChevronUp :size="14" />
-              </button>
-              <button
-                type="button"
-                class="icon-button initialization-file-move-down"
-                :data-testid="`todo-lifecycle-script-down-${index}`"
-                title="Move down"
-                :disabled="index === lifecycleScriptManagement.scripts.length - 1"
-                @click="moveTodoLifecycleScript(index, 1)"
-              >
-                <ChevronDown :size="14" />
-              </button>
-              <button
-                type="button"
-                class="icon-button initialization-file-remove"
-                :data-testid="`todo-lifecycle-script-remove-${index}`"
-                title="Remove lifecycle script"
-                @click="removeTodoLifecycleScript(index)"
-              >
-                <Trash2 :size="14" />
-              </button>
+                <div class="lifecycle-script-fields">
+                  <input
+                    v-model="script.name"
+                    class="initialization-file-name-input"
+                    type="text"
+                    :data-testid="`todo-lifecycle-script-name-${index}`"
+                    placeholder="显示名称"
+                  />
+                  <input
+                    v-model="script.description"
+                    class="initialization-file-description-input"
+                    type="text"
+                    :data-testid="`todo-lifecycle-script-description-${index}`"
+                    placeholder="描述"
+                  />
+                  <textarea
+                    v-model="script.initScript"
+                    class="lifecycle-script-textarea"
+                    rows="3"
+                    :data-testid="`todo-lifecycle-script-init-${index}`"
+                    placeholder="初始化脚本"
+                  ></textarea>
+                  <textarea
+                    v-model="script.completeScript"
+                    class="lifecycle-script-textarea"
+                    rows="3"
+                    :data-testid="`todo-lifecycle-script-complete-${index}`"
+                    placeholder="完成脚本"
+                  ></textarea>
+                </div>
+                <div class="lifecycle-script-parameters">
+                  <div class="launch-profile-header compact">
+                    <button
+                      type="button"
+                      class="toolbar-button compact lifecycle-script-parameter-toggle"
+                      :data-testid="`todo-lifecycle-script-parameter-toggle-${index}`"
+                      :title="isTodoLifecycleScriptParametersExpanded(index) ? 'Collapse parameters' : 'Expand parameters'"
+                      @click="toggleTodoLifecycleScriptParametersExpanded(index)"
+                    >
+                      <ChevronUp v-if="isTodoLifecycleScriptParametersExpanded(index)" :size="14" />
+                      <ChevronDown v-else :size="14" />
+                      <span>{{ lifecycleScriptParameterCountLabel(script) }}</span>
+                    </button>
+                    <div class="lifecycle-script-parameter-actions">
+                      <span class="lifecycle-script-parameter-help">
+                        <button
+                          type="button"
+                          class="icon-button lifecycle-script-parameter-help-trigger"
+                          :data-testid="`todo-lifecycle-script-parameter-help-${index}`"
+                          title="参数使用方法"
+                          aria-label="查看参数使用方法"
+                          :aria-describedby="`todo-lifecycle-script-parameter-help-${index}-tooltip`"
+                          @mouseenter="showLifecycleScriptParameterHelp($event, `todo-lifecycle-script-parameter-help-${index}-tooltip`)"
+                          @mouseleave="hideLifecycleScriptParameterHelp"
+                          @focus="showLifecycleScriptParameterHelp($event, `todo-lifecycle-script-parameter-help-${index}-tooltip`)"
+                          @blur="hideLifecycleScriptParameterHelp"
+                        >
+                          <CircleQuestionMark :size="14" />
+                        </button>
+                      </span>
+                      <button
+                        type="button"
+                        class="icon-button"
+                        :data-testid="`todo-lifecycle-script-parameter-add-${index}`"
+                        title="Add script parameter"
+                        @click="addTodoLifecycleScriptParameter(index)"
+                      >
+                        <Plus :size="14" />
+                      </button>
+                    </div>
+                  </div>
+                  <div
+                    v-if="isTodoLifecycleScriptParametersExpanded(index)"
+                    class="lifecycle-script-parameter-list"
+                  >
+                    <div
+                      v-if="!script.parameters?.length"
+                      class="initialization-file-empty"
+                    >
+                      暂无参数
+                    </div>
+                    <div
+                      v-for="(parameter, parameterIndex) in script.parameters"
+                      :key="parameterIndex"
+                      class="lifecycle-script-parameter-row"
+                      :data-testid="`todo-lifecycle-script-parameter-${index}-${parameterIndex}`"
+                    >
+                  <input
+                    v-model="parameter.name"
+                    class="initialization-file-name-input"
+                    type="text"
+                    :data-testid="`todo-lifecycle-script-parameter-name-${index}-${parameterIndex}`"
+                    placeholder="参数名"
+                  />
+                  <input
+                    v-model="parameter.label"
+                    class="initialization-file-description-input"
+                    type="text"
+                    :data-testid="`todo-lifecycle-script-parameter-label-${index}-${parameterIndex}`"
+                    placeholder="显示名称"
+                  />
+                  <input
+                    v-model="parameter.description"
+                    class="initialization-file-description-input"
+                    type="text"
+                    :data-testid="`todo-lifecycle-script-parameter-description-${index}-${parameterIndex}`"
+                    placeholder="描述"
+                  />
+                  <input
+                    v-model="parameter.defaultValue"
+                    class="initialization-file-description-input"
+                    type="text"
+                    :data-testid="`todo-lifecycle-script-parameter-default-${index}-${parameterIndex}`"
+                    placeholder="默认值"
+                  />
+                  <label class="initialization-file-default">
+                    <input
+                      v-model="parameter.required"
+                      type="checkbox"
+                      :data-testid="`todo-lifecycle-script-parameter-required-${index}-${parameterIndex}`"
+                    />
+                    <span>必填</span>
+                  </label>
+                  <button
+                    type="button"
+                    class="icon-button"
+                    :data-testid="`todo-lifecycle-script-parameter-remove-${index}-${parameterIndex}`"
+                    title="Remove script parameter"
+                    @click="removeTodoLifecycleScriptParameter(index, parameterIndex)"
+                  >
+                    <Trash2 :size="14" />
+                  </button>
+                    </div>
+                </div>
+              </div>
+              </div>
             </div>
           </div>
 

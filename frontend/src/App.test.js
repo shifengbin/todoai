@@ -5250,6 +5250,118 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="todo-lifecycle-script-management-dialog"]').exists()).toBe(false)
   })
 
+  it('edits and saves TODO lifecycle script parameters from global script management', async () => {
+    const wrapper = await mountReadyApp()
+
+    await openScriptManagement(wrapper)
+    await wrapper.find('[data-testid="todo-lifecycle-script-add"]').trigger('click')
+    await wrapper.find('[data-testid="todo-lifecycle-script-name-0"]').setValue('Create branch')
+    await wrapper.find('[data-testid="todo-lifecycle-script-init-0"]').setValue('git checkout -b {{branch_name}}')
+    await wrapper.find('[data-testid="todo-lifecycle-script-parameter-add-0"]').trigger('click')
+    await wrapper.find('[data-testid="todo-lifecycle-script-parameter-name-0-0"]').setValue('branch_name')
+    await wrapper.find('[data-testid="todo-lifecycle-script-parameter-label-0-0"]').setValue('分支名')
+    await wrapper.find('[data-testid="todo-lifecycle-script-parameter-description-0-0"]').setValue('工作分支')
+    await wrapper.find('[data-testid="todo-lifecycle-script-parameter-default-0-0"]').setValue('feature/demo')
+    await wrapper.find('[data-testid="todo-lifecycle-script-parameter-required-0-0"]').setValue(true)
+    await wrapper.find('[data-testid="todo-lifecycle-script-management-save"]').trigger('click')
+    await flushPromises()
+
+    expect(SaveTodoLifecycleScripts).toHaveBeenCalledWith([
+      {
+        name: 'Create branch',
+        description: '',
+        initScript: 'git checkout -b {{branch_name}}',
+        completeScript: '',
+        parameters: [
+          {
+            name: 'branch_name',
+            label: '分支名',
+            description: '工作分支',
+            defaultValue: 'feature/demo',
+            required: true
+          }
+        ],
+        defaultSelected: false
+      }
+    ])
+  })
+
+  it('shows lifecycle script parameter usage help in global script management', async () => {
+    const wrapper = await mountReadyApp()
+
+    await openScriptManagement(wrapper)
+    await wrapper.find('[data-testid="todo-lifecycle-script-add"]').trigger('click')
+    await wrapper.find('[data-testid="todo-lifecycle-script-parameter-help-0"]').trigger('mouseenter')
+    await nextTick()
+
+    const help = wrapper.find('[data-testid="todo-lifecycle-script-parameter-help-floating"]')
+    expect(help.exists()).toBe(true)
+    expect(help.attributes('data-help-source')).toBe('todo-lifecycle-script-parameter-help-0-tooltip')
+    expect(help.text()).toContain('使用方法')
+    expect(help.text()).toContain('{{参数名}}')
+    expect(help.text()).toContain('git checkout -b {{branch_name}}')
+    expect(help.text()).toContain('注意事项')
+    expect(help.text()).toContain('不要再额外加引号')
+    expect(help.text()).toContain('明文保存')
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-parameter-help-0-tooltip"]').exists()).toBe(false)
+  })
+
+  it('collapses lifecycle script rows and expands them for editing', async () => {
+    appApiMock.LoadTodoLifecycleScripts.mockResolvedValue([
+      lifecycleScriptTemplate({
+        name: 'Node setup',
+        description: 'Install deps',
+        initScript: 'npm install',
+        completeScript: 'npm test',
+        parameters: [{ name: 'branch_name', label: '分支名' }]
+      })
+    ])
+    const wrapper = await mountReadyApp()
+
+    await openScriptManagement(wrapper)
+
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-summary-0"]').text()).toContain('Node setup')
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-summary-0"]').text()).toContain('参数 1')
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-editor-0"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-name-0"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="todo-lifecycle-script-expand-0"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-editor-0"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-name-0"]').element.value).toBe('Node setup')
+  })
+
+  it('keeps lifecycle script parameters collapsed until expanded or a parameter is added', async () => {
+    appApiMock.LoadTodoLifecycleScripts.mockResolvedValue([
+      lifecycleScriptTemplate({
+        name: 'Create branch',
+        initScript: 'git checkout -b {{branch_name}}',
+        parameters: [{ name: 'branch_name', label: '分支名' }]
+      })
+    ])
+    const wrapper = await mountReadyApp()
+
+    await openScriptManagement(wrapper)
+    await wrapper.find('[data-testid="todo-lifecycle-script-expand-0"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-parameter-toggle-0"]').text()).toContain('参数 1')
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-parameter-name-0-0"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="todo-lifecycle-script-parameter-toggle-0"]').trigger('click')
+    await nextTick()
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-parameter-name-0-0"]').element.value).toBe('branch_name')
+
+    await wrapper.find('[data-testid="todo-lifecycle-script-parameter-toggle-0"]').trigger('click')
+    await nextTick()
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-parameter-name-0-0"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="todo-lifecycle-script-parameter-add-0"]').trigger('click')
+    await nextTick()
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-parameter-name-0-1"]').exists()).toBe(true)
+  })
+
   it('shows TODO lifecycle script save errors without losing edited scripts', async () => {
     appApiMock.SaveTodoLifecycleScripts.mockRejectedValue(new Error('lifecycle script name is required'))
     const wrapper = await mountReadyApp()
@@ -5310,6 +5422,129 @@ describe('App project terminal tree', () => {
         completeScript: 'npm test'
       }
     })
+  })
+
+  it('shows lifecycle script parameter usage help when creating a TODO', async () => {
+    appApiMock.LoadTodoLifecycleScripts.mockResolvedValue([
+      lifecycleScriptTemplate({
+        name: 'Create branch',
+        initScript: 'git checkout -b {{branch_name}}',
+        parameters: [{ name: 'branch_name', label: '分支名', description: '工作分支' }],
+        defaultSelected: true
+      })
+    ])
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="new-todo"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="todo-lifecycle-script-parameter-help-create"]').trigger('mouseenter')
+    await nextTick()
+
+    const help = wrapper.find('[data-testid="todo-lifecycle-script-parameter-help-floating"]')
+    expect(help.exists()).toBe(true)
+    expect(help.attributes('data-help-source')).toBe('todo-lifecycle-script-parameter-help-create-tooltip')
+    expect(help.text()).toContain('使用方法')
+    expect(help.text()).toContain('{{参数名}}')
+    expect(help.text()).toContain('git checkout -b {{branch_name}}')
+    expect(help.text()).toContain('注意事项')
+    expect(help.text()).toContain('不要再额外加引号')
+    expect(help.text()).toContain('明文保存')
+  })
+
+  it('shows lifecycle script parameters and submits parameter values when creating a TODO', async () => {
+    appApiMock.LoadTodoLifecycleScripts.mockResolvedValue([
+      lifecycleScriptTemplate({
+        name: 'Create branch',
+        initScript: 'git checkout -b {{branch_name}}',
+        parameters: [
+          { name: 'branch_name', label: '分支名', description: '工作分支', defaultValue: 'feature/demo', required: true }
+        ],
+        defaultSelected: true
+      })
+    ])
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="new-todo"]').trigger('click')
+    await flushPromises()
+
+    const parameterInput = wrapper.find('[data-testid="todo-lifecycle-script-parameter-value-branch_name"]')
+    expect(parameterInput.exists()).toBe(true)
+    expect(parameterInput.element.value).toBe('feature/demo')
+
+    await wrapper.find('[data-testid="todo-name-input"]').setValue('Write tests')
+    await parameterInput.setValue('feature/login')
+    await wrapper.find('[data-testid="todo-create-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(CreateTodo).toHaveBeenCalledWith({
+      title: 'Write tests',
+      description: '',
+      priority: 'medium',
+      projects: [],
+      lifecycleScript: {
+        name: 'Create branch',
+        description: 'Install dependencies',
+        initScript: 'git checkout -b {{branch_name}}',
+        completeScript: 'npm test',
+        parameters: [
+          { name: 'branch_name', label: '分支名', description: '工作分支', defaultValue: 'feature/demo', required: true }
+        ],
+        parameterValues: {
+          branch_name: 'feature/login'
+        }
+      }
+    })
+  })
+
+  it('validates required lifecycle script parameters before creating a TODO', async () => {
+    appApiMock.LoadTodoLifecycleScripts.mockResolvedValue([
+      lifecycleScriptTemplate({
+        name: 'Create branch',
+        initScript: 'git checkout -b {{branch_name}}',
+        parameters: [{ name: 'branch_name', label: '分支名', required: true }],
+        defaultSelected: true
+      })
+    ])
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="new-todo"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="todo-name-input"]').setValue('Write tests')
+    await wrapper.find('[data-testid="todo-lifecycle-script-parameter-value-branch_name"]').setValue('')
+    await wrapper.find('[data-testid="todo-create-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(CreateTodo).not.toHaveBeenCalled()
+    expect(wrapper.find('.status-error').text()).toContain('分支名 is required')
+  })
+
+  it('rebuilds lifecycle script parameter values when selecting another script', async () => {
+    appApiMock.LoadTodoLifecycleScripts.mockResolvedValue([
+      lifecycleScriptTemplate({
+        name: 'Create branch',
+        initScript: 'git checkout -b {{branch_name}}',
+        parameters: [{ name: 'branch_name', label: '分支名', defaultValue: 'feature/demo' }],
+        defaultSelected: true
+      }),
+      lifecycleScriptTemplate({
+        name: 'Run service',
+        initScript: 'npm run {{branch_name}}',
+        parameters: [{ name: 'branch_name', label: '分支名', defaultValue: 'release/demo' }]
+      })
+    ])
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="new-todo"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="todo-lifecycle-script-parameter-value-branch_name"]').setValue('feature/custom')
+    await wrapper.find('[data-testid="todo-lifecycle-script-select"]').trigger('click')
+    await nextTick()
+    await wrapper.find('[data-testid="todo-lifecycle-script-option-1"]').trigger('click')
+    await nextTick()
+
+    const branchInput = wrapper.find('[data-testid="todo-lifecycle-script-parameter-value-branch_name"]')
+    expect(branchInput.exists()).toBe(true)
+    expect(branchInput.element.value).toBe('release/demo')
   })
 
   it('supports creating a TODO without selecting a lifecycle script', async () => {

@@ -108,10 +108,12 @@ type TodoInitializationFileSnapshot struct {
 }
 
 type TodoLifecycleScriptSnapshot struct {
-	Name           string `json:"name"`
-	Description    string `json:"description,omitempty"`
-	InitScript     string `json:"initScript,omitempty"`
-	CompleteScript string `json:"completeScript,omitempty"`
+	Name            string                         `json:"name"`
+	Description     string                         `json:"description,omitempty"`
+	InitScript      string                         `json:"initScript,omitempty"`
+	CompleteScript  string                         `json:"completeScript,omitempty"`
+	Parameters      []TodoLifecycleScriptParameter `json:"parameters,omitempty"`
+	ParameterValues map[string]string              `json:"parameterValues,omitempty"`
 }
 
 type TodoProject struct {
@@ -1322,6 +1324,14 @@ func normalizeTodoLifecycleScriptSnapshot(script *TodoLifecycleScriptSnapshot) (
 	description := strings.TrimSpace(script.Description)
 	initScript := strings.TrimSpace(script.InitScript)
 	completeScript := strings.TrimSpace(script.CompleteScript)
+	parameters, err := normalizeTodoLifecycleScriptParameters(script.Parameters)
+	if err != nil {
+		return nil, err
+	}
+	parameterValues, err := normalizeTodoLifecycleScriptParameterValues(parameters, script.ParameterValues)
+	if err != nil {
+		return nil, err
+	}
 	if name == "" {
 		return nil, errors.New("lifecycle script name is required")
 	}
@@ -1329,10 +1339,12 @@ func normalizeTodoLifecycleScriptSnapshot(script *TodoLifecycleScriptSnapshot) (
 		return nil, errors.New("lifecycle script requires an initialization or completion script")
 	}
 	return &TodoLifecycleScriptSnapshot{
-		Name:           name,
-		Description:    description,
-		InitScript:     initScript,
-		CompleteScript: completeScript,
+		Name:            name,
+		Description:     description,
+		InitScript:      initScript,
+		CompleteScript:  completeScript,
+		Parameters:      parameters,
+		ParameterValues: parameterValues,
 	}, nil
 }
 

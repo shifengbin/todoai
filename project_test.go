@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -508,6 +510,10 @@ func TestProjectManagerCreatesTodoWithLifecycleScriptSnapshot(t *testing.T) {
 			Description:    "安装依赖",
 			InitScript:     "npm install",
 			CompleteScript: "npm test",
+			Parameters: []TodoLifecycleScriptParameter{
+				{Name: "branch_name", Label: "分支名", Description: "工作分支", DefaultValue: "feature/demo", Required: true},
+			},
+			ParameterValues: map[string]string{"branch_name": "feature/login"},
 		},
 	})
 	if err != nil {
@@ -522,6 +528,10 @@ func TestProjectManagerCreatesTodoWithLifecycleScriptSnapshot(t *testing.T) {
 		Description:    "安装依赖",
 		InitScript:     "npm install",
 		CompleteScript: "npm test",
+		Parameters: []TodoLifecycleScriptParameter{
+			{Name: "branch_name", Label: "分支名", Description: "工作分支", DefaultValue: "feature/demo", Required: true},
+		},
+		ParameterValues: map[string]string{"branch_name": "feature/login"},
 	})
 
 	reloaded := NewProjectManager(configPath)
@@ -530,6 +540,25 @@ func TestProjectManagerCreatesTodoWithLifecycleScriptSnapshot(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 	assertTodoLifecycleScriptSnapshot(t, persisted.Todos[0].LifecycleScript, state.Todos[0].LifecycleScript)
+}
+
+func TestProjectManagerRejectsTodoWithMissingRequiredLifecycleScriptParameter(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "projects.json")
+	manager := NewProjectManager(configPath)
+
+	if _, err := manager.CreateTodo(CreateTodoRequest{
+		Title: "修复登录问题",
+		LifecycleScript: &TodoLifecycleScriptSnapshot{
+			Name:       "Create branch",
+			InitScript: "git checkout -b {{branch_name}}",
+			Parameters: []TodoLifecycleScriptParameter{
+				{Name: "branch_name", Label: "分支名", Required: true},
+			},
+			ParameterValues: map[string]string{"branch_name": "   "},
+		},
+	}); err == nil || !strings.Contains(err.Error(), "lifecycle script parameter value is required") {
+		t.Fatalf("CreateTodo() error = %v, want required parameter error", err)
+	}
 }
 
 func TestProjectManagerCreatesTodoWithProjectBaseBranches(t *testing.T) {
@@ -1953,7 +1982,7 @@ func assertTodoLifecycleScriptSnapshot(t *testing.T, got *TodoLifecycleScriptSna
 		}
 		return
 	}
-	if *got != *want {
+	if !reflect.DeepEqual(*got, *want) {
 		t.Fatalf("LifecycleScript = %#v, want %#v", *got, *want)
 	}
 }
