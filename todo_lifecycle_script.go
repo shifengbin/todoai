@@ -28,6 +28,7 @@ type TodoLifecycleScriptRunRequest struct {
 	ScriptName      string
 	Script          string
 	WorkingDir      string
+	WorkspaceScope  string
 	ShellPath       string
 	GOOS            string
 	Parameters      []TodoLifecycleScriptParameter
@@ -50,16 +51,23 @@ type TodoLifecycleScriptStatus struct {
 	ExitCode   int    `json:"exitCode,omitempty"`
 	OutputTail string `json:"outputTail,omitempty"`
 	Message    string `json:"message,omitempty"`
+	RunID      uint64 `json:"runId"`
+	ScopeEpoch uint64 `json:"scopeEpoch"`
 }
 
 type todoLifecycleScriptRunner func(context.Context, TodoLifecycleScriptRunRequest) TodoLifecycleScriptRunResult
 
 type TodoLifecycleScriptExecutor struct {
-	mu       sync.Mutex
-	statuses map[string]TodoLifecycleScriptStatus
-	runner   todoLifecycleScriptRunner
-	now      func() time.Time
-	onStatus func(TodoLifecycleScriptStatus)
+	mu             sync.Mutex
+	statuses       map[string]TodoLifecycleScriptStatus
+	failureOutputs map[string]string
+	runIDs         map[string]uint64
+	nextRunID      uint64
+	workspaceScope string
+	scopeEpoch     uint64
+	runner         todoLifecycleScriptRunner
+	now            func() time.Time
+	onStatus       func(TodoLifecycleScriptStatus)
 }
 
 type TodoLifecycleScriptExecutorOption func(*TodoLifecycleScriptExecutor)
@@ -69,9 +77,12 @@ func NewTodoLifecycleScriptExecutor(runner todoLifecycleScriptRunner, opts ...To
 		runner = runTodoLifecycleScriptCommand
 	}
 	executor := &TodoLifecycleScriptExecutor{
-		statuses: map[string]TodoLifecycleScriptStatus{},
-		runner:   runner,
-		now:      time.Now,
+		statuses:       map[string]TodoLifecycleScriptStatus{},
+		failureOutputs: map[string]string{},
+		runIDs:         map[string]uint64{},
+		scopeEpoch:     1,
+		runner:         runner,
+		now:            time.Now,
 	}
 	for _, opt := range opts {
 		opt(executor)
@@ -107,24 +118,37 @@ func (executor *TodoLifecycleScriptExecutor) Start(ctx context.Context, request 
 		ScriptName: normalized.ScriptName,
 		StartedAt:  now,
 	}
-	running := queued
-	running.Status = TodoLifecycleScriptStatusRunning
-
 	executor.mu.Lock()
+	if normalized.WorkspaceScope != executor.workspaceScope {
+		executor.mu.Unlock()
+		return TodoLifecycleScriptStatus{}, false, errors.New("lifecycle script workspace changed")
+	}
 	if existing, ok := executor.statuses[key]; ok && (existing.Status == TodoLifecycleScriptStatusQueued || existing.Status == TodoLifecycleScriptStatusRunning) {
 		executor.mu.Unlock()
 		return existing, false, nil
 	}
+	executor.nextRunID++
+	runID := executor.nextRunID
+	executor.runIDs[key] = runID
+	queued.RunID = runID
+	queued.ScopeEpoch = executor.scopeEpoch
+	running := queued
+	running.Status = TodoLifecycleScriptStatusRunning
+	delete(executor.failureOutputs, key)
 	executor.statuses[key] = queued
 	executor.mu.Unlock()
 	executor.emitStatus(queued)
 
 	executor.mu.Lock()
+	if executor.runIDs[key] != runID {
+		executor.mu.Unlock()
+		return queued, true, nil
+	}
 	executor.statuses[key] = running
 	executor.mu.Unlock()
 	executor.emitStatus(running)
 
-	go executor.run(ctx, key, normalized, running)
+	go executor.run(ctx, key, runID, normalized, running)
 	return running, true, nil
 }
 
@@ -136,6 +160,11 @@ func (executor *TodoLifecycleScriptExecutor) Status(todoID string, phase string)
 }
 
 func (executor *TodoLifecycleScriptExecutor) Statuses() []TodoLifecycleScriptStatus {
+	statuses, _ := executor.Snapshot()
+	return statuses
+}
+
+func (executor *TodoLifecycleScriptExecutor) Snapshot() ([]TodoLifecycleScriptStatus, uint64) {
 	executor.mu.Lock()
 	defer executor.mu.Unlock()
 	statuses := make([]TodoLifecycleScriptStatus, 0, len(executor.statuses))
@@ -148,7 +177,25 @@ func (executor *TodoLifecycleScriptExecutor) Statuses() []TodoLifecycleScriptSta
 		}
 		return statuses[i].TodoID < statuses[j].TodoID
 	})
-	return statuses
+	return statuses, executor.scopeEpoch
+}
+
+func (executor *TodoLifecycleScriptExecutor) FailureOutput(todoID string, phase string) (string, bool) {
+	executor.mu.Lock()
+	defer executor.mu.Unlock()
+	key := todoLifecycleScriptStatusKey(todoID, phase)
+	status, ok := executor.statuses[key]
+	if !ok || status.Status != TodoLifecycleScriptStatusFailed {
+		return "", false
+	}
+	output, ok := executor.failureOutputs[key]
+	return output, ok
+}
+
+func (executor *TodoLifecycleScriptExecutor) ScopeEpoch() uint64 {
+	executor.mu.Lock()
+	defer executor.mu.Unlock()
+	return executor.scopeEpoch
 }
 
 func (executor *TodoLifecycleScriptExecutor) Clear(todoID string, phase string) {
@@ -158,6 +205,8 @@ func (executor *TodoLifecycleScriptExecutor) Clear(todoID string, phase string) 
 	if ok {
 		delete(executor.statuses, key)
 	}
+	delete(executor.failureOutputs, key)
+	delete(executor.runIDs, key)
 	executor.mu.Unlock()
 	if ok {
 		status.Status = ""
@@ -170,16 +219,44 @@ func (executor *TodoLifecycleScriptExecutor) ClearTodo(todoID string) {
 	for key, status := range executor.statuses {
 		if status.TodoID == todoID {
 			delete(executor.statuses, key)
+			delete(executor.failureOutputs, key)
+			delete(executor.runIDs, key)
 		}
 	}
 	executor.mu.Unlock()
 }
 
-func (executor *TodoLifecycleScriptExecutor) run(ctx context.Context, key string, request TodoLifecycleScriptRunRequest, runningStatus TodoLifecycleScriptStatus) {
+func (executor *TodoLifecycleScriptExecutor) ClearAll() {
+	executor.mu.Lock()
+	executor.resetScopeLocked(executor.workspaceScope)
+	executor.mu.Unlock()
+}
+
+func (executor *TodoLifecycleScriptExecutor) ResetScope(scope string) {
+	executor.mu.Lock()
+	executor.resetScopeLocked(scope)
+	executor.mu.Unlock()
+}
+
+func (executor *TodoLifecycleScriptExecutor) resetScopeLocked(scope string) {
+	executor.workspaceScope = scope
+	executor.scopeEpoch++
+	executor.statuses = map[string]TodoLifecycleScriptStatus{}
+	executor.failureOutputs = map[string]string{}
+	executor.runIDs = map[string]uint64{}
+}
+
+func (executor *TodoLifecycleScriptExecutor) run(ctx context.Context, key string, runID uint64, request TodoLifecycleScriptRunRequest, runningStatus TodoLifecycleScriptStatus) {
 	result := executor.runner(ctx, request)
+	executor.mu.Lock()
+	if executor.runIDs[key] != runID {
+		executor.mu.Unlock()
+		return
+	}
 	if result.Err == nil {
-		executor.mu.Lock()
 		delete(executor.statuses, key)
+		delete(executor.failureOutputs, key)
+		delete(executor.runIDs, key)
 		executor.mu.Unlock()
 		cleared := runningStatus
 		cleared.Status = ""
@@ -194,8 +271,9 @@ func (executor *TodoLifecycleScriptExecutor) run(ctx context.Context, key string
 	failed.ExitCode = result.ExitCode
 	failed.OutputTail = lifecycleScriptOutputTail(result.Output)
 	failed.Message = result.Err.Error()
-	executor.mu.Lock()
 	executor.statuses[key] = failed
+	executor.failureOutputs[key] = result.Output
+	delete(executor.runIDs, key)
 	executor.mu.Unlock()
 	executor.emitStatus(failed)
 }

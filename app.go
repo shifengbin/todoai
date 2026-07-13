@@ -33,6 +33,7 @@ type App struct {
 	globalProjectCandidatesPath   string
 	lifecycleScripts              *TodoLifecycleScriptExecutor
 	lifecycleScriptRunner         todoLifecycleScriptRunner
+	lifecycleWorkspaceMu          sync.Mutex
 	todoIPCServer                 *todoIPCServer
 	shells                        *ShellSessionManager
 	settings                      *SettingsManager
@@ -120,6 +121,7 @@ func NewAppWithConfigAndShellStarter(configPath string, starter ShellStarter, op
 		}
 		app.workspace.current = &workspace
 	}
+	app.lifecycleScripts.ResetScope(app.workspacePathOrEmpty())
 	app.rebuildShellSessionManager()
 	return app
 }
@@ -218,6 +220,7 @@ func (a *App) restoreLastWorkspace(state WorkspaceState) {
 		a.bindNoWorkspace()
 		return
 	}
+	a.resetRuntimeForWorkspaceChange(workspaceState.CurrentWorkspace.Path)
 	a.bindWorkspace(*workspaceState.CurrentWorkspace)
 }
 
@@ -309,6 +312,8 @@ func (a *App) OpenWorkspaceFromDialog() (ProjectState, error) {
 }
 
 func (a *App) OpenWorkspaceFromPath(path string) (ProjectState, error) {
+	a.lifecycleWorkspaceMu.Lock()
+	defer a.lifecycleWorkspaceMu.Unlock()
 	previousWorkspace := a.workspace.CurrentWorkspace()
 	workspaceState, err := a.workspace.OpenWorkspace(path)
 	if err != nil {
@@ -320,7 +325,7 @@ func (a *App) OpenWorkspaceFromPath(path string) (ProjectState, error) {
 		return a.emptyProjectState(workspaceState), nil
 	}
 	if previousWorkspace == nil || previousWorkspace.Path != nextWorkspace.Path {
-		a.resetRuntimeForWorkspaceChange()
+		a.resetRuntimeForWorkspaceChange(nextWorkspace.Path)
 	}
 	a.bindWorkspace(*nextWorkspace)
 	state, err := a.ListProjects()
@@ -343,11 +348,13 @@ func (a *App) ClearRecentWorkspaces() (WorkspaceState, error) {
 }
 
 func (a *App) CloseWorkspace() (ProjectState, error) {
-	a.resetRuntimeForWorkspaceChange()
+	a.lifecycleWorkspaceMu.Lock()
+	defer a.lifecycleWorkspaceMu.Unlock()
 	workspaceState, err := a.workspace.CloseWorkspace()
 	if err != nil {
 		return ProjectState{}, err
 	}
+	a.resetRuntimeForWorkspaceChange("")
 	a.bindNoWorkspace()
 	state := a.emptyProjectState(workspaceState)
 	a.emitWorkspaceState(state)
@@ -1207,6 +1214,35 @@ func (a *App) RetryTodoLifecycleScript(todoID string, phase string) (ProjectStat
 	return a.withShellState(state), nil
 }
 
+func (a *App) GetTodoLifecycleScriptErrorOutput(todoID string, phase string) (string, error) {
+	if !a.hasWorkspace() {
+		return "", ErrWorkspaceRequired
+	}
+	todoID = strings.TrimSpace(todoID)
+	phase = strings.TrimSpace(phase)
+	if todoID == "" {
+		return "", errors.New("todo id is required")
+	}
+	if phase != TodoLifecycleScriptPhaseInit && phase != TodoLifecycleScriptPhaseComplete {
+		return "", errors.New("lifecycle script phase is invalid")
+	}
+	if a.lifecycleScripts == nil {
+		return "", errors.New("lifecycle script failure output not found")
+	}
+	output, ok := a.lifecycleScripts.FailureOutput(todoID, phase)
+	if !ok {
+		return "", errors.New("lifecycle script failure output not found")
+	}
+	if output != "" {
+		return output, nil
+	}
+	status, ok := a.lifecycleScripts.Status(todoID, phase)
+	if !ok || status.Status != TodoLifecycleScriptStatusFailed || status.Message == "" {
+		return "", errors.New("lifecycle script failure output not found")
+	}
+	return status.Message, nil
+}
+
 func (a *App) startTodoLifecycleScript(todo Todo, workspacePath string, phase string) (TodoLifecycleScriptStatus, error) {
 	if todo.LifecycleScript == nil {
 		return TodoLifecycleScriptStatus{}, errors.New("todo has no lifecycle script")
@@ -1233,6 +1269,7 @@ func (a *App) startTodoLifecycleScript(todo Todo, workspacePath string, phase st
 		ScriptName:      todo.LifecycleScript.Name,
 		Script:          script,
 		WorkingDir:      taskDir,
+		WorkspaceScope:  workspacePath,
 		ShellPath:       a.settings.ResolveShellPath(),
 		Parameters:      todo.LifecycleScript.Parameters,
 		ParameterValues: todo.LifecycleScript.ParameterValues,
@@ -1553,6 +1590,11 @@ func (a *App) emitTerminalCommandState(event TerminalCommandStateEvent) {
 }
 
 func (a *App) handleTodoLifecycleScriptStatus(status TodoLifecycleScriptStatus) {
+	a.lifecycleWorkspaceMu.Lock()
+	defer a.lifecycleWorkspaceMu.Unlock()
+	if a.lifecycleScripts == nil || status.ScopeEpoch != a.lifecycleScripts.ScopeEpoch() {
+		return
+	}
 	a.emitTodoLifecycleScriptStatus(status)
 	if status.Phase == TodoLifecycleScriptPhaseComplete && status.Status == "" {
 		state, err := a.completeTodoNow(status.TodoID)
@@ -1701,7 +1743,7 @@ func (a *App) withShellState(state ProjectState) ProjectState {
 	}
 	state.Terminals = a.shells.Terminals()
 	if a.lifecycleScripts != nil {
-		state.LifecycleScriptStatuses = a.lifecycleScripts.Statuses()
+		state.LifecycleScriptStatuses, state.LifecycleScriptScopeEpoch = a.lifecycleScripts.Snapshot()
 	}
 	if a.activeTerminalID != "" && terminalExists(state.Terminals, a.activeTerminalID) {
 		state.ActiveTerminalID = a.activeTerminalID
@@ -1811,8 +1853,11 @@ func todoProjectIDsForTodos(todoProjects []TodoProject, todoIDs []string) []stri
 	return ids
 }
 
-func (a *App) resetRuntimeForWorkspaceChange() {
+func (a *App) resetRuntimeForWorkspaceChange(workspaceScope string) {
 	a.activeTerminalID = ""
+	if a.lifecycleScripts != nil {
+		a.lifecycleScripts.ResetScope(workspaceScope)
+	}
 	if a.shells != nil {
 		a.shells.Reset()
 	}
@@ -1845,14 +1890,15 @@ func (a *App) emptyProjectState(workspaceState WorkspaceState) ProjectState {
 		}
 	}
 	return ProjectState{
-		Version:                 projectConfigVersion,
-		CurrentWorkspace:        workspaceState.CurrentWorkspace,
-		RecentWorkspaces:        workspaceState.RecentWorkspaces,
-		Projects:                projects,
-		Todos:                   []Todo{},
-		TodoProjects:            []TodoProject{},
-		Terminals:               []ProjectTerminal{},
-		LifecycleScriptStatuses: []TodoLifecycleScriptStatus{},
+		Version:                   projectConfigVersion,
+		CurrentWorkspace:          workspaceState.CurrentWorkspace,
+		RecentWorkspaces:          workspaceState.RecentWorkspaces,
+		Projects:                  projects,
+		Todos:                     []Todo{},
+		TodoProjects:              []TodoProject{},
+		Terminals:                 []ProjectTerminal{},
+		LifecycleScriptStatuses:   []TodoLifecycleScriptStatus{},
+		LifecycleScriptScopeEpoch: a.lifecycleScripts.ScopeEpoch(),
 	}
 }
 

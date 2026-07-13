@@ -246,6 +246,131 @@ describe('ProjectSidebar', () => {
     expect(wrapper.emitted('create-terminal')[0]).toEqual(['todo-project-a', null])
   })
 
+  it('positions a short lifecycle error tooltip directly above its trigger near the viewport bottom', async () => {
+    vi.useFakeTimers()
+    const originalInnerWidth = window.innerWidth
+    const originalInnerHeight = window.innerHeight
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1000 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 500 })
+    const measuredStyles = vi.fn()
+    const rectSpy = mockElementRects({
+      'todo-lifecycle-script-status-todo-a-init': elementRect({ left: 200, top: 440, width: 560, height: 30 }),
+      'todo-lifecycle-script-error-tooltip-todo-a-init': elementRect({ left: 0, top: 0, width: 640, height: 60 })
+    }, measuredStyles)
+
+    try {
+      const wrapper = mountInProgressSidebar({
+        attachTo: document.body,
+        props: {
+          lifecycleScriptStatuses: [failedLifecycleScriptStatus()],
+          lifecycleScriptErrorOutputs: {
+            '1:todo-a:init:1': 'short lifecycle failure output'
+          }
+        }
+      })
+
+      await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+      await wrapper.find('[data-testid="todo-lifecycle-script-status-todo-a-init"]').trigger('mouseenter')
+      vi.advanceTimersByTime(600)
+      await nextTick()
+      await nextTick()
+      await nextTick()
+
+      const tooltip = document.body.querySelector('[data-testid="todo-lifecycle-script-error-tooltip-todo-a-init"]')
+      expect(tooltip).not.toBeNull()
+      expect(tooltip.style.left).toBe('200px')
+      expect(tooltip.style.top).toBe('368px')
+      expect(measuredStyles).toHaveBeenCalledWith(
+        'todo-lifecycle-script-error-tooltip-todo-a-init',
+        'hidden'
+      )
+    } finally {
+      rectSpy.mockRestore()
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalInnerWidth })
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInnerHeight })
+    }
+  })
+
+  it('clamps a lifecycle error tooltip to the viewport safe area', async () => {
+    vi.useFakeTimers()
+    const originalInnerWidth = window.innerWidth
+    const originalInnerHeight = window.innerHeight
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1000 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 500 })
+    const rectSpy = mockElementRects({
+      'todo-lifecycle-script-status-todo-a-init': elementRect({ left: 900, top: 240, width: 80, height: 30 }),
+      'todo-lifecycle-script-error-tooltip-todo-a-init': elementRect({ left: 0, top: 0, width: 640, height: 300 })
+    })
+
+    try {
+      const wrapper = mountInProgressSidebar({
+        attachTo: document.body,
+        props: {
+          lifecycleScriptStatuses: [failedLifecycleScriptStatus()],
+          lifecycleScriptErrorOutputs: {
+            '1:todo-a:init:1': 'long lifecycle failure output'
+          }
+        }
+      })
+
+      await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+      await wrapper.find('[data-testid="todo-lifecycle-script-status-todo-a-init"]').trigger('mouseenter')
+      vi.advanceTimersByTime(600)
+      await nextTick()
+      await nextTick()
+      await nextTick()
+
+      const tooltip = document.body.querySelector('[data-testid="todo-lifecycle-script-error-tooltip-todo-a-init"]')
+      expect(tooltip).not.toBeNull()
+      expect(tooltip.style.left).toBe('348px')
+      expect(tooltip.style.top).toBe('12px')
+    } finally {
+      rectSpy.mockRestore()
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalInnerWidth })
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInnerHeight })
+    }
+  })
+
+  it('positions a lifecycle error tooltip below its trigger when the rendered tooltip fits', async () => {
+    vi.useFakeTimers()
+    const originalInnerWidth = window.innerWidth
+    const originalInnerHeight = window.innerHeight
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1000 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 500 })
+    const rectSpy = mockElementRects({
+      'todo-lifecycle-script-status-todo-a-init': elementRect({ left: 200, top: 100, width: 560, height: 30 }),
+      'todo-lifecycle-script-error-tooltip-todo-a-init': elementRect({ left: 0, top: 0, width: 640, height: 60 })
+    })
+
+    try {
+      const wrapper = mountInProgressSidebar({
+        attachTo: document.body,
+        props: {
+          lifecycleScriptStatuses: [failedLifecycleScriptStatus()],
+          lifecycleScriptErrorOutputs: {
+            '1:todo-a:init:1': 'short lifecycle failure output'
+          }
+        }
+      })
+
+      await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+      await wrapper.find('[data-testid="todo-lifecycle-script-status-todo-a-init"]').trigger('mouseenter')
+      vi.advanceTimersByTime(600)
+      await nextTick()
+      await nextTick()
+      await nextTick()
+
+      const tooltip = document.body.querySelector('[data-testid="todo-lifecycle-script-error-tooltip-todo-a-init"]')
+      expect(tooltip).not.toBeNull()
+      expect(tooltip.style.left).toBe('200px')
+      expect(tooltip.style.top).toBe('142px')
+    } finally {
+      rectSpy.mockRestore()
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalInnerWidth })
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInnerHeight })
+    }
+  })
+
   it('uses terminal iconography for task and project terminal creation controls', async () => {
     const wrapper = mountInProgressSidebar()
 
@@ -2389,5 +2514,40 @@ function mountInProgressSidebar(options = {}) {
       ],
       ...(options.props || {})
     }
+  })
+}
+
+function failedLifecycleScriptStatus(overrides = {}) {
+  return {
+    todoId: 'todo-a',
+    phase: 'init',
+    status: 'failed',
+    outputTail: 'failure output',
+    message: 'exit status 1',
+    runId: 1,
+    scopeEpoch: 1,
+    ...overrides
+  }
+}
+
+function elementRect({ left, top, width, height }) {
+  return {
+    x: left,
+    y: top,
+    left,
+    top,
+    right: left + width,
+    bottom: top + height,
+    width,
+    height,
+    toJSON: () => {}
+  }
+}
+
+function mockElementRects(rectsByTestId, onMeasure = () => {}) {
+  return vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function getBoundingClientRect() {
+    const testId = this.getAttribute('data-testid')
+    onMeasure(testId, this.style.visibility)
+    return rectsByTestId[testId] || elementRect({ left: 0, top: 0, width: 0, height: 0 })
   })
 }

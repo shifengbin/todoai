@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   Archive,
   Check,
@@ -82,6 +82,14 @@ const props = defineProps({
   lifecycleScriptStatuses: {
     type: Array,
     default: () => []
+  },
+  lifecycleScriptErrorOutputs: {
+    type: Object,
+    default: () => ({})
+  },
+  lifecycleScriptErrorScope: {
+    type: String,
+    default: ''
   }
 })
 
@@ -99,6 +107,8 @@ const emit = defineEmits([
   'change-todo-status',
   'complete-todo',
   'retry-todo-lifecycle-script',
+  'request-todo-lifecycle-script-error',
+  'copy-todo-lifecycle-script-error',
   'copy-todo-description',
   'delete-todo',
   'delete-completed-todos',
@@ -129,14 +139,22 @@ const completedTodoMenuId = ref('')
 const hoveredTodoId = ref('')
 const visibleDescriptionTooltipTodoId = ref('')
 const descriptionTooltipPosition = ref({ x: 0, y: 0 })
+const hoveredLifecycleErrorKey = ref('')
+const visibleLifecycleErrorKey = ref('')
+const lifecycleErrorTooltipPosition = ref(null)
 const launchMenuPlacement = ref('down')
 const launchMenuMaxHeight = ref('')
 const launchMenuFixedStyle = ref({})
 
 const descriptionTooltipLayer = createTodoDescriptionTooltipLayer()
 let descriptionTooltipTimer = null
+let lifecycleErrorTooltipTimer = null
+let lifecycleErrorTooltipHideTimer = null
+let lifecycleErrorTooltipTrigger = null
 const descriptionTooltipDelayMs = 600
 const descriptionTooltipOffset = 12
+const lifecycleErrorTooltipDelayMs = 600
+const lifecycleErrorTooltipOffset = 12
 const launchMenuBorderHeight = 2
 const launchMenuGap = 4
 const launchMenuMinimumHeight = 32
@@ -324,7 +342,120 @@ function lifecycleScriptStatusMessage(status) {
 }
 
 function retryLifecycleScript(todoId, phase) {
+  hideLifecycleErrorTooltip()
   emit('retry-todo-lifecycle-script', todoId, phase)
+}
+
+function lifecycleScriptErrorKey(status) {
+  const runIdentity = status.runId || `${status.startedAt || ''}:${status.finishedAt || ''}`
+  return `${status.scopeEpoch || 0}:${status.todoId}:${status.phase}:${runIdentity}`
+}
+
+function lifecycleScriptErrorOutput(status) {
+  return props.lifecycleScriptErrorOutputs[lifecycleScriptErrorKey(status)] || ''
+}
+
+function clearLifecycleErrorTooltipTimer() {
+  if (lifecycleErrorTooltipTimer !== null) {
+    clearTimeout(lifecycleErrorTooltipTimer)
+    lifecycleErrorTooltipTimer = null
+  }
+}
+
+function clearLifecycleErrorTooltipHideTimer() {
+  if (lifecycleErrorTooltipHideTimer !== null) {
+    clearTimeout(lifecycleErrorTooltipHideTimer)
+    lifecycleErrorTooltipHideTimer = null
+  }
+}
+
+function lifecycleErrorTooltipStyle() {
+  if (!lifecycleErrorTooltipPosition.value) {
+    return { visibility: 'hidden' }
+  }
+  return {
+    left: `${lifecycleErrorTooltipPosition.value.x}px`,
+    top: `${lifecycleErrorTooltipPosition.value.y}px`
+  }
+}
+
+function calculateLifecycleErrorTooltipPosition(triggerRect, tooltipRect) {
+  const viewportWidth = window.innerWidth || 1024
+  const viewportHeight = window.innerHeight || 768
+  const tooltipWidth = tooltipRect.width
+  const tooltipHeight = tooltipRect.height
+  const maxLeft = Math.max(lifecycleErrorTooltipOffset, viewportWidth - tooltipWidth - lifecycleErrorTooltipOffset)
+  const maxTop = Math.max(lifecycleErrorTooltipOffset, viewportHeight - tooltipHeight - lifecycleErrorTooltipOffset)
+  const belowTop = triggerRect.bottom + lifecycleErrorTooltipOffset
+  const aboveTop = triggerRect.top - tooltipHeight - lifecycleErrorTooltipOffset
+  const desiredTop = belowTop + tooltipHeight <= viewportHeight - lifecycleErrorTooltipOffset
+    ? belowTop
+    : aboveTop
+  return {
+    x: clampNumber(triggerRect.left, lifecycleErrorTooltipOffset, maxLeft),
+    y: clampNumber(desiredTop, lifecycleErrorTooltipOffset, maxTop)
+  }
+}
+
+async function updateLifecycleErrorTooltipPosition(key) {
+  await nextTick()
+  if (visibleLifecycleErrorKey.value !== key || !lifecycleErrorTooltipTrigger) {
+    return
+  }
+  const tooltip = descriptionTooltipLayer.querySelector('.todo-lifecycle-error-tooltip')
+  if (!tooltip) {
+    return
+  }
+  lifecycleErrorTooltipPosition.value = calculateLifecycleErrorTooltipPosition(
+    lifecycleErrorTooltipTrigger.getBoundingClientRect(),
+    tooltip.getBoundingClientRect()
+  )
+}
+
+function startLifecycleErrorTooltip(status, event) {
+  hideLifecycleErrorTooltip()
+  if (status.status !== 'failed') {
+    return
+  }
+  const key = lifecycleScriptErrorKey(status)
+  hoveredLifecycleErrorKey.value = key
+  lifecycleErrorTooltipTrigger = event?.currentTarget || null
+  lifecycleErrorTooltipPosition.value = null
+  lifecycleErrorTooltipTimer = setTimeout(() => {
+    lifecycleErrorTooltipTimer = null
+    if (hoveredLifecycleErrorKey.value !== key) {
+      return
+    }
+    visibleLifecycleErrorKey.value = key
+    emit('request-todo-lifecycle-script-error', status.todoId, status.phase)
+  }, lifecycleErrorTooltipDelayMs)
+}
+
+function scheduleHideLifecycleErrorTooltip() {
+  clearLifecycleErrorTooltipTimer()
+  clearLifecycleErrorTooltipHideTimer()
+  lifecycleErrorTooltipHideTimer = setTimeout(hideLifecycleErrorTooltip, 100)
+}
+
+function keepLifecycleErrorTooltipVisible() {
+  clearLifecycleErrorTooltipHideTimer()
+}
+
+function hideLifecycleErrorTooltip() {
+  clearLifecycleErrorTooltipTimer()
+  clearLifecycleErrorTooltipHideTimer()
+  hoveredLifecycleErrorKey.value = ''
+  visibleLifecycleErrorKey.value = ''
+  lifecycleErrorTooltipTrigger = null
+  lifecycleErrorTooltipPosition.value = null
+}
+
+function isLifecycleErrorTooltipVisible(status) {
+  return (
+    status.status === 'failed' &&
+    visibleLifecycleErrorKey.value === lifecycleScriptErrorKey(status) &&
+    Boolean(lifecycleScriptErrorOutput(status))
+  )
 }
 
 function hasTodoProjectTerminals(todoProjectId) {
@@ -769,6 +900,7 @@ function confirmBulkCompletedTodoDeletion() {
 
 function closeFloatingMenus() {
   hideTodoDescriptionTooltip()
+  hideLifecycleErrorTooltip()
   closeTerminalLaunchMenu()
   closeTodoProjectRemovePopover()
   closeTodoActionPopover()
@@ -1181,6 +1313,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   hideTodoDescriptionTooltip()
+  hideLifecycleErrorTooltip()
   descriptionTooltipLayer.remove()
   window.removeEventListener('click', closeFloatingMenus)
   window.removeEventListener('resize', closeTerminalLaunchMenu)
@@ -1209,6 +1342,38 @@ watch(
     }
   },
   { deep: true }
+)
+
+watch(
+  () => props.lifecycleScriptStatuses,
+  (statuses) => {
+    const activeKey = visibleLifecycleErrorKey.value || hoveredLifecycleErrorKey.value
+    if (!activeKey) {
+      return
+    }
+    const remainsFailed = statuses.some((status) => (
+      status.status === 'failed' && lifecycleScriptErrorKey(status) === activeKey
+    ))
+    if (!remainsFailed) {
+      hideLifecycleErrorTooltip()
+    }
+  }
+)
+
+watch(
+  () => props.lifecycleScriptErrorScope,
+  () => hideLifecycleErrorTooltip()
+)
+
+watch(
+  () => props.lifecycleScriptErrorOutputs[visibleLifecycleErrorKey.value] || '',
+  (output) => {
+    const key = visibleLifecycleErrorKey.value
+    lifecycleErrorTooltipPosition.value = null
+    if (key && output) {
+      void updateLifecycleErrorTooltipPosition(key)
+    }
+  }
 )
 
 function isOpenTodoStatus(status) {
@@ -1658,10 +1823,12 @@ watch(
           >
             <div
               v-for="status in lifecycleStatusesForTodo(todo)"
-              :key="`${status.todoId}-${status.phase}`"
+              :key="lifecycleScriptErrorKey(status)"
               class="todo-lifecycle-status"
               :class="`todo-lifecycle-status-${status.status}`"
               :data-testid="`todo-lifecycle-script-status-${todo.id}-${status.phase}`"
+              @mouseenter="startLifecycleErrorTooltip(status, $event)"
+              @mouseleave="scheduleHideLifecycleErrorTooltip"
             >
               <span class="terminal-activity" :class="status.status === 'failed' ? 'needs-ack' : 'busy'">
                 <TriangleAlert v-if="status.status === 'failed'" :size="13" aria-hidden="true" />
@@ -1680,6 +1847,28 @@ watch(
               >
                 Retry
               </button>
+              <button
+                v-if="status.status === 'failed'"
+                type="button"
+                class="todo-lifecycle-copy-button"
+                :data-testid="`copy-todo-lifecycle-script-error-${todo.id}-${status.phase}`"
+                aria-label="Copy lifecycle script error"
+                title="Copy lifecycle script error"
+                @click.stop="emit('copy-todo-lifecycle-script-error', todo.id, status.phase)"
+              >
+                <Copy :size="14" aria-hidden="true" />
+              </button>
+              <Teleport :to="descriptionTooltipLayer">
+                <pre
+                  v-if="isLifecycleErrorTooltipVisible(status)"
+                  class="todo-lifecycle-error-tooltip"
+                  :style="lifecycleErrorTooltipStyle()"
+                  :data-testid="`todo-lifecycle-script-error-tooltip-${todo.id}-${status.phase}`"
+                  role="tooltip"
+                  @mouseenter="keepLifecycleErrorTooltipVisible"
+                  @mouseleave="scheduleHideLifecycleErrorTooltip"
+                >{{ lifecycleScriptErrorOutput(status) }}</pre>
+              </Teleport>
             </div>
           </div>
 

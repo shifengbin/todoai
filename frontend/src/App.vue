@@ -31,6 +31,7 @@ import {
   GetCompletedTodoProjectMergeStatuses,
   GetProjectGitStatus,
   GetTodoGitStatus,
+  GetTodoLifecycleScriptErrorOutput,
   GetTodoProjectGitStatus,
   ImportProjectsFromParentDirectoryDialog,
   InitializeGitRepositoryAndImportProject,
@@ -70,6 +71,8 @@ const todos = ref([])
 const todoProjects = ref([])
 const projectBranchPreferences = ref({})
 const lifecycleScriptStatuses = ref([])
+const lifecycleScriptScopeEpoch = ref(0)
+const lifecycleScriptErrorOutputs = ref({})
 const terminals = ref([])
 const currentWorkspace = ref(null)
 const recentWorkspaces = ref([])
@@ -90,6 +93,7 @@ let gitStatusInFlightContextKey = ''
 let gitStatusInFlightRequestId = 0
 const todoProjectGitBranches = reactive({})
 const todoProjectGitStatusInFlight = new Map()
+const lifecycleScriptErrorOutputRequests = new Map()
 let todoProjectGitStatusRequestId = 0
 let completedMergeStatusRequestGeneration = 0
 let lastFocusGitRefreshContextKey = ''
@@ -268,6 +272,7 @@ const activeProject = computed(() => {
 const activeProjectPath = computed(() => activeProject.value?.path || '')
 
 const hasWorkspace = computed(() => Boolean(currentWorkspace.value?.path))
+const lifecycleScriptErrorScope = computed(() => `${currentWorkspace.value?.path || ''}:${lifecycleScriptScopeEpoch.value}`)
 
 const modalOverlayVisible = computed(() => Boolean(
   todoForm.visible ||
@@ -625,6 +630,8 @@ onBeforeUnmount(() => {
 
 function applyState(state, options = {}) {
   const previousGitStatusContextKey = activeGitStatusContextKey()
+  const previousWorkspacePath = currentWorkspace.value?.path || ''
+  const previousLifecycleScriptScopeEpoch = lifecycleScriptScopeEpoch.value
   const previousTerminals = new Map(terminals.value.map((terminal) => [terminal.id, terminal]))
   currentWorkspace.value = state?.currentWorkspace || null
   recentWorkspaces.value = state?.recentWorkspaces || []
@@ -632,7 +639,16 @@ function applyState(state, options = {}) {
   todos.value = state?.todos || []
   todoProjects.value = state?.todoProjects || []
   projectBranchPreferences.value = state?.projectBranchPreferences || {}
+  lifecycleScriptScopeEpoch.value = state?.lifecycleScriptScopeEpoch || 0
   lifecycleScriptStatuses.value = state?.lifecycleScriptStatuses || []
+  if (
+    previousWorkspacePath !== (currentWorkspace.value?.path || '') ||
+    previousLifecycleScriptScopeEpoch !== lifecycleScriptScopeEpoch.value
+  ) {
+    clearLifecycleScriptErrorOutputs()
+  } else {
+    reconcileLifecycleScriptErrorOutputs()
+  }
   importSummary.value = state?.importSummary || null
   const nextTerminals = (state?.terminals || []).map((terminal) => {
     const previous = previousTerminals.get(terminal.id)
@@ -687,6 +703,9 @@ function handleTodoLifecycleScriptStatus(status) {
   if (!status?.todoId || !status?.phase) {
     return
   }
+  if (status.scopeEpoch !== undefined && status.scopeEpoch !== lifecycleScriptScopeEpoch.value) {
+    return
+  }
   const nextStatuses = lifecycleScriptStatuses.value.filter(
     (candidate) => candidate.todoId !== status.todoId || candidate.phase !== status.phase
   )
@@ -694,6 +713,112 @@ function handleTodoLifecycleScriptStatus(status) {
     nextStatuses.push(status)
   }
   lifecycleScriptStatuses.value = nextStatuses
+  reconcileLifecycleScriptErrorOutputs()
+}
+
+function lifecycleScriptStatusIdentity(status) {
+  const runIdentity = status.runId || `${status.startedAt || ''}:${status.finishedAt || ''}`
+  return `${status.scopeEpoch || 0}:${status.todoId}:${status.phase}:${runIdentity}`
+}
+
+function failedLifecycleScriptStatus(todoId, phase) {
+  return lifecycleScriptStatuses.value.find((status) => (
+    status.todoId === todoId && status.phase === phase && status.status === 'failed'
+  ))
+}
+
+function invalidateLifecycleScriptErrorOutput(identity) {
+  if (!identity) {
+    return
+  }
+  if (Object.prototype.hasOwnProperty.call(lifecycleScriptErrorOutputs.value, identity)) {
+    const nextOutputs = { ...lifecycleScriptErrorOutputs.value }
+    delete nextOutputs[identity]
+    lifecycleScriptErrorOutputs.value = nextOutputs
+  }
+  lifecycleScriptErrorOutputRequests.delete(identity)
+}
+
+function clearLifecycleScriptErrorOutputs() {
+  lifecycleScriptErrorOutputs.value = {}
+  lifecycleScriptErrorOutputRequests.clear()
+}
+
+function reconcileLifecycleScriptErrorOutputs() {
+  const failedKeys = new Set(
+    lifecycleScriptStatuses.value
+      .filter((status) => status.status === 'failed')
+      .map((status) => lifecycleScriptStatusIdentity(status))
+  )
+  const knownKeys = new Set([
+    ...Object.keys(lifecycleScriptErrorOutputs.value),
+    ...lifecycleScriptErrorOutputRequests.keys()
+  ])
+  for (const identity of knownKeys) {
+    if (!failedKeys.has(identity)) {
+      invalidateLifecycleScriptErrorOutput(identity)
+    }
+  }
+}
+
+async function loadTodoLifecycleScriptErrorOutput(todoId, phase) {
+  const status = failedLifecycleScriptStatus(todoId, phase)
+  if (!status) {
+    return { identity: '', output: '' }
+  }
+  const identity = lifecycleScriptStatusIdentity(status)
+  if (Object.prototype.hasOwnProperty.call(lifecycleScriptErrorOutputs.value, identity)) {
+    return { identity, output: lifecycleScriptErrorOutputs.value[identity] }
+  }
+  const pending = lifecycleScriptErrorOutputRequests.get(identity)
+  if (pending) {
+    return pending
+  }
+  const request = GetTodoLifecycleScriptErrorOutput(todoId, phase)
+    .then((output) => {
+      const currentStatus = failedLifecycleScriptStatus(todoId, phase)
+      if (!currentStatus || lifecycleScriptStatusIdentity(currentStatus) !== identity) {
+        return { identity: '', output: '' }
+      }
+      lifecycleScriptErrorOutputs.value = {
+        ...lifecycleScriptErrorOutputs.value,
+        [identity]: output
+      }
+      return { identity, output }
+    })
+    .finally(() => {
+      if (lifecycleScriptErrorOutputRequests.get(identity) === request) {
+        lifecycleScriptErrorOutputRequests.delete(identity)
+      }
+    })
+  lifecycleScriptErrorOutputRequests.set(identity, request)
+  return request
+}
+
+async function requestTodoLifecycleScriptErrorOutput(todoId, phase) {
+  try {
+    await loadTodoLifecycleScriptErrorOutput(todoId, phase)
+  } catch (error) {
+    if (failedLifecycleScriptStatus(todoId, phase)) {
+      showError(error)
+    }
+  }
+}
+
+async function copyTodoLifecycleScriptErrorOutput(todoId, phase) {
+  try {
+    const result = await loadTodoLifecycleScriptErrorOutput(todoId, phase)
+    const currentStatus = failedLifecycleScriptStatus(todoId, phase)
+    if (!currentStatus || lifecycleScriptStatusIdentity(currentStatus) !== result.identity) {
+      return
+    }
+    const copied = await ClipboardSetText(result.output)
+    if (copied === false) {
+      throw new Error('Unable to copy lifecycle script error')
+    }
+  } catch (error) {
+    showError(error)
+  }
 }
 
 async function applyWorkspaceProjectState(state, options = {}) {
@@ -1225,10 +1350,22 @@ async function completeTodo(todoId) {
 }
 
 async function retryTodoLifecycleScript(todoId, phase) {
+  const failedStatus = failedLifecycleScriptStatus(todoId, phase)
+  if (failedStatus) {
+    handleTodoLifecycleScriptStatus({
+      ...failedStatus,
+      status: 'running',
+      outputTail: '',
+      message: ''
+    })
+  }
   try {
     applyState(await RetryTodoLifecycleScript(todoId, phase))
     await activateActiveTerminal()
   } catch (error) {
+    if (failedStatus) {
+      handleTodoLifecycleScriptStatus(failedStatus)
+    }
     showError(error)
   }
 }
@@ -3276,6 +3413,8 @@ function clearToastTimer() {
       :todo-view="currentTodoView"
       :completed-merge-statuses="completedMergeStatuses"
       :lifecycle-script-statuses="lifecycleScriptStatuses"
+      :lifecycle-script-error-outputs="lifecycleScriptErrorOutputs"
+      :lifecycle-script-error-scope="lifecycleScriptErrorScope"
       @create-project="createProject"
       @import-projects="importProjectsFromParentDirectory"
       @select-project="selectProject"
@@ -3288,6 +3427,8 @@ function clearToastTimer() {
       @change-todo-status="changeTodoStatus"
       @complete-todo="completeTodo"
       @retry-todo-lifecycle-script="retryTodoLifecycleScript"
+      @request-todo-lifecycle-script-error="requestTodoLifecycleScriptErrorOutput"
+      @copy-todo-lifecycle-script-error="copyTodoLifecycleScriptErrorOutput"
       @copy-todo-description="copyTodoDescription"
       @delete-todo="deleteTodo"
       @delete-completed-todos="deleteCompletedTodos"

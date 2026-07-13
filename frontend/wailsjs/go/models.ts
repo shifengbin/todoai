@@ -312,6 +312,8 @@ export namespace main {
 	    exitCode?: number;
 	    outputTail?: string;
 	    message?: string;
+	    runId: number;
+	    scopeEpoch: number;
 
 	    static createFrom(source: any = {}) {
 	        return new TodoLifecycleScriptStatus(source);
@@ -328,6 +330,8 @@ export namespace main {
 	        this.exitCode = source["exitCode"];
 	        this.outputTail = source["outputTail"];
 	        this.message = source["message"];
+	        this.runId = source["runId"];
+	        this.scopeEpoch = source["scopeEpoch"];
 	    }
 	}
 	export class ProjectTerminal {
@@ -514,6 +518,7 @@ export namespace main {
 	    terminals?: ProjectTerminal[];
 	    activeTerminalId?: string;
 	    lifecycleScriptStatuses?: TodoLifecycleScriptStatus[];
+	    lifecycleScriptScopeEpoch: number;
 	    importSummary?: ProjectImportSummary;
 
 	    static createFrom(source: any = {}) {
@@ -535,6 +540,7 @@ export namespace main {
 	        this.terminals = this.convertValues(source["terminals"], ProjectTerminal);
 	        this.activeTerminalId = source["activeTerminalId"];
 	        this.lifecycleScriptStatuses = this.convertValues(source["lifecycleScriptStatuses"], TodoLifecycleScriptStatus);
+	        this.lifecycleScriptScopeEpoch = source["lifecycleScriptScopeEpoch"];
 	        this.importSummary = this.convertValues(source["importSummary"], ProjectImportSummary);
 	    }
 

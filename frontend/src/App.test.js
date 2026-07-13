@@ -25,6 +25,7 @@ import {
   GetCompletedTodoProjectMergeStatuses,
   GetProjectGitStatus,
   GetTodoGitStatus,
+  GetTodoLifecycleScriptErrorOutput,
   GetTodoProjectGitStatus,
   ImportProjectsFromParentDirectoryDialog,
   InitializeGitRepositoryAndImportProject,
@@ -79,6 +80,7 @@ const appApiMock = vi.hoisted(() => ({
   GetCompletedTodoProjectMergeStatuses: vi.fn(),
   GetProjectGitStatus: vi.fn(),
   GetTodoGitStatus: vi.fn(),
+  GetTodoLifecycleScriptErrorOutput: vi.fn(),
   GetTodoProjectGitStatus: vi.fn(),
   ImportProjectsFromParentDirectoryDialog: vi.fn(),
   InitializeGitRepositoryAndImportProject: vi.fn(),
@@ -278,6 +280,7 @@ describe('App project terminal tree', () => {
     appApiMock.ClearRecentWorkspaces.mockResolvedValue(workspaceState({ recentWorkspaces: [] }))
     appApiMock.GetProjectGitStatus.mockResolvedValue(gitStatus())
     appApiMock.GetTodoGitStatus.mockResolvedValue(gitStatus({ projectId: '', isRepo: false, branch: '' }))
+    appApiMock.GetTodoLifecycleScriptErrorOutput.mockReset().mockResolvedValue('')
     appApiMock.GetTodoProjectGitStatus.mockResolvedValue(gitStatus())
     appApiMock.CreateProjectFromDialog.mockResolvedValue(projectImportResult(projectState()))
     appApiMock.InitializeGitRepositoryAndImportProject.mockResolvedValue(projectState())
@@ -5621,6 +5624,382 @@ describe('App project terminal tree', () => {
     expect(wrapper.find('[data-testid="retry-todo-lifecycle-script-todo-a-complete"]').exists()).toBe(false)
   })
 
+  it('shows an accessible error copy action next to Retry only for failed lifecycle scripts', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      inProgressProjectState({
+        lifecycleScriptStatuses: [
+          lifecycleScriptStatus({ phase: 'init', status: 'failed', outputTail: 'setup failed', exitCode: 1 })
+        ]
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+
+    const retryButton = wrapper.find('[data-testid="retry-todo-lifecycle-script-todo-a-init"]')
+    const copyButton = wrapper.find('[data-testid="copy-todo-lifecycle-script-error-todo-a-init"]')
+    expect(retryButton.exists()).toBe(true)
+    expect(copyButton.exists()).toBe(true)
+    expect(copyButton.element.previousElementSibling).toBe(retryButton.element)
+    expect(copyButton.attributes('aria-label')).toContain('Copy lifecycle script error')
+    expect(copyButton.attributes('title')).toContain('Copy lifecycle script error')
+
+    runtimeMock.handlers['todo-lifecycle-script-status'](
+      lifecycleScriptStatus({ phase: 'init', status: 'running', outputTail: '', exitCode: 0 })
+    )
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="copy-todo-lifecycle-script-error-todo-a-init"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="retry-todo-lifecycle-script-todo-a-init"]').exists()).toBe(false)
+  })
+
+  it('loads and copies the complete multiline lifecycle failure output without truncating it', async () => {
+    const completeOutput = `first complete-script line\n${'x'.repeat(5000)}\nlast complete-script line\n`
+    appApiMock.GetTodoLifecycleScriptErrorOutput.mockResolvedValue(completeOutput)
+    appApiMock.ListProjects.mockResolvedValue(
+      inProgressProjectState({
+        lifecycleScriptStatuses: [
+          lifecycleScriptStatus({ phase: 'complete', status: 'failed', outputTail: completeOutput.slice(-4096), exitCode: 2 })
+        ]
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+    expect(GetTodoLifecycleScriptErrorOutput).not.toHaveBeenCalled()
+
+    await wrapper.find('[data-testid="copy-todo-lifecycle-script-error-todo-a-complete"]').trigger('click')
+    await flushPromises()
+
+    expect(GetTodoLifecycleScriptErrorOutput).toHaveBeenCalledTimes(1)
+    expect(GetTodoLifecycleScriptErrorOutput).toHaveBeenCalledWith('todo-a', 'complete')
+    expect(ClipboardSetText).toHaveBeenCalledWith(completeOutput)
+    expect(ClipboardSetText.mock.calls[0][0].length).toBeGreaterThan(4096)
+  })
+
+  it('copies the backend error message verbatim when a lifecycle failure has no process output', async () => {
+    const fallbackMessage = 'fork/exec /missing/tool: no such file or directory'
+    appApiMock.GetTodoLifecycleScriptErrorOutput.mockResolvedValue(fallbackMessage)
+    appApiMock.ListProjects.mockResolvedValue(
+      inProgressProjectState({
+        lifecycleScriptStatuses: [
+          lifecycleScriptStatus({ phase: 'init', status: 'failed', outputTail: '', message: fallbackMessage, exitCode: -1 })
+        ]
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+    await wrapper.find('[data-testid="copy-todo-lifecycle-script-error-todo-a-init"]').trigger('click')
+    await flushPromises()
+
+    expect(GetTodoLifecycleScriptErrorOutput).toHaveBeenCalledWith('todo-a', 'init')
+    expect(ClipboardSetText).toHaveBeenCalledWith(fallbackMessage)
+  })
+
+  it('reports lifecycle failure copy errors through the global error message', async () => {
+    appApiMock.GetTodoLifecycleScriptErrorOutput.mockResolvedValue('complete script failed\nfull output')
+    runtimeMock.ClipboardSetText.mockRejectedValueOnce(new Error('clipboard unavailable'))
+    appApiMock.ListProjects.mockResolvedValue(
+      inProgressProjectState({
+        lifecycleScriptStatuses: [
+          lifecycleScriptStatus({ phase: 'complete', status: 'failed', outputTail: 'full output', exitCode: 2 })
+        ]
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+    await wrapper.find('[data-testid="copy-todo-lifecycle-script-error-todo-a-complete"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.status-error').text()).toContain('clipboard unavailable')
+  })
+
+  it('loads and shows complete multiline lifecycle output after the 600ms failure hover delay', async () => {
+    vi.useFakeTimers()
+    try {
+      const completeOutput = `init output starts here\n${'详细日志'.repeat(1200)}\ninit output ends here`
+      appApiMock.GetTodoLifecycleScriptErrorOutput.mockResolvedValue(completeOutput)
+      appApiMock.ListProjects.mockResolvedValue(
+        inProgressProjectState({
+          lifecycleScriptStatuses: [
+            lifecycleScriptStatus({ phase: 'init', status: 'failed', outputTail: completeOutput.slice(-4096), exitCode: 1 })
+          ]
+        })
+      )
+      const wrapper = await mountReadyApp()
+
+      await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+      const failedStatus = wrapper.find('[data-testid="todo-lifecycle-script-status-todo-a-init"]')
+      await failedStatus.trigger('mouseenter')
+
+      vi.advanceTimersByTime(599)
+      await flushPromises()
+      expect(GetTodoLifecycleScriptErrorOutput).not.toHaveBeenCalled()
+      expect(document.body.querySelector('[data-testid="todo-lifecycle-script-error-tooltip-todo-a-init"]')).toBeNull()
+
+      vi.advanceTimersByTime(1)
+      await flushPromises()
+
+      expect(GetTodoLifecycleScriptErrorOutput).toHaveBeenCalledWith('todo-a', 'init')
+      const tooltip = document.body.querySelector('[data-testid="todo-lifecycle-script-error-tooltip-todo-a-init"]')
+      expect(tooltip).not.toBeNull()
+      expect(tooltip.getAttribute('role')).toBe('tooltip')
+      expect(tooltip.textContent).toBe(completeOutput)
+      expect(tooltip.textContent).toContain('\n')
+      expect(tooltip.textContent).toContain('init output starts here')
+      expect(tooltip.textContent).toContain('init output ends here')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('clears the visible and cached lifecycle failure output on Retry', async () => {
+    vi.useFakeTimers()
+    try {
+      appApiMock.GetTodoLifecycleScriptErrorOutput
+        .mockResolvedValueOnce('obsolete complete failure output')
+        .mockResolvedValueOnce('replacement complete failure output')
+      appApiMock.ListProjects.mockResolvedValue(
+        inProgressProjectState({
+          lifecycleScriptStatuses: [
+            lifecycleScriptStatus({ phase: 'complete', status: 'failed', outputTail: 'obsolete output', exitCode: 2 })
+          ]
+        })
+      )
+      appApiMock.RetryTodoLifecycleScript.mockResolvedValue(
+        inProgressProjectState({
+          lifecycleScriptStatuses: [
+            lifecycleScriptStatus({ phase: 'complete', status: 'running', outputTail: '', exitCode: 0 })
+          ]
+        })
+      )
+      const wrapper = await mountReadyApp()
+
+      await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+      await wrapper.find('[data-testid="todo-lifecycle-script-status-todo-a-complete"]').trigger('mouseenter')
+      vi.advanceTimersByTime(600)
+      await flushPromises()
+      expect(document.body.querySelector('[data-testid="todo-lifecycle-script-error-tooltip-todo-a-complete"]')?.textContent)
+        .toBe('obsolete complete failure output')
+
+      await wrapper.find('[data-testid="retry-todo-lifecycle-script-todo-a-complete"]').trigger('click')
+      await flushPromises()
+
+      expect(document.body.querySelector('[data-testid="todo-lifecycle-script-error-tooltip-todo-a-complete"]')).toBeNull()
+      expect(wrapper.find('[data-testid="copy-todo-lifecycle-script-error-todo-a-complete"]').exists()).toBe(false)
+
+      runtimeMock.handlers['todo-lifecycle-script-status'](
+        lifecycleScriptStatus({ phase: 'complete', status: 'failed', outputTail: 'replacement output', exitCode: 3 })
+      )
+      await nextTick()
+      await wrapper.find('[data-testid="todo-lifecycle-script-status-todo-a-complete"]').trigger('mouseenter')
+      vi.advanceTimersByTime(600)
+      await flushPromises()
+
+      expect(GetTodoLifecycleScriptErrorOutput).toHaveBeenCalledTimes(2)
+      expect(document.body.querySelector('[data-testid="todo-lifecycle-script-error-tooltip-todo-a-complete"]')?.textContent)
+        .toBe('replacement complete failure output')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('ignores a late lifecycle error response after the status is no longer failed', async () => {
+    vi.useFakeTimers()
+    try {
+      const errorOutputRequest = deferred()
+      appApiMock.GetTodoLifecycleScriptErrorOutput.mockReturnValue(errorOutputRequest.promise)
+      appApiMock.ListProjects.mockResolvedValue(
+        inProgressProjectState({
+          lifecycleScriptStatuses: [
+            lifecycleScriptStatus({ phase: 'init', status: 'failed', outputTail: 'old init output', exitCode: 1 })
+          ]
+        })
+      )
+      const wrapper = await mountReadyApp()
+
+      await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+      await wrapper.find('[data-testid="todo-lifecycle-script-status-todo-a-init"]').trigger('mouseenter')
+      vi.advanceTimersByTime(600)
+      await flushPromises()
+      expect(GetTodoLifecycleScriptErrorOutput).toHaveBeenCalledWith('todo-a', 'init')
+
+      runtimeMock.handlers['todo-lifecycle-script-status'](
+        lifecycleScriptStatus({ phase: 'init', status: 'running', outputTail: '', exitCode: 0 })
+      )
+      await nextTick()
+      errorOutputRequest.resolve('late obsolete init output')
+      await flushPromises()
+
+      expect(document.body.querySelector('[data-testid="todo-lifecycle-script-error-tooltip-todo-a-init"]')).toBeNull()
+      expect(wrapper.find('[data-testid="copy-todo-lifecycle-script-error-todo-a-init"]').exists()).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('ignores an earlier failed run response after a newer failed run replaces it', async () => {
+    vi.useFakeTimers()
+    try {
+      const oldRequest = deferred()
+      appApiMock.GetTodoLifecycleScriptErrorOutput
+        .mockReturnValueOnce(oldRequest.promise)
+        .mockResolvedValueOnce('new run output')
+      appApiMock.ListProjects.mockResolvedValue(
+        inProgressProjectState({
+          lifecycleScriptScopeEpoch: 1,
+          lifecycleScriptStatuses: [
+            lifecycleScriptStatus({ phase: 'init', status: 'failed', runId: 1, scopeEpoch: 1, outputTail: 'old output' })
+          ]
+        })
+      )
+      const wrapper = await mountReadyApp()
+
+      await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+      await wrapper.find('[data-testid="todo-lifecycle-script-status-todo-a-init"]').trigger('mouseenter')
+      vi.advanceTimersByTime(600)
+      await flushPromises()
+
+      runtimeMock.handlers['todo-lifecycle-script-status'](
+        lifecycleScriptStatus({ phase: 'init', status: 'failed', runId: 2, scopeEpoch: 1, outputTail: 'new output' })
+      )
+      await nextTick()
+      oldRequest.resolve('old run output')
+      await flushPromises()
+      expect(document.body.querySelector('[data-testid="todo-lifecycle-script-error-tooltip-todo-a-init"]')).toBeNull()
+
+      await wrapper.find('[data-testid="todo-lifecycle-script-status-todo-a-init"]').trigger('mouseenter')
+      vi.advanceTimersByTime(600)
+      await flushPromises()
+      expect(GetTodoLifecycleScriptErrorOutput).toHaveBeenCalledTimes(2)
+      expect(document.body.querySelector('[data-testid="todo-lifecycle-script-error-tooltip-todo-a-init"]')?.textContent)
+        .toBe('new run output')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('invalidates cached lifecycle output immediately while Retry is pending', async () => {
+    vi.useFakeTimers()
+    try {
+      const retryRequest = deferred()
+      appApiMock.GetTodoLifecycleScriptErrorOutput.mockResolvedValue('old cached output')
+      appApiMock.RetryTodoLifecycleScript.mockReturnValue(retryRequest.promise)
+      appApiMock.ListProjects.mockResolvedValue(
+        inProgressProjectState({
+          lifecycleScriptScopeEpoch: 1,
+          lifecycleScriptStatuses: [
+            lifecycleScriptStatus({ phase: 'complete', status: 'failed', runId: 1, scopeEpoch: 1, outputTail: 'old output' })
+          ]
+        })
+      )
+      const wrapper = await mountReadyApp()
+
+      await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+      const failedStatus = wrapper.find('[data-testid="todo-lifecycle-script-status-todo-a-complete"]')
+      await failedStatus.trigger('mouseenter')
+      vi.advanceTimersByTime(600)
+      await flushPromises()
+      expect(document.body.querySelector('[data-testid="todo-lifecycle-script-error-tooltip-todo-a-complete"]')?.textContent)
+        .toBe('old cached output')
+
+      await wrapper.find('[data-testid="retry-todo-lifecycle-script-todo-a-complete"]').trigger('click')
+      await nextTick()
+      await wrapper.find('[data-testid="todo-lifecycle-script-status-todo-a-complete"]').trigger('mouseenter')
+      vi.advanceTimersByTime(600)
+      await flushPromises()
+
+      expect(GetTodoLifecycleScriptErrorOutput).toHaveBeenCalledTimes(1)
+      expect(document.body.querySelector('[data-testid="todo-lifecycle-script-error-tooltip-todo-a-complete"]')).toBeNull()
+
+      retryRequest.resolve(
+        inProgressProjectState({
+          lifecycleScriptScopeEpoch: 1,
+          lifecycleScriptStatuses: [
+            lifecycleScriptStatus({ phase: 'complete', status: 'running', runId: 2, scopeEpoch: 1 })
+          ]
+        })
+      )
+      await flushPromises()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reports a false clipboard result when copying lifecycle output', async () => {
+    appApiMock.GetTodoLifecycleScriptErrorOutput.mockResolvedValue('failure output')
+    runtimeMock.ClipboardSetText.mockResolvedValueOnce(false)
+    appApiMock.ListProjects.mockResolvedValue(
+      inProgressProjectState({
+        lifecycleScriptStatuses: [
+          lifecycleScriptStatus({ phase: 'init', status: 'failed', outputTail: 'failure output' })
+        ]
+      })
+    )
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+    await wrapper.find('[data-testid="copy-todo-lifecycle-script-error-todo-a-init"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.status-error').text()).toContain('copy lifecycle script error')
+  })
+
+  it('closes a same-key lifecycle tooltip when the workspace scope changes', async () => {
+    vi.useFakeTimers()
+    try {
+      appApiMock.GetTodoLifecycleScriptErrorOutput
+        .mockResolvedValueOnce('workspace A output')
+        .mockResolvedValueOnce('workspace B output')
+      appApiMock.ListProjects.mockResolvedValue(
+        inProgressProjectState({
+          lifecycleScriptScopeEpoch: 1,
+          lifecycleScriptStatuses: [
+            lifecycleScriptStatus({ phase: 'init', status: 'failed', runId: 1, scopeEpoch: 1, outputTail: 'A output' })
+          ]
+        })
+      )
+      const wrapper = await mountReadyApp()
+
+      await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+      await wrapper.find('[data-testid="todo-lifecycle-script-status-todo-a-init"]').trigger('mouseenter')
+      vi.advanceTimersByTime(600)
+      await flushPromises()
+      expect(document.body.querySelector('[data-testid="todo-lifecycle-script-error-tooltip-todo-a-init"]')?.textContent)
+        .toBe('workspace A output')
+
+      runtimeMock.handlers['workspace-state'](
+        inProgressProjectState({
+          currentWorkspace: workspace({ path: '/work/other' }),
+          lifecycleScriptScopeEpoch: 2,
+          lifecycleScriptStatuses: [
+            lifecycleScriptStatus({ phase: 'init', status: 'failed', runId: 1, scopeEpoch: 2, outputTail: 'B output' })
+          ]
+        })
+      )
+      await flushPromises()
+      expect(document.body.querySelector('[data-testid="todo-lifecycle-script-error-tooltip-todo-a-init"]')).toBeNull()
+
+      await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+      await wrapper.find('[data-testid="copy-todo-lifecycle-script-error-todo-a-init"]').trigger('click')
+      await flushPromises()
+      expect(document.body.querySelector('[data-testid="todo-lifecycle-script-error-tooltip-todo-a-init"]')).toBeNull()
+
+      await wrapper.find('[data-testid="todo-lifecycle-script-status-todo-a-init"]').trigger('mouseenter')
+      vi.advanceTimersByTime(599)
+      await flushPromises()
+      expect(document.body.querySelector('[data-testid="todo-lifecycle-script-error-tooltip-todo-a-init"]')).toBeNull()
+      vi.advanceTimersByTime(1)
+      await flushPromises()
+      expect(document.body.querySelector('[data-testid="todo-lifecycle-script-error-tooltip-todo-a-init"]')?.textContent)
+        .toBe('workspace B output')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('shows launch profile validation errors without closing settings', async () => {
     appApiMock.LoadTerminalSettings.mockResolvedValue(
       settingsState({ launchProfiles: [{ name: 'codex', command: 'codex' }] })
@@ -5786,6 +6165,7 @@ function projectState(overrides = {}) {
     todos: [todo()],
     todoProjects: [todoProject()],
     projectBranchPreferences: {},
+    lifecycleScriptScopeEpoch: 1,
     lifecycleScriptStatuses: [],
     activeProjectId: 'project-a',
     activeTodoId: 'todo-a',
@@ -5936,6 +6316,8 @@ function lifecycleScriptStatus(overrides = {}) {
     exitCode: 0,
     outputTail: '',
     message: '',
+    runId: 1,
+    scopeEpoch: 1,
     ...overrides
   }
 }

@@ -183,20 +183,21 @@ type ProjectBranchPreference struct {
 }
 
 type ProjectState struct {
-	Version                  int                                `json:"version"`
-	CurrentWorkspace         *Workspace                         `json:"currentWorkspace,omitempty"`
-	RecentWorkspaces         []Workspace                        `json:"recentWorkspaces,omitempty"`
-	Projects                 []Project                          `json:"projects"`
-	Todos                    []Todo                             `json:"todos"`
-	TodoProjects             []TodoProject                      `json:"todoProjects"`
-	ProjectBranchPreferences map[string]ProjectBranchPreference `json:"projectBranchPreferences,omitempty"`
-	ActiveProjectID          string                             `json:"activeProjectId"`
-	ActiveTodoID             string                             `json:"activeTodoId,omitempty"`
-	ActiveTodoProjectID      string                             `json:"activeTodoProjectId,omitempty"`
-	Terminals                []ProjectTerminal                  `json:"terminals,omitempty"`
-	ActiveTerminalID         string                             `json:"activeTerminalId,omitempty"`
-	LifecycleScriptStatuses  []TodoLifecycleScriptStatus        `json:"lifecycleScriptStatuses,omitempty"`
-	ImportSummary            *ProjectImportSummary              `json:"importSummary,omitempty"`
+	Version                   int                                `json:"version"`
+	CurrentWorkspace          *Workspace                         `json:"currentWorkspace,omitempty"`
+	RecentWorkspaces          []Workspace                        `json:"recentWorkspaces,omitempty"`
+	Projects                  []Project                          `json:"projects"`
+	Todos                     []Todo                             `json:"todos"`
+	TodoProjects              []TodoProject                      `json:"todoProjects"`
+	ProjectBranchPreferences  map[string]ProjectBranchPreference `json:"projectBranchPreferences,omitempty"`
+	ActiveProjectID           string                             `json:"activeProjectId"`
+	ActiveTodoID              string                             `json:"activeTodoId,omitempty"`
+	ActiveTodoProjectID       string                             `json:"activeTodoProjectId,omitempty"`
+	Terminals                 []ProjectTerminal                  `json:"terminals,omitempty"`
+	ActiveTerminalID          string                             `json:"activeTerminalId,omitempty"`
+	LifecycleScriptStatuses   []TodoLifecycleScriptStatus        `json:"lifecycleScriptStatuses,omitempty"`
+	LifecycleScriptScopeEpoch uint64                             `json:"lifecycleScriptScopeEpoch"`
+	ImportSummary             *ProjectImportSummary              `json:"importSummary,omitempty"`
 }
 
 type ProjectManager struct {

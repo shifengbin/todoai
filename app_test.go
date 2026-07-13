@@ -279,6 +279,66 @@ func TestAppStartupRestoresMostRecentWorkspace(t *testing.T) {
 	}
 }
 
+func TestAppStartupRestoredWorkspaceCanRunInitializationLifecycleScript(t *testing.T) {
+	appConfigDir := t.TempDir()
+	workspacePath := t.TempDir()
+	configPath := filepath.Join(appConfigDir, "projects.json")
+	seeded := NewAppWithConfigAndShellStarter(
+		configPath,
+		newFakeShellStarter().Start,
+		WithInitialWorkspaceClosed(),
+		WithClaudeStatusDir(""),
+	)
+	if _, err := seeded.OpenWorkspaceFromPath(workspacePath); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err := seeded.CreateTodo(CreateTodoRequest{
+		Title: "修复登录问题",
+		LifecycleScript: &TodoLifecycleScriptSnapshot{
+			Name:       "Node setup",
+			InitScript: "npm install",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	todoID := state.Todos[0].ID
+
+	requests := make(chan TodoLifecycleScriptRunRequest, 1)
+	release := make(chan struct{})
+	restarted := NewAppWithConfigAndShellStarter(
+		configPath,
+		newFakeShellStarter().Start,
+		WithInitialWorkspaceClosed(),
+		WithRestoreLastWorkspaceOnStartup(),
+		WithClaudeStatusDir(""),
+		WithTodoLifecycleScriptRunner(func(ctx context.Context, request TodoLifecycleScriptRunRequest) TodoLifecycleScriptRunResult {
+			requests <- request
+			select {
+			case <-release:
+				return TodoLifecycleScriptRunResult{}
+			case <-ctx.Done():
+				return TodoLifecycleScriptRunResult{Err: ctx.Err(), ExitCode: -1}
+			}
+		}),
+	)
+	defer close(release)
+	restarted.startup(nil)
+	defer restarted.shutdown(nil)
+
+	state, err = restarted.ChangeTodoStatus(todoID, TodoStatusInProgress)
+	if err != nil {
+		t.Fatalf("ChangeTodoStatus() error = %v", err)
+	}
+	if state.Todos[0].Status != TodoStatusInProgress {
+		t.Fatalf("Status = %q, want in-progress", state.Todos[0].Status)
+	}
+	request := receiveLifecycleScriptRequest(t, requests)
+	if request.WorkspaceScope != mustAbs(t, workspacePath) {
+		t.Fatalf("WorkspaceScope = %q, want %q", request.WorkspaceScope, mustAbs(t, workspacePath))
+	}
+}
+
 func TestAppStartupKeepsNoWorkspaceWhenMostRecentWorkspaceUnavailable(t *testing.T) {
 	appConfigDir := t.TempDir()
 	workspaceA := t.TempDir()
@@ -1762,6 +1822,186 @@ func TestAppFailedCompletionLifecycleScriptKeepsTodoRetryable(t *testing.T) {
 	}
 	if lifecycleScriptStatusByPhase(state.LifecycleScriptStatuses, todoID, TodoLifecycleScriptPhaseComplete) != nil {
 		t.Fatalf("LifecycleScriptStatuses = %#v, want status cleared after retry success", state.LifecycleScriptStatuses)
+	}
+}
+
+func TestAppGetsCompleteLifecycleScriptErrorOutput(t *testing.T) {
+	fullOutput := "begin\n" + strings.Repeat("x", todoLifecycleScriptOutputTailLimit+128) + "\nend"
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+		WithTodoLifecycleScriptRunner(func(context.Context, TodoLifecycleScriptRunRequest) TodoLifecycleScriptRunResult {
+			return TodoLifecycleScriptRunResult{Output: fullOutput, ExitCode: 2, Err: errors.New("exit status 2")}
+		}),
+	)
+	state, err := app.CreateTodo(CreateTodoRequest{
+		Title: "修复登录问题",
+		LifecycleScript: &TodoLifecycleScriptSnapshot{
+			Name:           "Node setup",
+			CompleteScript: "npm test",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	todoID := state.Todos[0].ID
+	if _, err := app.ChangeTodoStatus(todoID, TodoStatusInProgress); err != nil {
+		t.Fatalf("ChangeTodoStatus() error = %v", err)
+	}
+	if _, err := app.CompleteTodo(todoID); err != nil {
+		t.Fatalf("CompleteTodo() error = %v", err)
+	}
+	waitForAppLifecycleScriptStatus(t, app, todoID, TodoLifecycleScriptPhaseComplete, TodoLifecycleScriptStatusFailed)
+
+	output, err := app.GetTodoLifecycleScriptErrorOutput(todoID, TodoLifecycleScriptPhaseComplete)
+	if err != nil {
+		t.Fatalf("GetTodoLifecycleScriptErrorOutput() error = %v", err)
+	}
+	if output != fullOutput {
+		t.Fatalf("GetTodoLifecycleScriptErrorOutput() length = %d, want %d", len(output), len(fullOutput))
+	}
+}
+
+func TestAppLifecycleScriptErrorOutputFallbackAndValidation(t *testing.T) {
+	attempts := 0
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+		WithTodoLifecycleScriptRunner(func(context.Context, TodoLifecycleScriptRunRequest) TodoLifecycleScriptRunResult {
+			attempts++
+			if attempts == 1 {
+				return TodoLifecycleScriptRunResult{ExitCode: -1, Err: errors.New("shell failed to start")}
+			}
+			return TodoLifecycleScriptRunResult{}
+		}),
+	)
+	state, err := app.CreateTodo(CreateTodoRequest{
+		Title: "修复登录问题",
+		LifecycleScript: &TodoLifecycleScriptSnapshot{
+			Name:       "Node setup",
+			InitScript: "npm install",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	todoID := state.Todos[0].ID
+	if _, err := app.ChangeTodoStatus(todoID, TodoStatusInProgress); err != nil {
+		t.Fatalf("ChangeTodoStatus() error = %v", err)
+	}
+	waitForAppLifecycleScriptStatus(t, app, todoID, TodoLifecycleScriptPhaseInit, TodoLifecycleScriptStatusFailed)
+
+	output, err := app.GetTodoLifecycleScriptErrorOutput(todoID, TodoLifecycleScriptPhaseInit)
+	if err != nil {
+		t.Fatalf("GetTodoLifecycleScriptErrorOutput() error = %v", err)
+	}
+	if output != "shell failed to start" {
+		t.Fatalf("GetTodoLifecycleScriptErrorOutput() = %q, want fallback message", output)
+	}
+	if _, err := app.GetTodoLifecycleScriptErrorOutput(todoID, "invalid"); err == nil {
+		t.Fatal("GetTodoLifecycleScriptErrorOutput(invalid phase) error = nil, want error")
+	}
+
+	if _, err := app.RetryTodoLifecycleScript(todoID, TodoLifecycleScriptPhaseInit); err != nil {
+		t.Fatalf("RetryTodoLifecycleScript() error = %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := app.lifecycleScripts.Status(todoID, TodoLifecycleScriptPhaseInit); !ok {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if _, err := app.GetTodoLifecycleScriptErrorOutput(todoID, TodoLifecycleScriptPhaseInit); err == nil {
+		t.Fatal("GetTodoLifecycleScriptErrorOutput(after success) error = nil, want error")
+	}
+}
+
+func TestAppCloseWorkspaceClearsLifecycleScriptErrorOutput(t *testing.T) {
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+		WithTodoLifecycleScriptRunner(func(context.Context, TodoLifecycleScriptRunRequest) TodoLifecycleScriptRunResult {
+			return TodoLifecycleScriptRunResult{Output: "setup failed", ExitCode: 1, Err: errors.New("exit status 1")}
+		}),
+	)
+	state, err := app.CreateTodo(CreateTodoRequest{
+		Title: "修复登录问题",
+		LifecycleScript: &TodoLifecycleScriptSnapshot{
+			Name:       "Node setup",
+			InitScript: "npm install",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	todoID := state.Todos[0].ID
+	if _, err := app.ChangeTodoStatus(todoID, TodoStatusInProgress); err != nil {
+		t.Fatalf("ChangeTodoStatus() error = %v", err)
+	}
+	waitForAppLifecycleScriptStatus(t, app, todoID, TodoLifecycleScriptPhaseInit, TodoLifecycleScriptStatusFailed)
+	if _, err := app.GetTodoLifecycleScriptErrorOutput(todoID, TodoLifecycleScriptPhaseInit); err != nil {
+		t.Fatalf("GetTodoLifecycleScriptErrorOutput() error = %v", err)
+	}
+
+	if _, err := app.CloseWorkspace(); err != nil {
+		t.Fatalf("CloseWorkspace() error = %v", err)
+	}
+	if _, ok := app.lifecycleScripts.FailureOutput(todoID, TodoLifecycleScriptPhaseInit); ok {
+		t.Fatal("FailureOutput() after CloseWorkspace found = true, want cleared")
+	}
+}
+
+func TestAppCloseWorkspaceFailurePreservesLifecycleScriptErrorOutput(t *testing.T) {
+	appConfigDir := t.TempDir()
+	workspaceDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(appConfigDir, "projects.json"),
+		newFakeShellStarter().Start,
+		WithInitialWorkspaceClosed(),
+		WithTodoLifecycleScriptRunner(func(context.Context, TodoLifecycleScriptRunRequest) TodoLifecycleScriptRunResult {
+			return TodoLifecycleScriptRunResult{Output: "setup failed in current workspace", ExitCode: 1, Err: errors.New("exit status 1")}
+		}),
+	)
+	if _, err := app.OpenWorkspaceFromPath(workspaceDir); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err := app.CreateTodo(CreateTodoRequest{
+		Title: "修复登录问题",
+		LifecycleScript: &TodoLifecycleScriptSnapshot{
+			Name:       "Node setup",
+			InitScript: "npm install",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	todoID := state.Todos[0].ID
+	if _, err := app.ChangeTodoStatus(todoID, TodoStatusInProgress); err != nil {
+		t.Fatalf("ChangeTodoStatus() error = %v", err)
+	}
+	waitForAppLifecycleScriptStatus(t, app, todoID, TodoLifecycleScriptPhaseInit, TodoLifecycleScriptStatusFailed)
+	assertLifecycleScriptFailureOutput(t, app.lifecycleScripts, todoID, TodoLifecycleScriptPhaseInit, "setup failed in current workspace")
+
+	writeTestFile(t, filepath.Join(appConfigDir, recentWorkspacesFileName), "{invalid json")
+	if _, err := app.CloseWorkspace(); err == nil {
+		t.Fatal("CloseWorkspace() error = nil, want workspace state load error")
+	}
+	current := app.workspace.CurrentWorkspace()
+	if current == nil || current.Path != mustAbs(t, workspaceDir) {
+		t.Fatalf("CurrentWorkspace after failed close = %#v, want %q", current, mustAbs(t, workspaceDir))
+	}
+	status, ok := app.lifecycleScripts.Status(todoID, TodoLifecycleScriptPhaseInit)
+	if !ok || status.Status != TodoLifecycleScriptStatusFailed {
+		t.Fatalf("lifecycle status after failed close = %#v, found = %v; want failed", status, ok)
+	}
+	assertLifecycleScriptFailureOutput(t, app.lifecycleScripts, todoID, TodoLifecycleScriptPhaseInit, "setup failed in current workspace")
+	output, err := app.GetTodoLifecycleScriptErrorOutput(todoID, TodoLifecycleScriptPhaseInit)
+	if err != nil {
+		t.Fatalf("GetTodoLifecycleScriptErrorOutput() after failed close error = %v", err)
+	}
+	if output != "setup failed in current workspace" {
+		t.Fatalf("GetTodoLifecycleScriptErrorOutput() after failed close = %q, want preserved output", output)
 	}
 }
 

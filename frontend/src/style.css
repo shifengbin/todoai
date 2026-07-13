@@ -926,6 +926,45 @@ button {
     min-width: 64px;
 }
 
+.todo-lifecycle-copy-button {
+    display: inline-grid;
+    width: 28px;
+    height: 28px;
+    flex: 0 0 28px;
+    place-items: center;
+    padding: 0;
+    border: 1px solid var(--control-border);
+    background: var(--surface-bg);
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.todo-lifecycle-copy-button:hover,
+.todo-lifecycle-copy-button:focus-visible {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.todo-lifecycle-error-tooltip {
+    position: fixed;
+    z-index: 1;
+    width: min(640px, 80vw);
+    max-height: min(320px, 60vh);
+    margin: 0;
+    overflow: auto;
+    padding: 10px 12px;
+    border: 1px solid #46515d;
+    background: rgba(31, 36, 42, 0.98);
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
+    color: #f8fafc;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size: 12px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+    pointer-events: auto;
+    white-space: pre-wrap;
+}
+
 .todo-context-menu {
     position: fixed;
     z-index: 25;

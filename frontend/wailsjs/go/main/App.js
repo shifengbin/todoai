@@ -114,6 +114,10 @@ export function GetTodoGitStatus(arg1) {
   return window['go']['main']['App']['GetTodoGitStatus'](arg1);
 }
 
+export function GetTodoLifecycleScriptErrorOutput(arg1, arg2) {
+  return window['go']['main']['App']['GetTodoLifecycleScriptErrorOutput'](arg1, arg2);
+}
+
 export function GetTodoProjectGitStatus(arg1) {
   return window['go']['main']['App']['GetTodoProjectGitStatus'](arg1);
 }
