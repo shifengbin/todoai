@@ -3,38 +3,143 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"sync"
 	"testing"
 )
 
-func TestTodoProjectUIStateStoreLoadMissingFile(t *testing.T) {
-	store := NewTodoProjectUIStateStore(t.TempDir())
+func TestTodoProjectUIStateStoreLoadMigratesLegacyStateAndDefaultsTodoOrdering(t *testing.T) {
+	tests := []struct {
+		name         string
+		legacyJSON   string
+		sidebarWidth int
+	}{
+		{
+			name: "v0 project sidebar width",
+			legacyJSON: `{
+  "todoProjects": {
+    "todo-project-1": {
+      "todoView": "completed",
+      "sidebarWidth": 372
+    }
+  }
+}`,
+			sidebarWidth: 372,
+		},
+		{
+			name: "v1 top-level sidebar width",
+			legacyJSON: `{
+  "version": 1,
+  "sidebarWidth": 384,
+  "todoProjects": {
+    "todo-project-1": {
+      "todoView": "completed"
+    }
+  }
+}`,
+			sidebarWidth: 384,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			configDir := t.TempDir()
+			statePath := filepath.Join(configDir, "todo-project-ui-state.json")
+			if err := os.WriteFile(statePath, []byte(test.legacyJSON), 0o644); err != nil {
+				t.Fatalf("write legacy todo project UI state: %v", err)
+			}
 
-	state, err := store.Load()
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if state.Version != 1 {
-		t.Fatalf("Version = %d, want 1", state.Version)
-	}
-	if len(state.TodoProjects) != 0 {
-		t.Fatalf("TodoProjects length = %d, want 0", len(state.TodoProjects))
-	}
-	if state.SidebarWidth != 0 {
-		t.Fatalf("SidebarWidth = %d, want 0", state.SidebarWidth)
+			state, err := NewTodoProjectUIStateStore(configDir).Load()
+			if err != nil {
+				t.Fatalf("load todo project UI state: %v", err)
+			}
+			if state.Version != todoProjectUIStateVersion {
+				t.Fatalf("expected version %d, got %d", todoProjectUIStateVersion, state.Version)
+			}
+			if state.SidebarWidth != test.sidebarWidth {
+				t.Fatalf("expected sidebar width %d, got %d", test.sidebarWidth, state.SidebarWidth)
+			}
+			if state.TodoSortMode != TodoSortModePriority {
+				t.Fatalf("expected default sort mode %q, got %q", TodoSortModePriority, state.TodoSortMode)
+			}
+			if len(state.TodoOrders.NotStarted) != 0 || len(state.TodoOrders.InProgress) != 0 {
+				t.Fatalf("expected empty manual orders, got %#v", state.TodoOrders)
+			}
+			if state.TodoOrdersInitialized {
+				t.Fatal("expected legacy manual orders to remain uninitialized")
+			}
+			if got := state.TodoProjects["todo-project-1"].TodoView; got != "completed" {
+				t.Fatalf("expected todo view completed, got %q", got)
+			}
+		})
 	}
 }
 
-func TestTodoProjectUIStateStoreSaveAndLoad(t *testing.T) {
-	dir := t.TempDir()
-	store := NewTodoProjectUIStateStore(dir)
+func TestTodoProjectUIStateStoreDefaultsMissingAndCorruptFiles(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		content []byte
+	}{
+		{name: "missing"},
+		{name: "corrupt", content: []byte("{not-json")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			configDir := t.TempDir()
+			if test.content != nil {
+				if err := os.WriteFile(filepath.Join(configDir, "todo-project-ui-state.json"), test.content, 0o644); err != nil {
+					t.Fatalf("write corrupt state: %v", err)
+				}
+			}
+			state, err := NewTodoProjectUIStateStore(configDir).Load()
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if state.Version != todoProjectUIStateVersion || state.TodoSortMode != TodoSortModePriority || state.TodoProjects == nil {
+				t.Fatalf("default state = %#v", state)
+			}
+		})
+	}
+}
 
+func TestNormalizeTodoListUIStateFiltersInvalidIDsAndAppendsMissingTodos(t *testing.T) {
 	state := TodoProjectUIStateFile{
-		Version:      1,
-		SidebarWidth: 380,
-		TodoProjects: map[string]TodoProjectUIState{
-			"todo-project-a": {TodoView: "completed"},
-			"todo-project-b": {TodoView: "in-progress"},
+		Version:      todoProjectUIStateVersion,
+		TodoSortMode: TodoSortModeManual,
+		TodoOrders: TodoManualOrders{
+			NotStarted: []string{"todo-late", "deleted", "todo-late", "todo-progress"},
+			InProgress: []string{"todo-progress", "todo-early"},
 		},
+		TodoProjects: map[string]TodoProjectUIState{},
+	}
+	todos := []Todo{
+		{ID: "todo-late", Status: TodoStatusNotStarted, CreatedAt: "2026-07-02T00:00:00Z"},
+		{ID: "todo-early", Status: TodoStatusNotStarted, CreatedAt: "2026-07-01T00:00:00Z"},
+		{ID: "todo-progress", Status: TodoStatusInProgress, CreatedAt: "2026-07-03T00:00:00Z"},
+		{ID: "todo-progress-missing", Status: TodoStatusInProgress, CreatedAt: "2026-07-01T00:00:00Z"},
+		{ID: "todo-completed", Status: TodoStatusCompleted, CreatedAt: "2026-07-04T00:00:00Z"},
+	}
+
+	normalized := normalizeTodoListUIState(state, todos)
+
+	wantNotStarted := []string{"todo-late", "todo-early"}
+	if !reflect.DeepEqual(normalized.TodoOrders.NotStarted, wantNotStarted) {
+		t.Fatalf("expected not-started order %#v, got %#v", wantNotStarted, normalized.TodoOrders.NotStarted)
+	}
+	wantInProgress := []string{"todo-progress", "todo-progress-missing"}
+	if !reflect.DeepEqual(normalized.TodoOrders.InProgress, wantInProgress) {
+		t.Fatalf("expected in-progress order %#v, got %#v", wantInProgress, normalized.TodoOrders.InProgress)
+	}
+}
+
+func TestTodoProjectUIStateStoreKeepsNormalizedAutomaticOrdersUninitialized(t *testing.T) {
+	store := NewTodoProjectUIStateStore(t.TempDir())
+	state := normalizeTodoListUIState(TodoProjectUIStateFile{
+		TodoSortMode: TodoSortModePriority,
+	}, []Todo{
+		{ID: "todo-late", Status: TodoStatusNotStarted, CreatedAt: "2026-07-02T00:00:00Z"},
+		{ID: "todo-early", Status: TodoStatusNotStarted, CreatedAt: "2026-07-01T00:00:00Z"},
+	})
+	if state.TodoOrdersInitialized {
+		t.Fatal("normalized automatic orders initialized before save")
 	}
 	if err := store.Save(state); err != nil {
 		t.Fatalf("Save() error = %v", err)
@@ -44,119 +149,105 @@ func TestTodoProjectUIStateStoreSaveAndLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if loaded.TodoProjects["todo-project-a"].TodoView != "completed" {
-		t.Fatalf("todo-project-a TodoView = %q, want completed", loaded.TodoProjects["todo-project-a"].TodoView)
+	if loaded.TodoOrdersInitialized {
+		t.Fatal("normalized automatic orders initialized after save and load")
 	}
-	if loaded.SidebarWidth != 380 {
-		t.Fatalf("SidebarWidth = %d, want 380", loaded.SidebarWidth)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "todo-project-ui-state.json")); err != nil {
-		t.Fatalf("ui state file not found: %v", err)
+	if !reflect.DeepEqual(loaded.TodoOrders.NotStarted, []string{"todo-early", "todo-late"}) {
+		t.Fatalf("NotStarted order = %#v", loaded.TodoOrders.NotStarted)
 	}
 }
 
-func TestTodoProjectUIStateStoreLoadMigratesLegacyProjectSidebarWidth(t *testing.T) {
-	dir := t.TempDir()
-	legacy := []byte(`{
-  "version": 1,
-  "todoProjects": {
-    "todo-project-b": { "todoView": "in-progress", "sidebarWidth": 420 },
-    "todo-project-a": { "todoView": "completed", "sidebarWidth": 360 }
-  }
-}`)
-	if err := os.WriteFile(filepath.Join(dir, "todo-project-ui-state.json"), legacy, 0644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-	store := NewTodoProjectUIStateStore(dir)
-
-	state, err := store.Load()
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if state.SidebarWidth != 360 {
-		t.Fatalf("SidebarWidth = %d, want legacy width 360 from first todo project", state.SidebarWidth)
-	}
-	if state.TodoProjects["todo-project-a"].TodoView != "completed" {
-		t.Fatalf("todo-project-a TodoView = %q, want completed", state.TodoProjects["todo-project-a"].TodoView)
-	}
-	if state.TodoProjects["todo-project-b"].TodoView != "in-progress" {
-		t.Fatalf("todo-project-b TodoView = %q, want in-progress", state.TodoProjects["todo-project-b"].TodoView)
-	}
-}
-
-func TestTodoProjectUIStateStoreLoadInvalidFileReturnsEmptyState(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "todo-project-ui-state.json"), []byte("{invalid"), 0644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-	store := NewTodoProjectUIStateStore(dir)
-
-	state, err := store.Load()
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if state.Version != 1 {
-		t.Fatalf("Version = %d, want 1", state.Version)
-	}
-	if len(state.TodoProjects) != 0 {
-		t.Fatalf("TodoProjects length = %d, want 0", len(state.TodoProjects))
-	}
-}
-
-func TestTodoProjectUIStateStoreUpsertAndDeleteByTodoProject(t *testing.T) {
-	store := NewTodoProjectUIStateStore(t.TempDir())
-	state := TodoProjectUIStateFile{Version: 1, SidebarWidth: 380}
-
-	var err error
-	state, err = store.UpsertTodoProject(state, "todo-project-a", TodoProjectUIState{TodoView: "completed"})
-	if err != nil {
-		t.Fatalf("UpsertTodoProject(a) error = %v", err)
-	}
-	state, err = store.UpsertTodoProject(state, "todo-project-b", TodoProjectUIState{TodoView: "in-progress"})
-	if err != nil {
-		t.Fatalf("UpsertTodoProject(b) error = %v", err)
-	}
-	state, err = store.DeleteTodoProjects(state, []string{"todo-project-a"})
-	if err != nil {
-		t.Fatalf("DeleteTodoProjects() error = %v", err)
-	}
-
-	loaded, err := store.Load()
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if _, ok := loaded.TodoProjects["todo-project-a"]; ok {
-		t.Fatalf("todo-project-a still exists: %#v", loaded.TodoProjects)
-	}
-	if loaded.TodoProjects["todo-project-b"].TodoView != "in-progress" {
-		t.Fatalf("todo-project-b TodoView = %q, want in-progress", loaded.TodoProjects["todo-project-b"].TodoView)
-	}
-	if loaded.SidebarWidth != 380 {
-		t.Fatalf("SidebarWidth = %d, want 380", loaded.SidebarWidth)
-	}
-}
-
-func TestTodoProjectUIStateStoreUpsertSidebarWidthPreservesTodoProjectViews(t *testing.T) {
-	store := NewTodoProjectUIStateStore(t.TempDir())
-	state := TodoProjectUIStateFile{
-		Version: 1,
-		TodoProjects: map[string]TodoProjectUIState{
-			"todo-project-a": {TodoView: "completed"},
+func TestTodoProjectUIStateStoresKeepWorkspaceOrderingIndependent(t *testing.T) {
+	workspaceA := NewTodoProjectUIStateStore(t.TempDir())
+	workspaceB := NewTodoProjectUIStateStore(t.TempDir())
+	stateA := TodoProjectUIStateFile{
+		TodoSortMode: TodoSortModeManual,
+		TodoOrders: TodoManualOrders{
+			NotStarted: []string{"todo-a"},
 		},
 	}
-
-	state, err := store.UpsertSidebarWidth(state, 420)
-	if err != nil {
-		t.Fatalf("UpsertSidebarWidth() error = %v", err)
+	stateB := TodoProjectUIStateFile{
+		TodoSortMode: TodoSortModeTime,
+		TodoOrders: TodoManualOrders{
+			NotStarted: []string{"todo-b"},
+		},
 	}
+	if err := workspaceA.Save(stateA); err != nil {
+		t.Fatalf("save workspace A UI state: %v", err)
+	}
+	if err := workspaceB.Save(stateB); err != nil {
+		t.Fatalf("save workspace B UI state: %v", err)
+	}
+
+	loadedA, err := workspaceA.Load()
+	if err != nil {
+		t.Fatalf("load workspace A UI state: %v", err)
+	}
+	loadedB, err := workspaceB.Load()
+	if err != nil {
+		t.Fatalf("load workspace B UI state: %v", err)
+	}
+
+	if loadedA.TodoSortMode != TodoSortModeManual || !reflect.DeepEqual(loadedA.TodoOrders.NotStarted, []string{"todo-a"}) {
+		t.Fatalf("unexpected workspace A state: %#v", loadedA)
+	}
+	if loadedB.TodoSortMode != TodoSortModeTime || !reflect.DeepEqual(loadedB.TodoOrders.NotStarted, []string{"todo-b"}) {
+		t.Fatalf("unexpected workspace B state: %#v", loadedB)
+	}
+}
+
+func TestTodoProjectUIStateStoreSerializesConcurrentFieldUpdates(t *testing.T) {
+	store := NewTodoProjectUIStateStore(t.TempDir())
+	initial := emptyTodoProjectUIStateFile()
+	if err := store.Save(initial); err != nil {
+		t.Fatalf("Save(initial) error = %v", err)
+	}
+
+	start := make(chan struct{})
+	errors := make(chan error, 3)
+	var waitGroup sync.WaitGroup
+	waitGroup.Add(3)
+	go func() {
+		defer waitGroup.Done()
+		<-start
+		_, err := store.UpsertSidebarWidth(360)
+		errors <- err
+	}()
+	go func() {
+		defer waitGroup.Done()
+		<-start
+		_, err := store.UpsertTodoProject("todo-project-a", TodoProjectUIState{TodoView: "completed"})
+		errors <- err
+	}()
+	go func() {
+		defer waitGroup.Done()
+		<-start
+		_, err := store.UpsertTodoListUIState(TodoListUIState{
+			TodoSortMode: TodoSortModeManual,
+			TodoOrders:   TodoManualOrders{NotStarted: []string{"todo-a"}},
+		}, []Todo{{ID: "todo-a", Status: TodoStatusNotStarted}})
+		errors <- err
+	}()
+	close(start)
+	waitGroup.Wait()
+	close(errors)
+	for err := range errors {
+		if err != nil {
+			t.Fatalf("concurrent update error = %v", err)
+		}
+	}
+
 	loaded, err := store.Load()
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if loaded.SidebarWidth != 420 {
-		t.Fatalf("SidebarWidth = %d, want 420", loaded.SidebarWidth)
+	if loaded.SidebarWidth != 360 {
+		t.Fatalf("SidebarWidth = %d, want 360", loaded.SidebarWidth)
 	}
 	if loaded.TodoProjects["todo-project-a"].TodoView != "completed" {
-		t.Fatalf("todo-project-a TodoView = %q, want completed", loaded.TodoProjects["todo-project-a"].TodoView)
+		t.Fatalf("TodoProjects = %#v", loaded.TodoProjects)
+	}
+	if loaded.TodoSortMode != TodoSortModeManual || !reflect.DeepEqual(loaded.TodoOrders.NotStarted, []string{"todo-a"}) {
+		t.Fatalf("todo list UI state = %#v", loaded)
 	}
 }

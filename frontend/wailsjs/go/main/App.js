@@ -222,6 +222,10 @@ export function SaveTodoLifecycleScripts(arg1) {
   return window['go']['main']['App']['SaveTodoLifecycleScripts'](arg1);
 }
 
+export function SaveTodoListUIState(arg1) {
+  return window['go']['main']['App']['SaveTodoListUIState'](arg1);
+}
+
 export function SaveTodoProjectUIState(arg1, arg2) {
   return window['go']['main']['App']['SaveTodoProjectUIState'](arg1, arg2);
 }

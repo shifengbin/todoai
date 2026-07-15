@@ -2489,8 +2489,14 @@ func TestAppTodoProjectUIStatePersistsUnderWorkspaceData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddProjectFromPath() error = %v", err)
 	}
-	_, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", state.Projects[0].ID)
+	todoID, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", state.Projects[0].ID)
 
+	if _, err := app.SaveTodoListUIState(TodoListUIState{
+		TodoSortMode: TodoSortModeManual,
+		TodoOrders:   TodoManualOrders{InProgress: []string{todoID}},
+	}); err != nil {
+		t.Fatalf("SaveTodoListUIState() error = %v", err)
+	}
 	if err := app.SaveTodoProjectUIState(todoProjectID, TodoProjectUIState{TodoView: "completed"}); err != nil {
 		t.Fatalf("SaveTodoProjectUIState() error = %v", err)
 	}
@@ -2508,8 +2514,112 @@ func TestAppTodoProjectUIStatePersistsUnderWorkspaceData(t *testing.T) {
 	if loaded.SidebarWidth != 360 {
 		t.Fatalf("SidebarWidth = %d, want 360", loaded.SidebarWidth)
 	}
+	if loaded.TodoSortMode != TodoSortModeManual || !reflect.DeepEqual(loaded.TodoOrders.InProgress, []string{todoID}) {
+		t.Fatalf("todo list UI state = %#v, want manual order [%q]", loaded, todoID)
+	}
 	if _, err := os.Stat(filepath.Join(dataPath, "todo-project-ui-state.json")); err != nil {
 		t.Fatalf("todo project ui state file missing under .data: %v", err)
+	}
+}
+
+func TestAppSaveTodoListUIStateValidatesAndNormalizesOrders(t *testing.T) {
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	state, err := app.CreateTodo(CreateTodoRequest{Title: "未执行任务"})
+	if err != nil {
+		t.Fatalf("CreateTodo(not-started) error = %v", err)
+	}
+	notStartedID := state.Todos[len(state.Todos)-1].ID
+	state, err = app.CreateTodo(CreateTodoRequest{Title: "执行中任务"})
+	if err != nil {
+		t.Fatalf("CreateTodo(in-progress) error = %v", err)
+	}
+	inProgressID := state.Todos[len(state.Todos)-1].ID
+	if _, err := app.projects.ChangeTodoStatus(inProgressID, TodoStatusInProgress); err != nil {
+		t.Fatalf("ChangeTodoStatus() error = %v", err)
+	}
+
+	saved, err := app.SaveTodoListUIState(TodoListUIState{
+		TodoSortMode: TodoSortModeManual,
+		TodoOrders: TodoManualOrders{
+			NotStarted: []string{"unknown", notStartedID, notStartedID, inProgressID},
+			InProgress: []string{inProgressID, notStartedID},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveTodoListUIState() error = %v", err)
+	}
+
+	if saved.TodoSortMode != TodoSortModeManual {
+		t.Fatalf("TodoSortMode = %q, want manual", saved.TodoSortMode)
+	}
+	if !saved.TodoOrdersInitialized {
+		t.Fatal("TodoOrdersInitialized = false, want true after saving manual mode")
+	}
+	if !reflect.DeepEqual(saved.TodoOrders.NotStarted, []string{notStartedID}) {
+		t.Fatalf("NotStarted order = %#v, want [%q]", saved.TodoOrders.NotStarted, notStartedID)
+	}
+	if !reflect.DeepEqual(saved.TodoOrders.InProgress, []string{inProgressID}) {
+		t.Fatalf("InProgress order = %#v, want [%q]", saved.TodoOrders.InProgress, inProgressID)
+	}
+}
+
+func TestAppSaveTodoListUIStateRejectsInvalidModeWithoutOverwritingState(t *testing.T) {
+	configDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(configDir, "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	if _, err := app.SaveTodoListUIState(TodoListUIState{TodoSortMode: TodoSortModeManual}); err != nil {
+		t.Fatalf("SaveTodoListUIState(valid) error = %v", err)
+	}
+	statePath := filepath.Join(configDir, "todo-project-ui-state.json")
+	before, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read state before invalid save: %v", err)
+	}
+
+	if _, err := app.SaveTodoListUIState(TodoListUIState{TodoSortMode: "alphabetical"}); err == nil {
+		t.Fatal("SaveTodoListUIState(invalid) error = nil, want validation error")
+	}
+	after, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read state after invalid save: %v", err)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("invalid save overwrote state\nbefore: %s\nafter: %s", before, after)
+	}
+}
+
+func TestAppSaveTodoListUIStateKeepsExistingFileWhenAtomicWriteFails(t *testing.T) {
+	configDir := t.TempDir()
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(configDir, "projects.json"),
+		newFakeShellStarter().Start,
+	)
+	if _, err := app.SaveTodoListUIState(TodoListUIState{TodoSortMode: TodoSortModeManual}); err != nil {
+		t.Fatalf("SaveTodoListUIState(initial) error = %v", err)
+	}
+	statePath := filepath.Join(configDir, "todo-project-ui-state.json")
+	before, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read state before failed save: %v", err)
+	}
+	if err := os.Mkdir(statePath+".tmp", 0o755); err != nil {
+		t.Fatalf("create blocking temp directory: %v", err)
+	}
+
+	if _, err := app.SaveTodoListUIState(TodoListUIState{TodoSortMode: TodoSortModeTime}); err == nil {
+		t.Fatal("SaveTodoListUIState() error = nil, want atomic write error")
+	}
+	after, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read state after failed save: %v", err)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("failed save changed state\nbefore: %s\nafter: %s", before, after)
 	}
 }
 
@@ -2532,7 +2642,13 @@ func TestAppStartupRestoresTodoProjectUIStateFromWorkspaceData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddProjectFromPath() error = %v", err)
 	}
-	_, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", state.Projects[0].ID)
+	todoID, todoProjectID := createTodoProjectForApp(t, app, "修复登录问题", state.Projects[0].ID)
+	if _, err := app.SaveTodoListUIState(TodoListUIState{
+		TodoSortMode: TodoSortModeManual,
+		TodoOrders:   TodoManualOrders{InProgress: []string{todoID}},
+	}); err != nil {
+		t.Fatalf("SaveTodoListUIState() error = %v", err)
+	}
 	if err := app.SaveTodoProjectUIState(todoProjectID, TodoProjectUIState{TodoView: "in-progress"}); err != nil {
 		t.Fatalf("SaveTodoProjectUIState() error = %v", err)
 	}
@@ -2560,6 +2676,221 @@ func TestAppStartupRestoresTodoProjectUIStateFromWorkspaceData(t *testing.T) {
 	if loaded.SidebarWidth != 420 {
 		t.Fatalf("SidebarWidth = %d, want 420", loaded.SidebarWidth)
 	}
+	if loaded.TodoSortMode != TodoSortModeManual || !loaded.TodoOrdersInitialized {
+		t.Fatalf("todo ordering metadata = %#v, want initialized manual mode", loaded)
+	}
+	if !reflect.DeepEqual(loaded.TodoOrders.InProgress, []string{todoID}) {
+		t.Fatalf("InProgress order = %#v, want [%q]", loaded.TodoOrders.InProgress, todoID)
+	}
+}
+
+func TestAppTodoListUIStateRemainsIsolatedAcrossWorkspaceSwitches(t *testing.T) {
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+		WithInitialWorkspaceClosed(),
+	)
+	workspaceA := t.TempDir()
+	workspaceB := t.TempDir()
+
+	if _, err := app.OpenWorkspaceFromPath(workspaceA); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath(A) error = %v", err)
+	}
+	state, err := app.CreateTodo(CreateTodoRequest{Title: "Workspace A first"})
+	if err != nil {
+		t.Fatalf("CreateTodo(A first) error = %v", err)
+	}
+	todoAFirst := state.Todos[len(state.Todos)-1].ID
+	state, err = app.CreateTodo(CreateTodoRequest{Title: "Workspace A second"})
+	if err != nil {
+		t.Fatalf("CreateTodo(A second) error = %v", err)
+	}
+	todoASecond := state.Todos[len(state.Todos)-1].ID
+	if _, err := app.SaveTodoListUIState(TodoListUIState{
+		TodoSortMode: TodoSortModeManual,
+		TodoOrders:   TodoManualOrders{NotStarted: []string{todoASecond, todoAFirst}},
+	}); err != nil {
+		t.Fatalf("SaveTodoListUIState(A) error = %v", err)
+	}
+
+	if _, err := app.OpenWorkspaceFromPath(workspaceB); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath(B) error = %v", err)
+	}
+	state, err = app.CreateTodo(CreateTodoRequest{Title: "Workspace B"})
+	if err != nil {
+		t.Fatalf("CreateTodo(B) error = %v", err)
+	}
+	todoB := state.Todos[len(state.Todos)-1].ID
+	if _, err := app.SaveTodoListUIState(TodoListUIState{
+		TodoSortMode: TodoSortModeTime,
+		TodoOrders:   TodoManualOrders{NotStarted: []string{todoB}},
+	}); err != nil {
+		t.Fatalf("SaveTodoListUIState(B) error = %v", err)
+	}
+
+	if _, err := app.OpenWorkspaceFromPath(workspaceA); err != nil {
+		t.Fatalf("reopen workspace A error = %v", err)
+	}
+	loadedA, err := app.LoadTodoProjectUIState()
+	if err != nil {
+		t.Fatalf("LoadTodoProjectUIState(A) error = %v", err)
+	}
+	if loadedA.TodoSortMode != TodoSortModeManual || !reflect.DeepEqual(loadedA.TodoOrders.NotStarted, []string{todoASecond, todoAFirst}) {
+		t.Fatalf("workspace A todo list UI state = %#v", loadedA)
+	}
+
+	if _, err := app.OpenWorkspaceFromPath(workspaceB); err != nil {
+		t.Fatalf("reopen workspace B error = %v", err)
+	}
+	loadedB, err := app.LoadTodoProjectUIState()
+	if err != nil {
+		t.Fatalf("LoadTodoProjectUIState(B) error = %v", err)
+	}
+	if loadedB.TodoSortMode != TodoSortModeTime || !reflect.DeepEqual(loadedB.TodoOrders.NotStarted, []string{todoB}) {
+		t.Fatalf("workspace B todo list UI state = %#v", loadedB)
+	}
+}
+
+func TestAppTodoListUIStateSaveDoesNotCrossWorkspaceBinding(t *testing.T) {
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+		WithInitialWorkspaceClosed(),
+	)
+	workspaceA := t.TempDir()
+	workspaceB := t.TempDir()
+
+	stateB, err := app.OpenWorkspaceFromPath(workspaceB)
+	if err != nil {
+		t.Fatalf("OpenWorkspaceFromPath(B) error = %v", err)
+	}
+	stateB, err = app.CreateTodo(CreateTodoRequest{Title: "Workspace B"})
+	if err != nil {
+		t.Fatalf("CreateTodo(B) error = %v", err)
+	}
+	todoB := stateB.Todos[len(stateB.Todos)-1].ID
+	if _, err := app.SaveTodoListUIState(TodoListUIState{
+		TodoSortMode: TodoSortModeTime,
+		TodoOrders:   TodoManualOrders{NotStarted: []string{todoB}},
+	}); err != nil {
+		t.Fatalf("SaveTodoListUIState(B) error = %v", err)
+	}
+	workspaceBDataPath := stateB.CurrentWorkspace.DataPath
+
+	if _, err := app.OpenWorkspaceFromPath(workspaceA); err != nil {
+		t.Fatalf("OpenWorkspaceFromPath(A) error = %v", err)
+	}
+	stateA, err := app.CreateTodo(CreateTodoRequest{Title: "Workspace A"})
+	if err != nil {
+		t.Fatalf("CreateTodo(A) error = %v", err)
+	}
+	todoA := stateA.Todos[len(stateA.Todos)-1].ID
+	projectsA := app.projects
+	projectsA.mu.Lock()
+
+	type saveResult struct {
+		state TodoProjectUIStateFile
+		err   error
+	}
+	saveDone := make(chan saveResult, 1)
+	go func() {
+		state, saveErr := app.SaveTodoListUIState(TodoListUIState{
+			TodoSortMode: TodoSortModeManual,
+			TodoOrders:   TodoManualOrders{NotStarted: []string{todoA}},
+		})
+		saveDone <- saveResult{state: state, err: saveErr}
+	}()
+	time.Sleep(20 * time.Millisecond)
+
+	switchDone := make(chan error, 1)
+	go func() {
+		_, switchErr := app.OpenWorkspaceFromPath(workspaceB)
+		switchDone <- switchErr
+	}()
+	time.Sleep(20 * time.Millisecond)
+	projectsA.mu.Unlock()
+
+	select {
+	case result := <-saveDone:
+		if result.err != nil {
+			t.Fatalf("SaveTodoListUIState(A) error = %v", result.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("SaveTodoListUIState(A) timed out")
+	}
+	select {
+	case switchErr := <-switchDone:
+		if switchErr != nil {
+			t.Fatalf("OpenWorkspaceFromPath(B concurrent) error = %v", switchErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("OpenWorkspaceFromPath(B concurrent) timed out")
+	}
+
+	persistedB, err := NewTodoProjectUIStateStore(workspaceBDataPath).Load()
+	if err != nil {
+		t.Fatalf("Load(workspace B raw UI state) error = %v", err)
+	}
+	if persistedB.TodoSortMode != TodoSortModeTime || !reflect.DeepEqual(persistedB.TodoOrders.NotStarted, []string{todoB}) {
+		t.Fatalf("workspace B UI state was contaminated by workspace A save: %#v", persistedB)
+	}
+}
+
+func TestAppTodoListUIStateMigratesLegacyWorkspaceFileOnSave(t *testing.T) {
+	app := NewAppWithConfigAndShellStarter(
+		filepath.Join(t.TempDir(), "projects.json"),
+		newFakeShellStarter().Start,
+		WithInitialWorkspaceClosed(),
+	)
+	state, err := app.OpenWorkspaceFromPath(t.TempDir())
+	if err != nil {
+		t.Fatalf("OpenWorkspaceFromPath() error = %v", err)
+	}
+	state, err = app.CreateTodo(CreateTodoRequest{Title: "Legacy task"})
+	if err != nil {
+		t.Fatalf("CreateTodo() error = %v", err)
+	}
+	todoID := state.Todos[len(state.Todos)-1].ID
+	statePath := filepath.Join(state.CurrentWorkspace.DataPath, "todo-project-ui-state.json")
+	legacyJSON := []byte(`{
+  "version": 1,
+  "sidebarWidth": 384,
+  "todoProjects": {
+    "todo-project-legacy": {"todoView": "completed"}
+  }
+}`)
+	if err := os.WriteFile(statePath, legacyJSON, 0o644); err != nil {
+		t.Fatalf("write legacy todo list UI state: %v", err)
+	}
+
+	loaded, err := app.LoadTodoProjectUIState()
+	if err != nil {
+		t.Fatalf("LoadTodoProjectUIState() error = %v", err)
+	}
+	if loaded.TodoSortMode != TodoSortModePriority || !reflect.DeepEqual(loaded.TodoOrders.NotStarted, []string{todoID}) {
+		t.Fatalf("normalized legacy state = %#v", loaded)
+	}
+	if _, err := app.SaveTodoListUIState(TodoListUIState{
+		TodoSortMode: TodoSortModeManual,
+		TodoOrders:   TodoManualOrders{NotStarted: []string{todoID}},
+	}); err != nil {
+		t.Fatalf("SaveTodoListUIState() error = %v", err)
+	}
+
+	persistedJSON, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read migrated todo list UI state: %v", err)
+	}
+	var persisted TodoProjectUIStateFile
+	if err := json.Unmarshal(persistedJSON, &persisted); err != nil {
+		t.Fatalf("decode migrated todo list UI state: %v", err)
+	}
+	if persisted.Version != todoProjectUIStateVersion || persisted.TodoSortMode != TodoSortModeManual || !persisted.TodoOrdersInitialized {
+		t.Fatalf("migrated todo list metadata = %#v", persisted)
+	}
+	if persisted.SidebarWidth != 384 || persisted.TodoProjects["todo-project-legacy"].TodoView != "completed" {
+		t.Fatalf("legacy UI fields were not preserved: %#v", persisted)
+	}
 }
 
 func TestAppTodoProjectUIStateRequiresWorkspace(t *testing.T) {
@@ -2578,6 +2909,9 @@ func TestAppTodoProjectUIStateRequiresWorkspace(t *testing.T) {
 	if err := app.SaveTodoSidebarWidth(360); !errors.Is(err, ErrWorkspaceRequired) {
 		t.Fatalf("SaveTodoSidebarWidth() error = %v, want ErrWorkspaceRequired", err)
 	}
+	if _, err := app.SaveTodoListUIState(TodoListUIState{TodoSortMode: TodoSortModeManual}); !errors.Is(err, ErrWorkspaceRequired) {
+		t.Fatalf("SaveTodoListUIState() error = %v, want ErrWorkspaceRequired", err)
+	}
 	if err := app.DeleteTodoProjectUIState([]string{"todo-project-a"}); !errors.Is(err, ErrWorkspaceRequired) {
 		t.Fatalf("DeleteTodoProjectUIState() error = %v, want ErrWorkspaceRequired", err)
 	}
@@ -2594,8 +2928,14 @@ func TestAppRemoveTodoProjectDeletesTodoProjectUIState(t *testing.T) {
 		t.Fatalf("AddProjectFromPath() error = %v", err)
 	}
 	projectID := state.Projects[0].ID
-	_, todoProjectAID := createTodoProjectForApp(t, app, "修复登录问题", projectID)
-	_, todoProjectBID := createTodoProjectForApp(t, app, "升级依赖", projectID)
+	todoAID, todoProjectAID := createTodoProjectForApp(t, app, "修复登录问题", projectID)
+	todoBID, todoProjectBID := createTodoProjectForApp(t, app, "升级依赖", projectID)
+	if _, err := app.SaveTodoListUIState(TodoListUIState{
+		TodoSortMode: TodoSortModeManual,
+		TodoOrders:   TodoManualOrders{InProgress: []string{todoBID, todoAID}},
+	}); err != nil {
+		t.Fatalf("SaveTodoListUIState() error = %v", err)
+	}
 	if err := app.SaveTodoProjectUIState(todoProjectAID, TodoProjectUIState{TodoView: "completed"}); err != nil {
 		t.Fatalf("SaveTodoProjectUIState(A) error = %v", err)
 	}
@@ -2622,6 +2962,9 @@ func TestAppRemoveTodoProjectDeletesTodoProjectUIState(t *testing.T) {
 	}
 	if loaded.SidebarWidth != 420 {
 		t.Fatalf("SidebarWidth = %d, want 420", loaded.SidebarWidth)
+	}
+	if loaded.TodoSortMode != TodoSortModeManual || !reflect.DeepEqual(loaded.TodoOrders.InProgress, []string{todoBID, todoAID}) {
+		t.Fatalf("todo list UI state = %#v, want preserved manual order", loaded)
 	}
 }
 

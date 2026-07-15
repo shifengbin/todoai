@@ -56,6 +56,7 @@ import {
   SaveTerminalTheme,
   SaveTodoInitializationFiles,
   SaveTodoLifecycleScripts,
+  SaveTodoListUIState,
   SaveTodoSidebarWidth,
   SaveTodoProjectUIState,
   SendTerminalInput,
@@ -130,7 +131,13 @@ const sidebarMaxWidth = 520
 const currentTodoView = ref('not-started')
 const todoProjectUIStates = ref({})
 const todoSidebarWidthState = ref(0)
+const todoSortMode = ref('priority')
+const todoOrders = ref(emptyTodoOrders())
+const todoOrdersInitialized = ref(false)
+const todoOrderSaving = ref(false)
 const completedMergeStatuses = ref({})
+let todoListUIStateScopeEpoch = 0
+let todoListUIStateLoadRequestId = 0
 const todoProjectUIStateSaveQueues = new Map()
 const todoSidebarWidthSaveQueue = {
   saving: false,
@@ -631,18 +638,27 @@ onBeforeUnmount(() => {
 function applyState(state, options = {}) {
   const previousGitStatusContextKey = activeGitStatusContextKey()
   const previousWorkspacePath = currentWorkspace.value?.path || ''
+  const nextWorkspacePath = state?.currentWorkspace?.path || ''
+  const workspaceChanged = previousWorkspacePath !== nextWorkspacePath
   const previousLifecycleScriptScopeEpoch = lifecycleScriptScopeEpoch.value
   const previousTerminals = new Map(terminals.value.map((terminal) => [terminal.id, terminal]))
   currentWorkspace.value = state?.currentWorkspace || null
   recentWorkspaces.value = state?.recentWorkspaces || []
   projects.value = state?.projects || []
   todos.value = state?.todos || []
+  if (workspaceChanged) {
+    todoListUIStateScopeEpoch += 1
+    todoListUIStateLoadRequestId += 1
+    resetTodoListUIState()
+  } else {
+    todoOrders.value = normalizeTodoOrders(todoOrders.value, todos.value)
+  }
   todoProjects.value = state?.todoProjects || []
   projectBranchPreferences.value = state?.projectBranchPreferences || {}
   lifecycleScriptScopeEpoch.value = state?.lifecycleScriptScopeEpoch || 0
   lifecycleScriptStatuses.value = state?.lifecycleScriptStatuses || []
   if (
-    previousWorkspacePath !== (currentWorkspace.value?.path || '') ||
+    workspaceChanged ||
     previousLifecycleScriptScopeEpoch !== lifecycleScriptScopeEpoch.value
   ) {
     clearLifecycleScriptErrorOutputs()
@@ -875,9 +891,12 @@ function closeWorkspaceScopedPanels() {
 }
 
 async function loadTodoProjectUIStateForCurrentWorkspace(options = {}) {
+  const scopeEpoch = todoListUIStateScopeEpoch
+  const requestId = ++todoListUIStateLoadRequestId
   if (!hasWorkspace.value) {
     todoProjectUIStates.value = {}
     todoSidebarWidthState.value = 0
+    resetTodoListUIState()
     if (options.restoreTodoProjectUIState === true) {
       applyTodoWorkspaceUIState('')
     }
@@ -885,14 +904,22 @@ async function loadTodoProjectUIStateForCurrentWorkspace(options = {}) {
   }
   try {
     const state = await LoadTodoProjectUIState()
+    if (!isCurrentTodoListUIStateLoad(scopeEpoch, requestId)) {
+      return
+    }
     todoProjectUIStates.value = state?.todoProjects || {}
     todoSidebarWidthState.value = Number(state?.sidebarWidth) || 0
+    applyTodoListUIState(state)
     if (options.restoreTodoProjectUIState === true) {
       applyTodoWorkspaceUIState(activeTodoProjectId.value)
     }
   } catch (error) {
+    if (!isCurrentTodoListUIStateLoad(scopeEpoch, requestId)) {
+      return
+    }
     todoProjectUIStates.value = {}
     todoSidebarWidthState.value = 0
+    resetTodoListUIState()
     if (options.restoreTodoProjectUIState === true) {
       applyTodoWorkspaceUIState(activeTodoProjectId.value)
     }
@@ -3128,6 +3155,84 @@ function persistTodoSidebarWidth() {
   queueTodoSidebarWidthSave(width)
 }
 
+async function handleTodoSortModeChange(change) {
+  if (todoOrderSaving.value) {
+    return
+  }
+  todoListUIStateLoadRequestId += 1
+  const scopeEpoch = todoListUIStateScopeEpoch
+  const previousState = todoListUIStateSnapshot()
+  const nextMode = normalizeTodoSortMode(change?.mode)
+  let nextOrders = normalizeTodoOrders(todoOrders.value, todos.value)
+  if (nextMode === 'manual' && !todoOrdersInitialized.value) {
+    nextOrders = normalizeTodoOrders(change?.todoOrders, todos.value)
+  }
+  todoSortMode.value = nextMode
+  todoOrders.value = nextOrders
+  if (nextMode === 'manual') {
+    todoOrdersInitialized.value = true
+  }
+  todoOrderSaving.value = true
+  try {
+    const savedState = await SaveTodoListUIState({
+      todoSortMode: nextMode,
+      todoOrders: nextOrders
+    })
+    if (!isCurrentTodoListUIStateScope(scopeEpoch)) {
+      return
+    }
+    todoListUIStateLoadRequestId += 1
+    applyTodoListUIState(savedState)
+  } catch (error) {
+    if (!isCurrentTodoListUIStateScope(scopeEpoch)) {
+      return
+    }
+    todoListUIStateLoadRequestId += 1
+    restoreTodoListUIState(previousState)
+    showError(error)
+  } finally {
+    if (isCurrentTodoListUIStateScope(scopeEpoch)) {
+      todoOrderSaving.value = false
+    }
+  }
+}
+
+async function handleTodoOrderChange(change) {
+  if (todoOrderSaving.value || !['not-started', 'in-progress'].includes(change?.status)) {
+    return
+  }
+  todoListUIStateLoadRequestId += 1
+  const scopeEpoch = todoListUIStateScopeEpoch
+  const previousState = todoListUIStateSnapshot()
+  const nextOrders = cloneTodoOrders(todoOrders.value)
+  const orderKey = change.status === 'in-progress' ? 'inProgress' : 'notStarted'
+  nextOrders[orderKey] = [...(change.order || [])]
+  todoOrders.value = normalizeTodoOrders(nextOrders, todos.value)
+  todoOrderSaving.value = true
+  try {
+    const savedState = await SaveTodoListUIState({
+      todoSortMode: todoSortMode.value,
+      todoOrders: todoOrders.value
+    })
+    if (!isCurrentTodoListUIStateScope(scopeEpoch)) {
+      return
+    }
+    todoListUIStateLoadRequestId += 1
+    applyTodoListUIState(savedState)
+  } catch (error) {
+    if (!isCurrentTodoListUIStateScope(scopeEpoch)) {
+      return
+    }
+    todoListUIStateLoadRequestId += 1
+    restoreTodoListUIState(previousState)
+    showError(error)
+  } finally {
+    if (isCurrentTodoListUIStateScope(scopeEpoch)) {
+      todoOrderSaving.value = false
+    }
+  }
+}
+
 function queueTodoProjectUIStateSave(todoProjectId, state) {
   const queue = todoProjectUIStateSaveQueues.get(todoProjectId) || {
     saving: false,
@@ -3180,6 +3285,115 @@ async function drainTodoSidebarWidthSaveQueue() {
 
 function normalizeTodoView(view) {
   return ['not-started', 'in-progress', 'completed'].includes(view) ? view : 'not-started'
+}
+
+function emptyTodoOrders() {
+  return {
+    notStarted: [],
+    inProgress: []
+  }
+}
+
+function resetTodoListUIState() {
+  todoSortMode.value = 'priority'
+  todoOrders.value = emptyTodoOrders()
+  todoOrdersInitialized.value = false
+  todoOrderSaving.value = false
+}
+
+function isCurrentTodoListUIStateScope(scopeEpoch) {
+  return scopeEpoch === todoListUIStateScopeEpoch
+}
+
+function isCurrentTodoListUIStateLoad(scopeEpoch, requestId) {
+  return isCurrentTodoListUIStateScope(scopeEpoch) && requestId === todoListUIStateLoadRequestId
+}
+
+function todoListUIStateSnapshot() {
+  return {
+    todoSortMode: todoSortMode.value,
+    todoOrders: cloneTodoOrders(todoOrders.value),
+    todoOrdersInitialized: todoOrdersInitialized.value
+  }
+}
+
+function restoreTodoListUIState(state) {
+  todoSortMode.value = state.todoSortMode
+  todoOrders.value = cloneTodoOrders(state.todoOrders)
+  todoOrdersInitialized.value = state.todoOrdersInitialized
+}
+
+function cloneTodoOrders(orders) {
+  return {
+    notStarted: [...(orders?.notStarted || [])],
+    inProgress: [...(orders?.inProgress || [])]
+  }
+}
+
+function applyTodoListUIState(state) {
+  const nextMode = normalizeTodoSortMode(state?.todoSortMode)
+  const rawOrders = state?.todoOrders || {}
+  todoSortMode.value = nextMode
+  todoOrders.value = normalizeTodoOrders(rawOrders, todos.value)
+  todoOrdersInitialized.value = Boolean(state?.todoOrdersInitialized || nextMode === 'manual')
+}
+
+function normalizeTodoSortMode(mode) {
+  return ['priority', 'time', 'manual'].includes(mode) ? mode : 'priority'
+}
+
+function normalizeTodoOrders(orders, todoList) {
+  const candidates = {
+    notStarted: [],
+    inProgress: []
+  }
+  for (const [index, todo] of (todoList || []).entries()) {
+    const status = normalizedTodoOrderStatus(todo?.status)
+    if (status === 'not-started') {
+      candidates.notStarted.push({ todo, index })
+    } else if (status === 'in-progress') {
+      candidates.inProgress.push({ todo, index })
+    }
+  }
+  return {
+    notStarted: normalizeTodoOrder(orders?.notStarted, candidates.notStarted),
+    inProgress: normalizeTodoOrder(orders?.inProgress, candidates.inProgress)
+  }
+}
+
+function normalizeTodoOrder(order, candidates) {
+  const candidatesById = new Map(candidates.filter(({ todo }) => todo?.id).map((candidate) => [candidate.todo.id, candidate]))
+  const seen = new Set()
+  const normalized = []
+  for (const todoId of order || []) {
+    if (!candidatesById.has(todoId) || seen.has(todoId)) {
+      continue
+    }
+    seen.add(todoId)
+    normalized.push(todoId)
+  }
+  const missing = candidates
+    .filter(({ todo }) => todo?.id && !seen.has(todo.id))
+    .sort(compareTodoOrderCandidates)
+  return [...normalized, ...missing.map(({ todo }) => todo.id)]
+}
+
+function normalizedTodoOrderStatus(status) {
+  return !status || status === 'active' ? 'not-started' : status
+}
+
+function compareTodoOrderCandidates(left, right) {
+  const leftTime = Date.parse(left.todo?.createdAt || '')
+  const rightTime = Date.parse(right.todo?.createdAt || '')
+  const leftValid = Number.isFinite(leftTime)
+  const rightValid = Number.isFinite(rightTime)
+  if (leftValid && rightValid && leftTime !== rightTime) {
+    return leftTime - rightTime
+  }
+  if (leftValid !== rightValid) {
+    return leftValid ? -1 : 1
+  }
+  return left.index - right.index
 }
 
 function clampNumber(value, min, max) {
@@ -3411,6 +3625,10 @@ function clearToastTimer() {
       :import-summary="importSummary"
       :has-workspace="hasWorkspace"
       :todo-view="currentTodoView"
+      :todo-sort-mode="todoSortMode"
+      :todo-orders="todoOrders"
+      :todo-orders-initialized="todoOrdersInitialized"
+      :todo-order-saving="todoOrderSaving"
       :completed-merge-statuses="completedMergeStatuses"
       :lifecycle-script-statuses="lifecycleScriptStatuses"
       :lifecycle-script-error-outputs="lifecycleScriptErrorOutputs"
@@ -3440,6 +3658,8 @@ function clearToastTimer() {
       @delete-terminal="deleteTerminal"
       @open-todo-folder="openTodoFolder"
       @todo-view-change="handleTodoViewChange"
+      @todo-sort-mode-change="handleTodoSortModeChange"
+      @todo-order-change="handleTodoOrderChange"
     />
 
     <div

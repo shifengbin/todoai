@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App.vue'
+import ProjectSidebar from './components/ProjectSidebar.vue'
 import {
   AddProjectToTodo,
   AddProjectsToTodo,
@@ -106,6 +107,7 @@ const appApiMock = vi.hoisted(() => ({
   SaveTerminalTheme: vi.fn(),
   SaveTodoInitializationFiles: vi.fn(),
   SaveTodoLifecycleScripts: vi.fn(),
+  SaveTodoListUIState: vi.fn(),
   SaveTodoSidebarWidth: vi.fn(),
   SaveTodoProjectUIState: vi.fn(),
   SendTerminalInput: vi.fn(),
@@ -184,6 +186,10 @@ describe('App project terminal tree', () => {
     appApiMock.LoadTodoLifecycleScripts.mockResolvedValue([])
     appApiMock.LoadTodoProjectUIState.mockResolvedValue(todoProjectUIStateFile())
     appApiMock.SaveTodoProjectUIState.mockResolvedValue()
+    appApiMock.SaveTodoListUIState.mockImplementation((state) => Promise.resolve(todoProjectUIStateFile({
+      ...state,
+      todoOrdersInitialized: state.todoSortMode === 'manual'
+    })))
     appApiMock.DetectTerminalShell.mockResolvedValue(shellSetting({ path: '/usr/bin/bash', displayName: 'bash' }))
     appApiMock.SaveTerminalShell.mockResolvedValue(
       settingsState({ selected: shellSetting({ path: '/usr/bin/bash', displayName: 'bash', source: 'detected' }) })
@@ -2467,6 +2473,519 @@ describe('App project terminal tree', () => {
       todoView: 'not-started'
     })
     expect(SaveTodoSidebarWidth).not.toHaveBeenCalled()
+  })
+
+  it('restores workspace TODO sort mode and independent manual orders', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        todos: [
+          todo({ id: 'todo-a', status: 'not-started' }),
+          todo({ id: 'todo-b', status: 'not-started' }),
+          todo({ id: 'todo-c', status: 'in-progress' })
+        ]
+      })
+    )
+    appApiMock.LoadTodoProjectUIState.mockResolvedValue(
+      todoProjectUIStateFile({
+        todoSortMode: 'manual',
+        todoOrders: {
+          notStarted: ['todo-b', 'todo-a'],
+          inProgress: ['todo-c']
+        }
+      })
+    )
+
+    const wrapper = await mountReadyApp()
+    const sidebar = wrapper.findComponent(ProjectSidebar)
+
+    expect(sidebar.props('todoSortMode')).toBe('manual')
+    expect(sidebar.props('todoOrders')).toEqual({
+      notStarted: ['todo-b', 'todo-a'],
+      inProgress: ['todo-c']
+    })
+    expect(sidebar.props('todoOrderSaving')).toBe(false)
+  })
+
+  it('defaults legacy workspace UI state to priority and reconciles missing TODO IDs', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        todos: [
+          todo({ id: 'todo-b', status: 'not-started', createdAt: '2026-06-11T09:00:00Z' }),
+          todo({ id: 'todo-a', status: 'not-started', createdAt: '2026-06-10T09:00:00Z' }),
+          todo({ id: 'todo-c', status: 'in-progress', createdAt: '2026-06-12T09:00:00Z' })
+        ]
+      })
+    )
+    appApiMock.LoadTodoProjectUIState.mockResolvedValue({
+      version: 1,
+      sidebarWidth: 280,
+      todoProjects: {}
+    })
+
+    const wrapper = await mountReadyApp()
+    const sidebar = wrapper.findComponent(ProjectSidebar)
+
+    expect(sidebar.props('todoSortMode')).toBe('priority')
+    expect(sidebar.props('todoOrders')).toEqual({
+      notStarted: ['todo-a', 'todo-b'],
+      inProgress: ['todo-c']
+    })
+  })
+
+  it('snapshots the priority display order when backend-normalized orders are still uninitialized', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        todos: [
+          todo({ id: 'todo-low', priority: 'low', createdAt: '2026-06-10T09:00:00Z' }),
+          todo({ id: 'todo-high', priority: 'high', createdAt: '2026-06-11T09:00:00Z' })
+        ]
+      })
+    )
+    appApiMock.LoadTodoProjectUIState.mockResolvedValue(
+      todoProjectUIStateFile({
+        todoSortMode: 'priority',
+        todoOrdersInitialized: false,
+        todoOrders: { notStarted: ['todo-low', 'todo-high'], inProgress: [] }
+      })
+    )
+    const wrapper = await mountReadyApp()
+    const sidebar = wrapper.findComponent(ProjectSidebar)
+
+    expect(sidebar.props('todoOrdersInitialized')).toBe(false)
+    await wrapper.find('[data-testid="sort-active-todos-manual"]').trigger('click')
+    await flushPromises()
+
+    expect(appApiMock.SaveTodoListUIState).toHaveBeenCalledWith({
+      todoSortMode: 'manual',
+      todoOrders: { notStarted: ['todo-high', 'todo-low'], inProgress: [] }
+    })
+  })
+
+  it('saves the first manual mode snapshot emitted by the TODO sidebar', async () => {
+    const wrapper = await mountReadyApp()
+    const sidebar = wrapper.findComponent(ProjectSidebar)
+    const todoOrders = {
+      notStarted: ['todo-a'],
+      inProgress: []
+    }
+
+    sidebar.vm.$emit('todo-sort-mode-change', {
+      mode: 'manual',
+      todoOrders
+    })
+    await flushPromises()
+
+    expect(appApiMock.SaveTodoListUIState).toHaveBeenCalledWith({
+      todoSortMode: 'manual',
+      todoOrders
+    })
+    expect(sidebar.props('todoSortMode')).toBe('manual')
+  })
+
+  it('restores the previous sort state when saving manual mode fails', async () => {
+    appApiMock.SaveTodoListUIState.mockRejectedValueOnce(new Error('save mode failed'))
+    const wrapper = await mountReadyApp()
+    const sidebar = wrapper.findComponent(ProjectSidebar)
+    const previousOrders = {
+      notStarted: ['todo-a'],
+      inProgress: []
+    }
+
+    sidebar.vm.$emit('todo-sort-mode-change', {
+      mode: 'manual',
+      todoOrders: previousOrders
+    })
+    await flushPromises()
+
+    expect(sidebar.props('todoSortMode')).toBe('priority')
+    expect(sidebar.props('todoOrders')).toEqual(previousOrders)
+    expect(sidebar.props('todoOrdersInitialized')).toBe(false)
+    expect(wrapper.find('.status-error').text()).toContain('save mode failed')
+  })
+
+  it('optimistically reorders TODOs and rolls back when saving fails', async () => {
+    const pendingSave = deferred()
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        todos: [todo({ id: 'todo-a' }), todo({ id: 'todo-b' })]
+      })
+    )
+    appApiMock.LoadTodoProjectUIState.mockResolvedValue(
+      todoProjectUIStateFile({
+        todoSortMode: 'manual',
+        todoOrdersInitialized: true,
+        todoOrders: { notStarted: ['todo-a', 'todo-b'], inProgress: [] }
+      })
+    )
+    appApiMock.SaveTodoListUIState.mockReturnValueOnce(pendingSave.promise)
+    const wrapper = await mountReadyApp()
+    const sidebar = wrapper.findComponent(ProjectSidebar)
+
+    sidebar.vm.$emit('todo-order-change', {
+      status: 'not-started',
+      previousOrder: ['todo-a', 'todo-b'],
+      order: ['todo-b', 'todo-a']
+    })
+    await nextTick()
+
+    expect(sidebar.props('todoOrders').notStarted).toEqual(['todo-b', 'todo-a'])
+    expect(sidebar.props('todoOrderSaving')).toBe(true)
+
+    pendingSave.reject(new Error('save order failed'))
+    await flushPromises()
+
+    expect(sidebar.props('todoOrders').notStarted).toEqual(['todo-a', 'todo-b'])
+    expect(sidebar.props('todoOrderSaving')).toBe(false)
+    expect(wrapper.find('.status-error').text()).toContain('save order failed')
+  })
+
+  it('persists a reordered TODO list and keeps the backend-confirmed order', async () => {
+    const pendingSave = deferred()
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        todos: [todo({ id: 'todo-a' }), todo({ id: 'todo-b' })]
+      })
+    )
+    appApiMock.LoadTodoProjectUIState.mockResolvedValue(
+      todoProjectUIStateFile({
+        todoSortMode: 'manual',
+        todoOrdersInitialized: true,
+        todoOrders: { notStarted: ['todo-a', 'todo-b'], inProgress: [] }
+      })
+    )
+    appApiMock.SaveTodoListUIState.mockReturnValueOnce(pendingSave.promise)
+    const wrapper = await mountReadyApp()
+    const sidebar = wrapper.findComponent(ProjectSidebar)
+
+    sidebar.vm.$emit('todo-order-change', {
+      status: 'not-started',
+      previousOrder: ['todo-a', 'todo-b'],
+      order: ['todo-b', 'todo-a']
+    })
+    await nextTick()
+
+    expect(appApiMock.SaveTodoListUIState).toHaveBeenCalledWith({
+      todoSortMode: 'manual',
+      todoOrders: { notStarted: ['todo-b', 'todo-a'], inProgress: [] }
+    })
+    expect(sidebar.props('todoOrderSaving')).toBe(true)
+
+    pendingSave.resolve(
+      todoProjectUIStateFile({
+        todoSortMode: 'manual',
+        todoOrdersInitialized: true,
+        todoOrders: { notStarted: ['todo-b', 'todo-a'], inProgress: [] }
+      })
+    )
+    await flushPromises()
+
+    expect(sidebar.props('todoOrders').notStarted).toEqual(['todo-b', 'todo-a'])
+    expect(sidebar.props('todoOrderSaving')).toBe(false)
+  })
+
+  it('loads TODO ordering independently after a workspace change', async () => {
+    appApiMock.LoadTodoProjectUIState
+      .mockResolvedValueOnce(
+        todoProjectUIStateFile({
+          todoSortMode: 'manual',
+          todoOrders: { notStarted: ['todo-a'], inProgress: [] }
+        })
+      )
+      .mockResolvedValueOnce(
+        todoProjectUIStateFile({
+          todoSortMode: 'time',
+          todoOrders: { notStarted: ['todo-b'], inProgress: [] }
+        })
+      )
+    appApiMock.ListProjects.mockResolvedValue(projectState({ todos: [todo({ id: 'todo-a' })] }))
+    const wrapper = await mountReadyApp()
+
+    runtimeMock.handlers['workspace-state'](
+      projectState({
+        currentWorkspace: workspace({ name: 'Customer B', path: '/work/customer-b', dataPath: '/work/customer-b/.data' }),
+        todos: [todo({ id: 'todo-b' })]
+      })
+    )
+    await flushPromises()
+
+    const sidebar = wrapper.findComponent(ProjectSidebar)
+    expect(sidebar.props('todoSortMode')).toBe('time')
+    expect(sidebar.props('todoOrders')).toEqual({ notStarted: ['todo-b'], inProgress: [] })
+  })
+
+  it('ignores a pending TODO order save after the workspace scope changes', async () => {
+    const pendingSave = deferred()
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({ todos: [todo({ id: 'todo-a' }), todo({ id: 'todo-b' })] })
+    )
+    appApiMock.LoadTodoProjectUIState
+      .mockResolvedValueOnce(
+        todoProjectUIStateFile({
+          todoSortMode: 'manual',
+          todoOrdersInitialized: true,
+          todoOrders: { notStarted: ['todo-a', 'todo-b'], inProgress: [] }
+        })
+      )
+      .mockResolvedValueOnce(
+        todoProjectUIStateFile({
+          todoSortMode: 'time',
+          todoOrders: { notStarted: ['todo-c'], inProgress: [] }
+        })
+      )
+    appApiMock.SaveTodoListUIState.mockReturnValueOnce(pendingSave.promise)
+    const wrapper = await mountReadyApp()
+    const sidebar = wrapper.findComponent(ProjectSidebar)
+
+    sidebar.vm.$emit('todo-order-change', {
+      status: 'not-started',
+      previousOrder: ['todo-a', 'todo-b'],
+      order: ['todo-b', 'todo-a']
+    })
+    await nextTick()
+    expect(sidebar.props('todoOrderSaving')).toBe(true)
+
+    runtimeMock.handlers['workspace-state'](
+      projectState({
+        currentWorkspace: workspace({ name: 'Customer B', path: '/work/customer-b', dataPath: '/work/customer-b/.data' }),
+        todos: [todo({ id: 'todo-c' })]
+      })
+    )
+    await flushPromises()
+
+    expect(sidebar.props('todoSortMode')).toBe('time')
+    expect(sidebar.props('todoOrders')).toEqual({ notStarted: ['todo-c'], inProgress: [] })
+    expect(sidebar.props('todoOrderSaving')).toBe(false)
+
+    pendingSave.resolve(
+      todoProjectUIStateFile({
+        todoSortMode: 'manual',
+        todoOrdersInitialized: true,
+        todoOrders: { notStarted: ['todo-b', 'todo-a'], inProgress: [] }
+      })
+    )
+    await flushPromises()
+
+    expect(sidebar.props('todoSortMode')).toBe('time')
+    expect(sidebar.props('todoOrders')).toEqual({ notStarted: ['todo-c'], inProgress: [] })
+  })
+
+  it('ignores a late TODO UI state load from an earlier workspace transition', async () => {
+    const workspaceBLoad = deferred()
+    appApiMock.ListProjects.mockResolvedValue(projectState({ todos: [todo({ id: 'todo-a' })] }))
+    appApiMock.LoadTodoProjectUIState
+      .mockResolvedValueOnce(todoProjectUIStateFile({ todoOrders: { notStarted: ['todo-a'], inProgress: [] } }))
+      .mockReturnValueOnce(workspaceBLoad.promise)
+      .mockResolvedValueOnce(
+        todoProjectUIStateFile({
+          todoSortMode: 'time',
+          todoOrders: { notStarted: ['todo-c'], inProgress: [] }
+        })
+      )
+    const wrapper = await mountReadyApp()
+
+    runtimeMock.handlers['workspace-state'](
+      projectState({
+        currentWorkspace: workspace({ name: 'Customer B', path: '/work/customer-b', dataPath: '/work/customer-b/.data' }),
+        todos: [todo({ id: 'todo-b' })]
+      })
+    )
+    await nextTick()
+    runtimeMock.handlers['workspace-state'](
+      projectState({
+        currentWorkspace: workspace({ name: 'Customer C', path: '/work/customer-c', dataPath: '/work/customer-c/.data' }),
+        todos: [todo({ id: 'todo-c' })]
+      })
+    )
+    await flushPromises()
+
+    const sidebar = wrapper.findComponent(ProjectSidebar)
+    expect(sidebar.props('todoSortMode')).toBe('time')
+    expect(sidebar.props('todoOrders')).toEqual({ notStarted: ['todo-c'], inProgress: [] })
+
+    workspaceBLoad.resolve(
+      todoProjectUIStateFile({
+        todoSortMode: 'manual',
+        todoOrdersInitialized: true,
+        todoOrders: { notStarted: ['todo-b'], inProgress: [] }
+      })
+    )
+    await flushPromises()
+
+    expect(sidebar.props('todoSortMode')).toBe('time')
+    expect(sidebar.props('todoOrders')).toEqual({ notStarted: ['todo-c'], inProgress: [] })
+  })
+
+  it('ignores an older same-workspace UI load after a sort save succeeds', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        todos: [
+          todo({ id: 'todo-low', priority: 'low' }),
+          todo({ id: 'todo-high', priority: 'high' })
+        ]
+      })
+    )
+    const wrapper = await mountReadyApp()
+    const pendingLoad = deferred()
+    appApiMock.LoadTodoProjectUIState.mockReturnValueOnce(pendingLoad.promise)
+
+    runtimeMock.handlers['workspace-state'](
+      projectState({
+        todos: [
+          todo({ id: 'todo-low', priority: 'low' }),
+          todo({ id: 'todo-high', priority: 'high' })
+        ]
+      })
+    )
+    await nextTick()
+    await wrapper.find('[data-testid="sort-active-todos-manual"]').trigger('click')
+    await flushPromises()
+
+    const sidebar = wrapper.findComponent(ProjectSidebar)
+    expect(sidebar.props('todoSortMode')).toBe('manual')
+    expect(sidebar.props('todoOrders').notStarted).toEqual(['todo-high', 'todo-low'])
+
+    pendingLoad.resolve(
+      todoProjectUIStateFile({
+        todoSortMode: 'priority',
+        todoOrdersInitialized: false,
+        todoOrders: { notStarted: ['todo-low', 'todo-high'], inProgress: [] }
+      })
+    )
+    await flushPromises()
+
+    expect(sidebar.props('todoSortMode')).toBe('manual')
+    expect(sidebar.props('todoOrders').notStarted).toEqual(['todo-high', 'todo-low'])
+  })
+
+  it('ignores a same-workspace UI load that starts during a pending sort save', async () => {
+    const pendingSave = deferred()
+    const pendingLoad = deferred()
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        todos: [
+          todo({ id: 'todo-low', priority: 'low' }),
+          todo({ id: 'todo-high', priority: 'high' })
+        ]
+      })
+    )
+    appApiMock.SaveTodoListUIState.mockReturnValueOnce(pendingSave.promise)
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="sort-active-todos-manual"]').trigger('click')
+    await nextTick()
+    appApiMock.LoadTodoProjectUIState.mockReturnValueOnce(pendingLoad.promise)
+    runtimeMock.handlers['workspace-state'](
+      projectState({
+        todos: [
+          todo({ id: 'todo-low', priority: 'low' }),
+          todo({ id: 'todo-high', priority: 'high' })
+        ]
+      })
+    )
+    await nextTick()
+
+    pendingSave.resolve(
+      todoProjectUIStateFile({
+        todoSortMode: 'manual',
+        todoOrdersInitialized: true,
+        todoOrders: { notStarted: ['todo-high', 'todo-low'], inProgress: [] }
+      })
+    )
+    await flushPromises()
+    const sidebar = wrapper.findComponent(ProjectSidebar)
+    expect(sidebar.props('todoSortMode')).toBe('manual')
+
+    pendingLoad.resolve(
+      todoProjectUIStateFile({
+        todoSortMode: 'priority',
+        todoOrdersInitialized: false,
+        todoOrders: { notStarted: ['todo-low', 'todo-high'], inProgress: [] }
+      })
+    )
+    await flushPromises()
+
+    expect(sidebar.props('todoSortMode')).toBe('manual')
+    expect(sidebar.props('todoOrders').notStarted).toEqual(['todo-high', 'todo-low'])
+  })
+
+  it('reconciles manual orders after creating, moving, and deleting TODOs', async () => {
+    const initialTodos = [
+      todo({ id: 'todo-a', status: 'not-started' }),
+      todo({ id: 'todo-b', status: 'not-started' }),
+      todo({ id: 'todo-c', status: 'in-progress' })
+    ]
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({ projects: [], todos: initialTodos, todoProjects: [], terminals: [] })
+    )
+    appApiMock.LoadTodoProjectUIState.mockResolvedValue(
+      todoProjectUIStateFile({
+        todoSortMode: 'manual',
+        todoOrdersInitialized: true,
+        todoOrders: { notStarted: ['todo-b', 'todo-a'], inProgress: ['todo-c'] }
+      })
+    )
+    appApiMock.CreateTodo.mockResolvedValue(
+      projectState({
+        projects: [],
+        todos: [...initialTodos, todo({ id: 'todo-d', title: 'New task', status: 'not-started' })],
+        todoProjects: [],
+        terminals: []
+      })
+    )
+    appApiMock.ChangeTodoStatus.mockResolvedValue(
+      projectState({
+        projects: [],
+        todos: [
+          todo({ id: 'todo-a', status: 'not-started' }),
+          todo({ id: 'todo-b', status: 'in-progress' }),
+          todo({ id: 'todo-c', status: 'in-progress' }),
+          todo({ id: 'todo-d', status: 'not-started' })
+        ],
+        todoProjects: [],
+        terminals: []
+      })
+    )
+    appApiMock.DeleteTodo.mockResolvedValue(
+      projectState({
+        projects: [],
+        todos: [
+          todo({ id: 'todo-b', status: 'in-progress' }),
+          todo({ id: 'todo-c', status: 'in-progress' }),
+          todo({ id: 'todo-d', status: 'not-started' })
+        ],
+        todoProjects: [],
+        terminals: []
+      })
+    )
+    const wrapper = await mountReadyApp()
+    const sidebar = wrapper.findComponent(ProjectSidebar)
+
+    await wrapper.find('[data-testid="new-todo"]').trigger('click')
+    await nextTick()
+    await wrapper.find('[data-testid="todo-name-input"]').setValue('New task')
+    await wrapper.find('[data-testid="todo-create-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(sidebar.props('todoOrders')).toEqual({
+      notStarted: ['todo-b', 'todo-a', 'todo-d'],
+      inProgress: ['todo-c']
+    })
+
+    sidebar.vm.$emit('change-todo-status', 'todo-b', 'in-progress')
+    await flushPromises()
+
+    expect(sidebar.props('todoOrders')).toEqual({
+      notStarted: ['todo-a', 'todo-d'],
+      inProgress: ['todo-c', 'todo-b']
+    })
+
+    sidebar.vm.$emit('delete-todo', 'todo-a')
+    await flushPromises()
+
+    expect(sidebar.props('todoOrders')).toEqual({
+      notStarted: ['todo-d'],
+      inProgress: ['todo-c', 'todo-b']
+    })
   })
 
   it('keeps current TODO view and workspace sidebar width when the user selects a TODO project item', async () => {
@@ -6324,8 +6843,14 @@ function lifecycleScriptStatus(overrides = {}) {
 
 function todoProjectUIStateFile(overrides = {}) {
   return {
-    version: 1,
+    version: 2,
     sidebarWidth: 280,
+    todoSortMode: 'priority',
+    todoOrdersInitialized: false,
+    todoOrders: {
+      notStarted: [],
+      inProgress: []
+    },
     todoProjects: {},
     ...overrides
   }

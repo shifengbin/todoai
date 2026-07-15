@@ -28,6 +28,8 @@ var ErrWorkspaceRequired = errors.New("open a project first")
 type App struct {
 	ctx                           context.Context
 	workspace                     *WorkspaceManager
+	workspaceBindingMu            sync.RWMutex
+	boundWorkspacePath            string
 	projects                      *ProjectManager
 	projectConfigPath             string
 	globalProjectCandidatesPath   string
@@ -120,6 +122,7 @@ func NewAppWithConfigAndShellStarter(configPath string, starter ShellStarter, op
 			Available: directoryAvailable(configDir),
 		}
 		app.workspace.current = &workspace
+		app.boundWorkspacePath = workspace.Path
 	}
 	app.lifecycleScripts.ResetScope(app.workspacePathOrEmpty())
 	app.rebuildShellSessionManager()
@@ -1139,40 +1142,56 @@ func (a *App) DeleteCompletedTodos(todoIDs []string) (ProjectState, error) {
 }
 
 func (a *App) LoadTodoProjectUIState() (TodoProjectUIStateFile, error) {
-	if !a.hasWorkspace() {
+	a.workspaceBindingMu.RLock()
+	defer a.workspaceBindingMu.RUnlock()
+	if !a.hasBoundWorkspaceLocked() {
 		return TodoProjectUIStateFile{}, ErrWorkspaceRequired
-	}
-	return a.todoProjectUIState.Load()
-}
-
-func (a *App) SaveTodoProjectUIState(todoProjectID string, state TodoProjectUIState) error {
-	if !a.hasWorkspace() {
-		return ErrWorkspaceRequired
 	}
 	current, err := a.todoProjectUIState.Load()
 	if err != nil {
-		return err
+		return TodoProjectUIStateFile{}, err
 	}
-	_, err = a.todoProjectUIState.UpsertTodoProject(current, todoProjectID, state)
+	projectState, err := a.projects.Load()
+	if err != nil {
+		return TodoProjectUIStateFile{}, err
+	}
+	return normalizeTodoListUIState(current, projectState.Todos), nil
+}
+
+func (a *App) SaveTodoListUIState(listState TodoListUIState) (TodoProjectUIStateFile, error) {
+	a.workspaceBindingMu.RLock()
+	defer a.workspaceBindingMu.RUnlock()
+	if !a.hasBoundWorkspaceLocked() {
+		return TodoProjectUIStateFile{}, ErrWorkspaceRequired
+	}
+	projectState, err := a.projects.Load()
+	if err != nil {
+		return TodoProjectUIStateFile{}, err
+	}
+	return a.todoProjectUIState.UpsertTodoListUIState(listState, projectState.Todos)
+}
+
+func (a *App) SaveTodoProjectUIState(todoProjectID string, state TodoProjectUIState) error {
+	a.workspaceBindingMu.RLock()
+	defer a.workspaceBindingMu.RUnlock()
+	if !a.hasBoundWorkspaceLocked() {
+		return ErrWorkspaceRequired
+	}
+	_, err := a.todoProjectUIState.UpsertTodoProject(todoProjectID, state)
 	return err
 }
 
 func (a *App) SaveTodoSidebarWidth(sidebarWidth int) error {
-	if !a.hasWorkspace() {
+	a.workspaceBindingMu.RLock()
+	defer a.workspaceBindingMu.RUnlock()
+	if !a.hasBoundWorkspaceLocked() {
 		return ErrWorkspaceRequired
 	}
-	current, err := a.todoProjectUIState.Load()
-	if err != nil {
-		return err
-	}
-	_, err = a.todoProjectUIState.UpsertSidebarWidth(current, sidebarWidth)
+	_, err := a.todoProjectUIState.UpsertSidebarWidth(sidebarWidth)
 	return err
 }
 
 func (a *App) DeleteTodoProjectUIState(todoProjectIDs []string) error {
-	if !a.hasWorkspace() {
-		return ErrWorkspaceRequired
-	}
 	return a.deleteTodoProjectUIState(todoProjectIDs)
 }
 
@@ -1797,16 +1816,23 @@ func (a *App) hasWorkspace() bool {
 }
 
 func (a *App) bindWorkspace(workspace Workspace) {
+	a.workspaceBindingMu.Lock()
+	defer a.workspaceBindingMu.Unlock()
+
 	a.projects = NewProjectManager(
 		filepath.Join(workspace.DataPath, "projects.json"),
 		WithGlobalProjectCandidatesPath(a.globalProjectCandidatesPath),
 	)
 	a.history = NewTerminalHistoryStore(workspace.DataPath)
 	a.todoProjectUIState = NewTodoProjectUIStateStore(workspace.DataPath)
+	a.boundWorkspacePath = workspace.Path
 	a.rebuildShellSessionManager()
 }
 
 func (a *App) bindNoWorkspace() {
+	a.workspaceBindingMu.Lock()
+	defer a.workspaceBindingMu.Unlock()
+
 	a.projects = NewProjectManager(
 		filepath.Join(os.TempDir(), applicationID, "closed-workspace", "projects.json"),
 		WithGlobalProjectCandidatesPath(a.globalProjectCandidatesPath),
@@ -1814,6 +1840,7 @@ func (a *App) bindNoWorkspace() {
 	closedWorkspaceDir := filepath.Join(os.TempDir(), applicationID, "closed-workspace")
 	a.history = NewTerminalHistoryStore(closedWorkspaceDir)
 	a.todoProjectUIState = NewTodoProjectUIStateStore(closedWorkspaceDir)
+	a.boundWorkspacePath = ""
 	a.rebuildShellSessionManager()
 }
 
@@ -1821,12 +1848,21 @@ func (a *App) deleteTodoProjectUIState(todoProjectIDs []string) error {
 	if len(todoProjectIDs) == 0 {
 		return nil
 	}
-	current, err := a.todoProjectUIState.Load()
-	if err != nil {
-		return err
+	a.workspaceBindingMu.RLock()
+	defer a.workspaceBindingMu.RUnlock()
+	if !a.hasBoundWorkspaceLocked() {
+		return ErrWorkspaceRequired
 	}
-	_, err = a.todoProjectUIState.DeleteTodoProjects(current, todoProjectIDs)
+	_, err := a.todoProjectUIState.DeleteTodoProjects(todoProjectIDs)
 	return err
+}
+
+func (a *App) hasBoundWorkspaceLocked() bool {
+	if a.workspace == nil || a.boundWorkspacePath == "" {
+		return false
+	}
+	current := a.workspace.CurrentWorkspace()
+	return current != nil && current.Path == a.boundWorkspacePath
 }
 
 func todoProjectIDsForTodo(todoProjects []TodoProject, todoID string) []string {

@@ -11,6 +11,7 @@ import {
   Eye,
   FolderGit2,
   FolderPlus,
+  GripVertical,
   ListChevronsDownUp,
   ListChevronsUpDown,
   ListTodo,
@@ -21,6 +22,7 @@ import {
   TriangleAlert,
   Trash2
 } from '@lucide/vue'
+import { createTodoSortable } from '../todoSortable'
 
 const props = defineProps({
   projects: {
@@ -75,6 +77,22 @@ const props = defineProps({
     type: String,
     default: ''
   },
+  todoSortMode: {
+    type: String,
+    default: ''
+  },
+  todoOrders: {
+    type: Object,
+    default: () => ({ notStarted: [], inProgress: [] })
+  },
+  todoOrdersInitialized: {
+    type: Boolean,
+    default: false
+  },
+  todoOrderSaving: {
+    type: Boolean,
+    default: false
+  },
   completedMergeStatuses: {
     type: Object,
     default: () => ({})
@@ -119,11 +137,16 @@ const emit = defineEmits([
   'open-todo-folder',
   'todo-expanded',
   'update:todo-view',
-  'todo-view-change'
+  'todo-view-change',
+  'todo-sort-mode-change',
+  'todo-order-change'
 ])
 
 const internalTodoView = ref('not-started')
-const activeTodoSortMode = ref('priority')
+const internalTodoSortMode = ref('priority')
+const todoListElement = ref(null)
+const todoWorkspaceScrollElement = ref(null)
+const isTodoReordering = ref(false)
 const collapsedTodoIds = ref(new Set())
 const knownTodoIds = ref(new Set(props.todos.map((todo) => todo.id)))
 const openLaunchTarget = ref({ kind: '', id: '' })
@@ -151,6 +174,9 @@ let descriptionTooltipTimer = null
 let lifecycleErrorTooltipTimer = null
 let lifecycleErrorTooltipHideTimer = null
 let lifecycleErrorTooltipTrigger = null
+let todoSortable = null
+let todoReorderPreviousOrder = []
+let todoReorderSession = 0
 const descriptionTooltipDelayMs = 600
 const descriptionTooltipOffset = 12
 const lifecycleErrorTooltipDelayMs = 600
@@ -172,6 +198,8 @@ const terminalLaunchOptions = computed(() => [
 ])
 
 const todoView = computed(() => normalizedTodoView(props.todoView || internalTodoView.value))
+const activeTodoSortMode = computed(() => normalizedTodoSortMode(props.todoSortMode || internalTodoSortMode.value))
+const todoInteractionsLocked = computed(() => props.todoOrderSaving || isTodoReordering.value)
 
 const todoPriorityOrder = {
   high: 0,
@@ -197,11 +225,20 @@ const selectedCompletedTodoIdsList = computed(() => {
 })
 
 function sortedOpenTodos(status) {
-  return props.todos
+  return sortedOpenTodosForMode(status, activeTodoSortMode.value)
+}
+
+function sortedOpenTodosForMode(status, mode) {
+  const entries = props.todos
     .map((todo, index) => ({ todo, index }))
     .filter(({ todo }) => todoWorkflowStatus(todo) === status)
-    .sort(compareActiveTodoEntries)
-    .map(({ todo }) => todo)
+  if (mode === 'manual') {
+    const ranks = new Map(manualTodoOrder(status).map((todoId, index) => [todoId, index]))
+    entries.sort((left, right) => compareManualTodoEntries(left, right, ranks))
+  } else {
+    entries.sort((left, right) => compareActiveTodoEntries(left, right, mode))
+  }
+  return entries.map(({ todo }) => todo)
 }
 
 function sortedCompletedTodos() {
@@ -523,6 +560,9 @@ function terminalListId(todoProjectId) {
 }
 
 function toggleTodoBranch(todoId) {
+  if (todoInteractionsLocked.value) {
+    return
+  }
   const nextCollapsedTodoIds = new Set(collapsedTodoIds.value)
   if (nextCollapsedTodoIds.has(todoId)) {
     nextCollapsedTodoIds.delete(todoId)
@@ -534,7 +574,7 @@ function toggleTodoBranch(todoId) {
 }
 
 function collapseAllTodos() {
-  if (!hasActiveTodos.value) {
+  if (!hasActiveTodos.value || todoInteractionsLocked.value) {
     return
   }
 
@@ -546,7 +586,7 @@ function collapseAllTodos() {
 }
 
 function expandAllTodos() {
-  if (!hasActiveTodos.value) {
+  if (!hasActiveTodos.value || todoInteractionsLocked.value) {
     return
   }
 
@@ -649,6 +689,9 @@ function confirmTodoProjectRemoval(todoProjectId) {
 }
 
 function openTodoActionPopover(todoId, action) {
+  if (todoInteractionsLocked.value) {
+    return
+  }
   hideTodoDescriptionTooltip()
   closeTerminalLaunchMenu()
   closeTodoProjectRemovePopover()
@@ -664,6 +707,9 @@ function closeTodoActionPopover() {
 }
 
 function openTodoContextMenu(todoId, event) {
+  if (todoInteractionsLocked.value) {
+    return
+  }
   event.preventDefault()
   hideTodoDescriptionTooltip()
   closeTerminalLaunchMenu()
@@ -677,6 +723,9 @@ function openTodoContextMenu(todoId, event) {
 }
 
 function openTodoContextMenuFromButton(todoId, event) {
+  if (todoInteractionsLocked.value) {
+    return
+  }
   event.stopPropagation()
   const rect = event.currentTarget.getBoundingClientRect()
   hideTodoDescriptionTooltip()
@@ -753,6 +802,9 @@ function confirmTodoAction(todoId, action) {
 }
 
 function changeTodoStatus(todoId, status) {
+  if (todoInteractionsLocked.value) {
+    return
+  }
   hideTodoDescriptionTooltip()
   setTodoView(status)
   emit('change-todo-status', todoId, status)
@@ -1068,11 +1120,20 @@ function terminalDisplayName(terminal) {
   return terminal.currentCommand || terminal.shellName || 'shell'
 }
 
-function compareActiveTodoEntries(left, right) {
-  if (activeTodoSortMode.value === 'time') {
+function compareActiveTodoEntries(left, right, mode = activeTodoSortMode.value) {
+  if (mode === 'time') {
     return compareActiveTodosByTime(left, right)
   }
   return compareActiveTodosByPriority(left, right)
+}
+
+function compareManualTodoEntries(left, right, ranks) {
+  const leftRank = ranks.has(left.todo.id) ? ranks.get(left.todo.id) : Number.MAX_SAFE_INTEGER
+  const rightRank = ranks.has(right.todo.id) ? ranks.get(right.todo.id) : Number.MAX_SAFE_INTEGER
+  if (leftRank !== rightRank) {
+    return leftRank - rightRank
+  }
+  return left.index - right.index
 }
 
 function compareActiveTodosByPriority(left, right) {
@@ -1107,12 +1168,48 @@ function compareCompletedTodoEntries(left, right) {
 }
 
 function setActiveTodoSortMode(mode) {
-  if (!['priority', 'time'].includes(mode)) {
+  if (!['priority', 'time', 'manual'].includes(mode) || todoInteractionsLocked.value) {
     return
   }
-  activeTodoSortMode.value = mode
+  const previousMode = activeTodoSortMode.value
+  internalTodoSortMode.value = mode
+  const change = { mode }
+  if (mode === 'manual' && !props.todoOrdersInitialized) {
+    change.todoOrders = {
+      notStarted: sortedOpenTodosForMode('not-started', previousMode).map((todo) => todo.id),
+      inProgress: sortedOpenTodosForMode('in-progress', previousMode).map((todo) => todo.id)
+    }
+  }
+  emit('todo-sort-mode-change', change)
 }
 
+function moveTodoByKeyboard(todoId, direction) {
+  if (todoInteractionsLocked.value || activeTodoSortMode.value !== 'manual' || !isOpenTodoView.value) {
+    return
+  }
+  const previousOrder = currentOpenTodos.value.map((todo) => todo.id)
+  const currentIndex = previousOrder.indexOf(todoId)
+  const nextIndex = currentIndex + direction
+  if (currentIndex < 0 || nextIndex < 0 || nextIndex >= previousOrder.length) {
+    return
+  }
+  const order = [...previousOrder]
+  const [movedTodoId] = order.splice(currentIndex, 1)
+  order.splice(nextIndex, 0, movedTodoId)
+  emit('todo-order-change', {
+    status: todoView.value,
+    previousOrder,
+    order
+  })
+}
+
+function normalizedTodoSortMode(mode) {
+  return ['priority', 'time', 'manual'].includes(mode) ? mode : 'priority'
+}
+
+function manualTodoOrder(status) {
+  return status === 'in-progress' ? props.todoOrders?.inProgress || [] : props.todoOrders?.notStarted || []
+}
 
 function todoPriorityRank(todo) {
   return todoPriorityOrder[todoPriority(todo)]
@@ -1305,20 +1402,137 @@ function completedMergeStatusTitle(status) {
   return 'Merge status unknown'
 }
 
+function syncTodoSortable() {
+  destroyTodoSortable()
+  if (!isOpenTodoView.value || activeTodoSortMode.value !== 'manual' || !todoListElement.value) {
+    return
+  }
+  todoSortable = createTodoSortable(todoListElement.value, {
+    group: false,
+    handle: '.todo-drag-handle',
+    draggable: '.todo-node',
+    dataIdAttr: 'data-id',
+    forceFallback: true,
+    fallbackOnBody: false,
+    fallbackTolerance: 4,
+    animation: 150,
+    ghostClass: 'todo-sortable-ghost',
+    chosenClass: 'todo-sortable-chosen',
+    dragClass: 'todo-sortable-drag',
+    disabled: props.todoOrderSaving,
+    scroll: todoWorkspaceScrollElement.value,
+    scrollSensitivity: 36,
+    scrollSpeed: 12,
+    onChoose: beginTodoReordering,
+    onStart: captureTodoReorderStart,
+    onEnd: finishTodoReordering,
+    onUnchoose: cancelTodoReordering
+  })
+}
+
+function destroyTodoSortable() {
+  cleanupTodoReordering()
+  todoSortable?.destroy()
+  todoSortable = null
+}
+
+function beginTodoReordering() {
+  todoReorderSession += 1
+  closeFloatingMenus()
+  isTodoReordering.value = true
+}
+
+function captureTodoReorderStart() {
+  todoReorderPreviousOrder = currentOpenTodos.value.map((todo) => todo.id)
+}
+
+function finishTodoReordering(event = {}) {
+  const previousOrder = [...todoReorderPreviousOrder]
+  if (isTodoReorderCancelled(event)) {
+    restoreTodoOrderInDOM(previousOrder)
+    cleanupTodoReordering()
+    return
+  }
+  const order = todoOrderFromDOM()
+  const status = todoView.value
+  const changed = order.length === previousOrder.length && order.some((todoId, index) => todoId !== previousOrder[index])
+  cleanupTodoReordering()
+  if (!changed) {
+    return
+  }
+  emit('todo-order-change', {
+    status,
+    previousOrder,
+    order
+  })
+}
+
+function isTodoReorderCancelled(event) {
+  return ['pointercancel', 'touchcancel', 'dragend'].includes(event?.originalEvent?.type)
+}
+
+function restoreTodoOrderInDOM(order) {
+  if (!todoListElement.value) {
+    return
+  }
+  const elementsByTodoId = new Map(
+    Array.from(todoListElement.value.children).map((element) => [element.dataset.id || '', element])
+  )
+  for (const todoId of order) {
+    const element = elementsByTodoId.get(todoId)
+    if (element) {
+      todoListElement.value.appendChild(element)
+    }
+  }
+}
+
+function cancelTodoReordering() {
+  const session = todoReorderSession
+  isTodoReordering.value = false
+  queueMicrotask(() => {
+    if (session === todoReorderSession) {
+      cleanupTodoReordering()
+    }
+  })
+}
+
+function cleanupTodoReordering() {
+  todoReorderSession += 1
+  isTodoReordering.value = false
+  todoReorderPreviousOrder = []
+}
+
+function todoOrderFromDOM() {
+  if (!todoListElement.value) {
+    return []
+  }
+  return Array.from(todoListElement.value.children)
+    .filter((element) => element.classList.contains('todo-node'))
+    .map((element) => element.dataset.id || '')
+    .filter(Boolean)
+}
+
 onMounted(() => {
   window.addEventListener('click', closeFloatingMenus)
   window.addEventListener('resize', closeTerminalLaunchMenu)
   window.addEventListener('scroll', closeTerminalLaunchMenu, true)
+  void nextTick(syncTodoSortable)
 })
 
 onBeforeUnmount(() => {
   hideTodoDescriptionTooltip()
   hideLifecycleErrorTooltip()
   descriptionTooltipLayer.remove()
+  destroyTodoSortable()
   window.removeEventListener('click', closeFloatingMenus)
   window.removeEventListener('resize', closeTerminalLaunchMenu)
   window.removeEventListener('scroll', closeTerminalLaunchMenu, true)
 })
+
+watch(
+  [todoView, activeTodoSortMode, () => props.todoOrderSaving],
+  () => void nextTick(syncTodoSortable)
+)
 
 watch(
   () => props.todos,
@@ -1504,7 +1718,7 @@ watch(
           </button>
         </div>
 
-        <div class="todo-workspace-scroll" data-testid="todo-workspace-scroll">
+        <div ref="todoWorkspaceScrollElement" class="todo-workspace-scroll" data-testid="todo-workspace-scroll">
           <div
             class="todo-tree-toolbar"
             data-testid="todo-tree-toolbar"
@@ -1519,6 +1733,7 @@ watch(
               :class="{ active: activeTodoSortMode === 'priority' }"
               data-testid="sort-active-todos-priority"
               :aria-pressed="activeTodoSortMode === 'priority'"
+              :disabled="todoInteractionsLocked"
               @click="setActiveTodoSortMode('priority')"
             >
               Priority
@@ -1529,16 +1744,28 @@ watch(
               :class="{ active: activeTodoSortMode === 'time' }"
               data-testid="sort-active-todos-time"
               :aria-pressed="activeTodoSortMode === 'time'"
+              :disabled="todoInteractionsLocked"
               @click="setActiveTodoSortMode('time')"
             >
               Time
+            </button>
+            <button
+              type="button"
+              class="todo-sort-option"
+              :class="{ active: activeTodoSortMode === 'manual' }"
+              data-testid="sort-active-todos-manual"
+              :aria-pressed="activeTodoSortMode === 'manual'"
+              :disabled="todoInteractionsLocked"
+              @click="setActiveTodoSortMode('manual')"
+            >
+              Manual
             </button>
           </div>
           <button
             type="button"
             class="todo-tree-action"
             data-testid="collapse-all-todos"
-            :disabled="!hasActiveTodos"
+            :disabled="!hasActiveTodos || todoInteractionsLocked"
             aria-label="Collapse all TODOs"
             title="Collapse all TODOs"
             @click="collapseAllTodos"
@@ -1549,7 +1776,7 @@ watch(
             type="button"
             class="todo-tree-action"
             data-testid="expand-all-todos"
-            :disabled="!hasActiveTodos"
+            :disabled="!hasActiveTodos || todoInteractionsLocked"
             aria-label="Expand all TODOs"
             title="Expand all TODOs"
             @click="expandAllTodos"
@@ -1604,7 +1831,16 @@ watch(
         </template>
           </div>
 
-          <div v-if="isOpenTodoView" class="todo-list" :data-testid="currentOpenTodoListTestId">
+          <div
+            v-if="isOpenTodoView"
+            ref="todoListElement"
+            class="todo-list"
+            :class="{
+              'is-reordering': isTodoReordering,
+              'is-interaction-locked': todoInteractionsLocked
+            }"
+            :data-testid="currentOpenTodoListTestId"
+          >
         <div v-if="currentOpenTodos.length === 0" class="sidebar-empty">
           {{ todoView === 'in-progress' ? 'No in-progress TODOs' : 'No not-started TODOs' }}
         </div>
@@ -1612,6 +1848,7 @@ watch(
         <div
           v-for="todo in currentOpenTodos"
           :key="todo.id"
+          :data-id="todo.id"
           class="todo-node"
           :class="{
             active: isTodoActive(todo),
@@ -1622,7 +1859,14 @@ watch(
         >
           <div
             class="todo-header-row"
-            :class="[{ active: isTodoActive(todo) }, todoPriorityClass(todo), collapsedTodoActivityClass(todo)]"
+            :class="[
+              {
+                active: isTodoActive(todo),
+                'has-drag-handle': activeTodoSortMode === 'manual'
+              },
+              todoPriorityClass(todo),
+              collapsedTodoActivityClass(todo)
+            ]"
             :data-activity-state="collapsedTodoFeedbackState(todo) || null"
             @dblclick="toggleTodoBranch(todo.id)"
           >
@@ -1634,11 +1878,29 @@ watch(
               :aria-label="`${isTodoCollapsed(todo.id) ? 'Expand' : 'Collapse'} ${todo.title}`"
               :data-testid="`toggle-todo-${todo.id}`"
               :title="isTodoCollapsed(todo.id) ? 'Expand TODO' : 'Collapse TODO'"
+              :disabled="todoInteractionsLocked"
               @click.stop="toggleTodoBranch(todo.id)"
               @dblclick.stop
             >
               <ChevronRight v-if="isTodoCollapsed(todo.id)" :size="16" />
               <ChevronDown v-else :size="16" />
+            </button>
+
+            <button
+              v-if="activeTodoSortMode === 'manual'"
+              type="button"
+              class="todo-drag-handle"
+              :data-testid="`drag-todo-${todo.id}`"
+              :aria-label="`Drag ${todo.title} to reorder`"
+              aria-keyshortcuts="ArrowUp ArrowDown"
+              :aria-disabled="todoInteractionsLocked"
+              title="Drag to reorder"
+              @click.stop
+              @dblclick.stop
+              @keydown.up.prevent.stop="moveTodoByKeyboard(todo.id, -1)"
+              @keydown.down.prevent.stop="moveTodoByKeyboard(todo.id, 1)"
+            >
+              <GripVertical :size="15" />
             </button>
 
             <div
@@ -1693,6 +1955,7 @@ watch(
                   :data-testid="`todo-menu-button-${todo.id}`"
                   :title="`${todo.title} menu`"
                   aria-label="Open TODO menu"
+                  :disabled="todoInteractionsLocked"
                   @click.stop="openTodoContextMenuFromButton(todo.id, $event)"
                 >
                   <EllipsisVertical :size="14" />
@@ -1734,6 +1997,7 @@ watch(
                 :data-testid="`mark-todo-in-progress-${todo.id}`"
                 title="Mark in progress"
                 aria-label="Mark TODO in progress"
+                :disabled="todoInteractionsLocked"
                 @click.stop="changeTodoStatus(todo.id, 'in-progress')"
               >
                 <Play :size="14" />
@@ -1745,6 +2009,7 @@ watch(
                 :data-testid="`add-task-terminal-${todo.id}`"
                 title="New task terminal"
                 aria-label="New task terminal"
+                :disabled="todoInteractionsLocked"
                 :aria-expanded="isTerminalLaunchMenuOpen('task', todo.id)"
                 :aria-controls="`terminal-launch-menu-task-${todo.id}`"
                 @click.stop="toggleTaskTerminalLaunchMenu(todo.id, $event)"
@@ -1777,6 +2042,7 @@ watch(
                   class="todo-action-button"
                   :data-testid="`complete-todo-${todo.id}`"
                   title="Complete TODO"
+                  :disabled="todoInteractionsLocked"
                   :aria-expanded="isTodoActionPopoverOpen(todo.id, 'complete')"
                   :aria-controls="`complete-todo-popover-${todo.id}`"
                   @click.stop="openTodoActionPopover(todo.id, 'complete')"

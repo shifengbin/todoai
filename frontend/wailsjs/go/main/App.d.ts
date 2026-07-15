@@ -112,6 +112,8 @@ export function SaveTodoInitializationFiles(arg1:Array<main.TodoInitializationFi
 
 export function SaveTodoLifecycleScripts(arg1:Array<main.TodoLifecycleScriptTemplate>):Promise<main.TerminalSettingsState>;
 
+export function SaveTodoListUIState(arg1:main.TodoListUIState):Promise<main.TodoProjectUIStateFile>;
+
 export function SaveTodoProjectUIState(arg1:string,arg2:main.TodoProjectUIState):Promise<void>;
 
 export function SaveTodoSidebarWidth(arg1:number):Promise<void>;

@@ -1,10 +1,26 @@
 import { mount } from '@vue/test-utils'
 import { readFileSync } from 'node:fs'
 import { nextTick } from 'vue'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ProjectSidebar from './ProjectSidebar.vue'
 
+const todoSortableMock = vi.hoisted(() => ({
+  create: vi.fn()
+}))
+
+vi.mock('../todoSortable', () => ({
+  createTodoSortable: todoSortableMock.create
+}))
+
 describe('ProjectSidebar', () => {
+  beforeEach(() => {
+    todoSortableMock.create.mockReset()
+    todoSortableMock.create.mockReturnValue({
+      destroy: vi.fn(),
+      option: vi.fn()
+    })
+  })
+
   afterEach(() => {
     vi.useRealTimers()
     document.body.innerHTML = ''
@@ -617,9 +633,22 @@ describe('ProjectSidebar', () => {
     expect(scrollRule).toContain('min-height: 0;')
     expect(scrollRule).toContain('overflow-y: auto;')
     expect(scrollRule).toContain('padding-right: 10px;')
-    expect(scrollRule).toContain('scrollbar-gutter: stable;')
     expect(actionsRule).toContain('display: inline-flex;')
     expect(actionsRule).toContain('flex-wrap: nowrap;')
+  })
+
+  it('keeps the TODO workspace scrollable while hiding its scrollbar', () => {
+    const styles = readFileSync('src/style.css', 'utf8')
+    const scrollRule = styles.match(/\.todo-workspace-scroll\s*\{([^}]*)\}/s)?.[1] ?? ''
+    const webkitScrollbarRule = styles.match(/\.todo-workspace-scroll::\-webkit-scrollbar\s*\{([^}]*)\}/s)?.[1] ?? ''
+
+    expect(scrollRule).toContain('overflow-y: auto;')
+    expect(scrollRule).toContain('scrollbar-width: none;')
+    expect(scrollRule).toContain('-ms-overflow-style: none;')
+    expect(scrollRule).not.toContain('scrollbar-gutter: stable;')
+    expect(webkitScrollbarRule).toContain('display: none;')
+    expect(webkitScrollbarRule).toContain('width: 0;')
+    expect(webkitScrollbarRule).toContain('height: 0;')
   })
 
   it('places task terminal creation on TODO rows and hides empty task terminal groups', async () => {
@@ -1691,6 +1720,329 @@ describe('ProjectSidebar', () => {
 
     expect(wrapper.find('[data-testid="sort-active-todos-priority"]').attributes('aria-pressed')).toBe('true')
     expect(wrapper.find('[data-testid="sort-active-todos-time"]').attributes('aria-pressed')).toBe('false')
+    expect(wrapper.find('[data-testid="sort-active-todos-manual"]').attributes('aria-pressed')).toBe('false')
+  })
+
+  it('orders not-started TODOs by saved manual rank and shows accessible drag handles', () => {
+    const wrapper = mountSidebar({
+      props: {
+        todoSortMode: 'manual',
+        todoOrdersInitialized: true,
+        todoOrders: {
+          notStarted: ['todo-c', 'todo-a', 'todo-b'],
+          inProgress: []
+        },
+        todos: [
+          { id: 'todo-a', title: '任务 A', status: 'not-started', createdAt: '2026-06-10T09:00:00Z' },
+          { id: 'todo-b', title: '任务 B', status: 'not-started', createdAt: '2026-06-10T10:00:00Z' },
+          { id: 'todo-c', title: '任务 C', status: 'not-started', createdAt: '2026-06-10T11:00:00Z' }
+        ],
+        todoProjects: [],
+        terminals: []
+      }
+    })
+
+    expect(wrapper.find('[data-testid="sort-active-todos-manual"]').attributes('aria-pressed')).toBe('true')
+    expect(activeTodoTitles(wrapper)).toEqual(['任务 C', '任务 A', '任务 B'])
+    expect(wrapper.findAll('.todo-drag-handle')).toHaveLength(3)
+    expect(wrapper.find('[data-testid="drag-todo-todo-c"]').attributes('aria-label')).toBe('Drag 任务 C to reorder')
+    expect(wrapper.find('[data-testid="drag-todo-todo-c"]').attributes('title')).toBe('Drag to reorder')
+  })
+
+  it('reorders manual TODOs from the focused drag handle with arrow keys', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        todoSortMode: 'manual',
+        todoOrdersInitialized: true,
+        todoOrders: { notStarted: ['todo-a', 'todo-b'], inProgress: [] },
+        todos: [
+          { id: 'todo-a', title: '任务 A', status: 'not-started' },
+          { id: 'todo-b', title: '任务 B', status: 'not-started' }
+        ],
+        todoProjects: [],
+        terminals: []
+      }
+    })
+
+    const handle = wrapper.find('[data-testid="drag-todo-todo-a"]')
+    expect(handle.attributes('aria-keyshortcuts')).toBe('ArrowUp ArrowDown')
+    await handle.trigger('keydown', { key: 'ArrowDown' })
+
+    expect(wrapper.emitted('todo-order-change')[0]).toEqual([{
+      status: 'not-started',
+      previousOrder: ['todo-a', 'todo-b'],
+      order: ['todo-b', 'todo-a']
+    }])
+  })
+
+  it('keeps independent manual orders for not-started and in-progress TODOs', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        todoSortMode: 'manual',
+        todoOrdersInitialized: true,
+        todoOrders: {
+          notStarted: ['todo-b', 'todo-a'],
+          inProgress: ['todo-d', 'todo-c']
+        },
+        todos: [
+          { id: 'todo-a', title: '未执行 A', status: 'not-started' },
+          { id: 'todo-b', title: '未执行 B', status: 'not-started' },
+          { id: 'todo-c', title: '执行中 C', status: 'in-progress' },
+          { id: 'todo-d', title: '执行中 D', status: 'in-progress' }
+        ],
+        todoProjects: [],
+        terminals: []
+      }
+    })
+
+    expect(activeTodoTitles(wrapper)).toEqual(['未执行 B', '未执行 A'])
+
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+
+    expect(todoTitlesInList(wrapper, 'in-progress')).toEqual(['执行中 D', '执行中 C'])
+    expect(wrapper.findAll('.todo-drag-handle')).toHaveLength(2)
+  })
+
+  it('emits both current automatic orders when manual mode is selected for the first time', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        todoSortMode: 'priority',
+        todoOrdersInitialized: false,
+        todos: [
+          { id: 'todo-low', title: '低优先级', priority: 'low', status: 'not-started', createdAt: '2026-06-10T08:00:00Z' },
+          { id: 'todo-high', title: '高优先级', priority: 'high', status: 'not-started', createdAt: '2026-06-10T09:00:00Z' },
+          { id: 'todo-progress-low', title: '执行低', priority: 'low', status: 'in-progress', createdAt: '2026-06-10T07:00:00Z' },
+          { id: 'todo-progress-high', title: '执行高', priority: 'high', status: 'in-progress', createdAt: '2026-06-10T10:00:00Z' }
+        ],
+        todoProjects: [],
+        terminals: []
+      }
+    })
+
+    await wrapper.find('[data-testid="sort-active-todos-manual"]').trigger('click')
+
+    expect(wrapper.emitted('todo-sort-mode-change')[0]).toEqual([{
+      mode: 'manual',
+      todoOrders: {
+        notStarted: ['todo-high', 'todo-low'],
+        inProgress: ['todo-progress-high', 'todo-progress-low']
+      }
+    }])
+  })
+
+  it('keeps completed ordering and drag handles unaffected by manual mode', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        todoSortMode: 'manual',
+        todoOrdersInitialized: true,
+        todoOrders: { notStarted: [], inProgress: [] },
+        todos: [
+          { id: 'todo-older', title: '较早完成', status: 'completed', completedAt: '2026-06-10T09:00:00Z' },
+          { id: 'todo-newer', title: '较晚完成', status: 'completed', completedAt: '2026-06-10T10:00:00Z' }
+        ],
+        todoProjects: [],
+        terminals: []
+      }
+    })
+
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
+
+    expect(completedTodoTitles(wrapper)).toEqual(['较晚完成', '较早完成'])
+    expect(wrapper.findAll('.todo-drag-handle')).toHaveLength(0)
+    expect(wrapper.find('[data-testid="sort-active-todos-manual"]').exists()).toBe(false)
+  })
+
+  it('configures same-list dragging and emits reordered IDs without relying on Sortable index metadata', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        todoSortMode: 'manual',
+        todoOrdersInitialized: true,
+        todoOrders: { notStarted: ['todo-a', 'todo-b'], inProgress: [] },
+        todos: [
+          { id: 'todo-a', title: '任务 A', status: 'not-started' },
+          { id: 'todo-b', title: '任务 B', status: 'not-started' }
+        ],
+        todoProjects: [],
+        terminals: []
+      }
+    })
+    await nextTick()
+
+    expect(todoSortableMock.create).toHaveBeenCalledTimes(1)
+    const [listElement, options] = todoSortableMock.create.mock.calls[0]
+    expect(listElement).toBe(wrapper.find('[data-testid="not-started-todos"]').element)
+    expect(options.handle).toBe('.todo-drag-handle')
+    expect(options.draggable).toBe('.todo-node')
+    expect(options.group).toBe(false)
+    expect(options.forceFallback).toBe(true)
+    expect(options.fallbackOnBody).toBe(false)
+    expect(options.scroll).toBe(wrapper.find('[data-testid="todo-workspace-scroll"]').element)
+
+    const originalExpanded = wrapper.find('[data-testid="toggle-todo-todo-a"]').attributes('aria-expanded')
+    options.onChoose()
+    options.onStart()
+    await nextTick()
+    expect(wrapper.find('[data-testid="not-started-todos"]').classes()).toContain('is-reordering')
+
+    listElement.insertBefore(listElement.children[1], listElement.children[0])
+    options.onUnchoose()
+    options.onEnd()
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="not-started-todos"]').classes()).not.toContain('is-reordering')
+    expect(wrapper.find('[data-testid="toggle-todo-todo-a"]').attributes('aria-expanded')).toBe(originalExpanded)
+    expect(wrapper.emitted('todo-order-change')[0]).toEqual([{
+      status: 'not-started',
+      previousOrder: ['todo-a', 'todo-b'],
+      order: ['todo-b', 'todo-a']
+    }])
+  })
+
+  it('cleans up cancelled and unchanged drags without saving a new order', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        todoSortMode: 'manual',
+        todoOrdersInitialized: true,
+        todoOrders: { notStarted: ['todo-a', 'todo-b'], inProgress: [] },
+        todos: [
+          { id: 'todo-a', title: '任务 A', status: 'not-started' },
+          { id: 'todo-b', title: '任务 B', status: 'not-started' }
+        ],
+        todoProjects: [],
+        terminals: []
+      }
+    })
+    await nextTick()
+    const options = todoSortableMock.create.mock.calls[0][1]
+
+    options.onChoose()
+    options.onStart()
+    options.onUnchoose()
+    await nextTick()
+    expect(wrapper.find('[data-testid="not-started-todos"]').classes()).not.toContain('is-reordering')
+    expect(wrapper.emitted('todo-order-change')).toBeUndefined()
+
+    options.onChoose()
+    options.onStart()
+    options.onEnd({ oldDraggableIndex: 0, newDraggableIndex: 0 })
+    await nextTick()
+    expect(wrapper.emitted('todo-order-change')).toBeUndefined()
+  })
+
+  it('restores the previous DOM order when an active pointer drag is cancelled', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        todoSortMode: 'manual',
+        todoOrdersInitialized: true,
+        todoOrders: { notStarted: ['todo-a', 'todo-b'], inProgress: [] },
+        todos: [
+          { id: 'todo-a', title: '任务 A', status: 'not-started' },
+          { id: 'todo-b', title: '任务 B', status: 'not-started' }
+        ],
+        todoProjects: [],
+        terminals: []
+      }
+    })
+    await nextTick()
+    const [listElement, options] = todoSortableMock.create.mock.calls[0]
+
+    options.onChoose()
+    options.onStart()
+    listElement.insertBefore(listElement.children[1], listElement.children[0])
+    options.onUnchoose()
+    options.onEnd({ originalEvent: { type: 'pointercancel' } })
+    await nextTick()
+
+    expect([...listElement.children].map((element) => element.dataset.id)).toEqual(['todo-a', 'todo-b'])
+    expect(wrapper.emitted('todo-order-change')).toBeUndefined()
+    expect(wrapper.find('[data-testid="not-started-todos"]').classes()).not.toContain('is-reordering')
+  })
+
+  it('destroys the sortable instance when the sidebar unmounts', async () => {
+    const sortable = { destroy: vi.fn(), option: vi.fn() }
+    todoSortableMock.create.mockReturnValueOnce(sortable)
+    const wrapper = mountSidebar({
+      props: {
+        todoSortMode: 'manual',
+        todoOrdersInitialized: true,
+        todoOrders: { notStarted: ['todo-a'], inProgress: [] }
+      }
+    })
+    await nextTick()
+
+    wrapper.unmount()
+
+    expect(sortable.destroy).toHaveBeenCalledTimes(1)
+  })
+
+  it('disables sorting, bulk controls, and TODO row actions while an order save is pending', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        todoSortMode: 'manual',
+        todoOrdersInitialized: true,
+        todoOrderSaving: true,
+        todoOrders: { notStarted: ['todo-a'], inProgress: [] }
+      }
+    })
+    await nextTick()
+
+    const options = todoSortableMock.create.mock.calls[0][1]
+    expect(options.disabled).toBe(true)
+    expect(wrapper.find('[data-testid="sort-active-todos-manual"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-testid="collapse-all-todos"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-testid="expand-all-todos"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-testid="drag-todo-todo-a"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('[data-testid="drag-todo-todo-a"]').attributes('aria-disabled')).toBe('true')
+    expect(wrapper.find('[data-testid="todo-menu-button-todo-a"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-testid="mark-todo-in-progress-todo-a"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('closes TODO overlays and locks row actions only for the duration of dragging', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        todoSortMode: 'manual',
+        todoOrdersInitialized: true,
+        todoOrders: { notStarted: ['todo-a'], inProgress: [] }
+      }
+    })
+    await nextTick()
+    await openTodoContextMenu(wrapper, 'todo-a')
+    expect(wrapper.find('[data-testid="todo-context-menu-todo-a"]').exists()).toBe(true)
+    const options = todoSortableMock.create.mock.calls[0][1]
+
+    options.onChoose()
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="todo-context-menu-todo-a"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="mark-todo-in-progress-todo-a"]').attributes('disabled')).toBeDefined()
+
+    options.onUnchoose()
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="mark-todo-in-progress-todo-a"]').attributes('disabled')).toBeUndefined()
+  })
+
+  it('defines stable visual styles for reorder collapse, handles, and sortable feedback', () => {
+    const styles = readFileSync('src/style.css', 'utf8')
+
+    expect(styles).toMatch(/\.todo-list\.is-reordering\s+\.todo-project-list\s*\{[^}]*display:\s*none;/s)
+    expect(styles).toMatch(/\.todo-sortable-drag\s+\.todo-project-list\s*\{[^}]*display:\s*none;/s)
+    expect(styles).toMatch(/\.todo-drag-handle\s*\{[^}]*flex:\s*0 0 auto;[^}]*cursor:\s*grab;/s)
+    expect(styles).toContain('.todo-sortable-ghost')
+    expect(styles).toContain('.todo-sortable-chosen')
+    expect(styles).toContain('.todo-sortable-drag')
+  })
+
+  it('uses a two-row TODO header layout at the minimum sidebar width', () => {
+    const styles = readFileSync('src/style.css', 'utf8')
+    const sidebarRule = styles.slice(styles.indexOf('.project-sidebar {'), styles.indexOf('.sidebar-resize-handle {'))
+    const narrowLayout = styles.slice(styles.indexOf('@container (max-width: 240px)'))
+
+    expect(sidebarRule).toContain('container-type: inline-size;')
+    expect(narrowLayout).toContain('grid-template-columns: 24px minmax(0, 1fr);')
+    expect(narrowLayout).toContain('grid-template-columns: 24px 24px minmax(0, 1fr);')
+    expect(narrowLayout).toContain('grid-row: 2;')
+    expect(narrowLayout).toContain('font-size: 11px;')
   })
 
   it('orders active TODOs with the same priority by creation time', () => {
@@ -2287,8 +2639,9 @@ describe('ProjectSidebar', () => {
 
   it('defines a wide TODO description tooltip style', () => {
     const styles = readFileSync('src/style.css', 'utf8')
-    const tooltipLayerRule = styles.slice(styles.indexOf('.todo-description-tooltip-layer {'), styles.indexOf('.todo-description-tooltip {'))
-    const tooltipRule = styles.slice(styles.indexOf('.todo-description-tooltip {'), styles.indexOf('.todo-actions {'))
+    const tooltipStart = styles.indexOf('.todo-description-tooltip {')
+    const tooltipLayerRule = styles.slice(styles.indexOf('.todo-description-tooltip-layer {'), tooltipStart)
+    const tooltipRule = styles.slice(tooltipStart, styles.indexOf('\n.todo-actions {', tooltipStart))
 
     expect(tooltipLayerRule).toContain('position: fixed;')
     expect(tooltipLayerRule).toContain('inset: 0;')
@@ -2406,8 +2759,12 @@ function multiTodoProps() {
 }
 
 function activeTodoTitles(wrapper) {
+  return todoTitlesInList(wrapper, 'not-started')
+}
+
+function todoTitlesInList(wrapper, status) {
   return wrapper
-    .find('[data-testid="not-started-todos"]')
+    .find(`[data-testid="${status}-todos"]`)
     .findAll('.todo-row .project-name')
     .map((node) => node.text())
 }
