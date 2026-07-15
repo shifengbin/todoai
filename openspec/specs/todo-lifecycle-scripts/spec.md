@@ -76,7 +76,7 @@
 
 ### Requirement: Select Lifecycle Script Pair When Creating Todo
 
-系统 SHALL 在创建 TODO 表单中提供脚本对下拉筛选控件。该控件 SHALL 允许用户按名称或描述筛选脚本对，SHALL 展示脚本对描述，SHALL 支持不选择脚本对。存在默认脚本对时，系统 SHALL 在打开创建 TODO 表单时默认选中它。所选脚本对包含参数定义时，系统 SHALL 在创建 TODO 表单中展示参数输入项，SHALL 使用参数默认值初始化输入值，并 SHALL 在参数输入区域提供使用方法和注意事项帮助提示，SHALL 在创建 TODO 前校验必填参数。创建 TODO 时系统 SHALL 保存所选脚本对快照、参数定义快照和参数值快照，后续全局模板修改 SHALL NOT 改变已创建 TODO 的脚本内容、参数定义或参数值。
+系统 SHALL 在创建 TODO 表单中提供脚本对下拉筛选控件。该控件 SHALL 允许用户按名称或描述筛选脚本对，SHALL 展示脚本对描述，SHALL 支持不选择脚本对。存在默认脚本对时，系统 SHALL 在打开创建 TODO 表单时默认选中它。所选脚本对包含参数定义时，系统 SHALL 在创建 TODO 表单中展示参数输入项，SHALL 使用参数默认值初始化输入值，SHALL NOT 在参数输入区域展示参数使用方法问号按钮或由该按钮触发的悬浮提示，并 SHALL 在创建 TODO 前校验必填参数。创建 TODO 时系统 SHALL 保存所选脚本对快照、参数定义快照和参数值快照，后续全局模板修改 SHALL NOT 改变已创建 TODO 的脚本内容、参数定义或参数值。
 
 #### Scenario: Default lifecycle script pair is preselected
 
@@ -102,12 +102,12 @@
 - **THEN** 创建 TODO 表单展示 `分支名` 参数输入项
 - **AND** 参数输入项默认值为 `feature/demo`
 
-#### Scenario: Todo form shows parameter usage help
+#### Scenario: Todo form omits parameter usage help
 
 - **WHEN** 用户在创建 TODO 表单中选择包含参数定义的生命周期脚本对
-- **AND** 用户查看参数输入区域的帮助提示
-- **THEN** 系统展示脚本中使用 `{{参数名}}` 引用参数的说明
-- **AND** 系统展示不要额外加引号、自动转义、未定义占位符保持原样和明文保存的注意事项
+- **THEN** 创建 TODO 表单展示对应的参数输入项
+- **AND** 参数区域不展示参数使用方法问号按钮
+- **AND** 参数区域不提供由该按钮触发的参数使用方法悬浮提示
 
 #### Scenario: Required lifecycle script parameter is validated
 

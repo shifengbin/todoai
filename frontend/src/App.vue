@@ -4122,22 +4122,6 @@ function clearToastTimer() {
             >
               <div class="lifecycle-script-parameter-heading">
                 <span class="settings-label">参数</span>
-                <span class="lifecycle-script-parameter-help">
-                  <button
-                    type="button"
-                    class="icon-button lifecycle-script-parameter-help-trigger"
-                    data-testid="todo-lifecycle-script-parameter-help-create"
-                    title="参数使用方法"
-                    aria-label="查看参数使用方法"
-                    aria-describedby="todo-lifecycle-script-parameter-help-create-tooltip"
-                    @mouseenter="showLifecycleScriptParameterHelp($event, 'todo-lifecycle-script-parameter-help-create-tooltip')"
-                    @mouseleave="hideLifecycleScriptParameterHelp"
-                    @focus="showLifecycleScriptParameterHelp($event, 'todo-lifecycle-script-parameter-help-create-tooltip')"
-                    @blur="hideLifecycleScriptParameterHelp"
-                  >
-                    <CircleQuestionMark :size="14" />
-                  </button>
-                </span>
               </div>
               <label
                 v-for="parameter in selectedTodoFormLifecycleScript.parameters"
