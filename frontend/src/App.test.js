@@ -5946,7 +5946,7 @@ describe('App project terminal tree', () => {
     })
   })
 
-  it('shows lifecycle script parameter usage help when creating a TODO', async () => {
+  it('omits lifecycle script parameter usage help when creating a TODO', async () => {
     appApiMock.LoadTodoLifecycleScripts.mockResolvedValue([
       lifecycleScriptTemplate({
         name: 'Create branch',
@@ -5959,18 +5959,11 @@ describe('App project terminal tree', () => {
 
     await wrapper.find('[data-testid="new-todo"]').trigger('click')
     await flushPromises()
-    await wrapper.find('[data-testid="todo-lifecycle-script-parameter-help-create"]').trigger('mouseenter')
-    await nextTick()
 
-    const help = wrapper.find('[data-testid="todo-lifecycle-script-parameter-help-floating"]')
-    expect(help.exists()).toBe(true)
-    expect(help.attributes('data-help-source')).toBe('todo-lifecycle-script-parameter-help-create-tooltip')
-    expect(help.text()).toContain('使用方法')
-    expect(help.text()).toContain('{{参数名}}')
-    expect(help.text()).toContain('git checkout -b {{branch_name}}')
-    expect(help.text()).toContain('注意事项')
-    expect(help.text()).toContain('不要再额外加引号')
-    expect(help.text()).toContain('明文保存')
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-parameters"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-parameter-value-branch_name"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-parameter-help-create"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="todo-lifecycle-script-parameter-help-floating"]').exists()).toBe(false)
   })
 
   it('shows lifecycle script parameters and submits parameter values when creating a TODO', async () => {
