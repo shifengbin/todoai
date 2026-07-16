@@ -1775,8 +1775,7 @@ watch(
           </button>
         </div>
 
-        <div ref="todoWorkspaceScrollElement" class="todo-workspace-scroll" data-testid="todo-workspace-scroll">
-          <div
+        <div
             class="todo-tree-toolbar"
             data-testid="todo-tree-toolbar"
             role="toolbar"
@@ -1888,6 +1887,7 @@ watch(
         </template>
           </div>
 
+        <div ref="todoWorkspaceScrollElement" class="todo-workspace-scroll" data-testid="todo-workspace-scroll">
           <div
             v-if="isOpenTodoView"
             ref="todoListElement"
