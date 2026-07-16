@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -735,6 +736,76 @@ func TestZshIntegratedLaunchPreservesOriginalZDOTDIRAcrossNestedTodoAI(t *testin
 	if _, err := os.Stat(filepath.Join(wrapperDir, ".zshrc")); err != nil {
 		t.Fatalf("wrapper .zshrc is unavailable: %v", err)
 	}
+}
+
+func TestZshIntegrationScopesZDOTDIRAndLoadsUserConfigOnce(t *testing.T) {
+	shellPath := requireZsh(t)
+	originalZDOTDIR := t.TempDir()
+	loadLog := filepath.Join(t.TempDir(), "zshrc-loads")
+	userConfig := `print -r -- "$ZDOTDIR" >> "$TUI_HELPER_ZSH_LOAD_LOG"` + "\n"
+	if err := os.WriteFile(filepath.Join(originalZDOTDIR, ".zshrc"), []byte(userConfig), 0o600); err != nil {
+		t.Fatalf("write user .zshrc: %v", err)
+	}
+
+	launch, output := runIntegratedZsh(t, shellPath, []string{
+		"HOME=" + originalZDOTDIR,
+		"ZDOTDIR=" + originalZDOTDIR,
+		"TUI_HELPER_ZSH_LOAD_LOG=" + loadLog,
+	}, `
+source "$ZDOTDIR/.zshrc"
+print -r -- "FINAL_ZDOTDIR=$ZDOTDIR"
+print -r -- "PREEXEC_INDEX=${preexec_functions[(Ie)__tui_helper_preexec]}"
+print -r -- "PRECMD_INDEX=${precmd_functions[(Ie)__tui_helper_precmd]}"
+`)
+
+	loads, err := os.ReadFile(loadLog)
+	if err != nil {
+		t.Fatalf("read user .zshrc load log: %v", err)
+	}
+	loadLines := strings.Fields(string(loads))
+	if len(loadLines) != 1 {
+		t.Fatalf("user .zshrc load count = %d, want 1; loads = %q; output = %q", len(loadLines), string(loads), output)
+	}
+	if loadLines[0] != originalZDOTDIR {
+		t.Fatalf("user .zshrc observed ZDOTDIR = %q, want %q; output = %q", loadLines[0], originalZDOTDIR, output)
+	}
+	wrapperZDOTDIR := envValue(launch.Env, "ZDOTDIR")
+	for _, want := range []string{
+		"FINAL_ZDOTDIR=" + wrapperZDOTDIR,
+		"PREEXEC_INDEX=1",
+		"PRECMD_INDEX=1",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("zsh output = %q, want %q", output, want)
+		}
+	}
+}
+
+func requireZsh(t *testing.T) string {
+	t.Helper()
+	zshPath, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh is not available")
+	}
+	return zshPath
+}
+
+func runIntegratedZsh(t *testing.T, shellPath string, baseEnv []string, command string) (ShellLaunch, string) {
+	t.Helper()
+	launch, err := IntegratedShellLaunch(shellPath, baseEnv)
+	if err != nil {
+		t.Fatalf("IntegratedShellLaunch() error = %v", err)
+	}
+	t.Cleanup(launch.Cleanup)
+
+	args := append(append([]string{}, launch.Args...), "-c", command)
+	cmd := exec.Command(launch.Path, args...)
+	cmd.Env = launch.Env
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("integrated zsh error = %v; output = %q", err, output)
+	}
+	return launch, string(output)
 }
 
 func TestShellSessionManagerStartsPowerShellWithCommandLabelIntegration(t *testing.T) {

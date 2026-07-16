@@ -1300,25 +1300,36 @@ func powerShellIntegratedLaunch(launch ShellLaunch) (ShellLaunch, error) {
 
 func zshIntegrationScript() string {
 	return `
-if [ -n "$TUI_HELPER_ORIGINAL_ZDOTDIR" ] && [ -f "$TUI_HELPER_ORIGINAL_ZDOTDIR/.zshrc" ]; then
-  source "$TUI_HELPER_ORIGINAL_ZDOTDIR/.zshrc"
-fi
+if [[ -z ${__tui_helper_zsh_integrated-} ]]; then
+  typeset -g __tui_helper_zsh_integrated=1
+  typeset __tui_helper_wrapper_zdotdir="$ZDOTDIR"
 
-autoload -Uz add-zsh-hook
-__tui_helper_emit_command_start() {
-  printf '\033]777;todoai;command-start;%s\a' "$(printf '%s' "$1" | base64 | tr -d '\n')"
-}
-__tui_helper_emit_command_end() {
-  printf '\033]777;todoai;command-end\a'
-}
-__tui_helper_preexec() {
-  __tui_helper_emit_command_start "$1"
-}
-__tui_helper_precmd() {
-  __tui_helper_emit_command_end
-}
-add-zsh-hook preexec __tui_helper_preexec
-add-zsh-hook precmd __tui_helper_precmd
+  if [[ -n "$TUI_HELPER_ORIGINAL_ZDOTDIR" && -f "$TUI_HELPER_ORIGINAL_ZDOTDIR/.zshrc" ]]; then
+    {
+      export ZDOTDIR="$TUI_HELPER_ORIGINAL_ZDOTDIR"
+      source "$TUI_HELPER_ORIGINAL_ZDOTDIR/.zshrc"
+    } always {
+      export ZDOTDIR="$__tui_helper_wrapper_zdotdir"
+    }
+  fi
+  unset __tui_helper_wrapper_zdotdir
+
+  autoload -Uz add-zsh-hook
+  __tui_helper_emit_command_start() {
+    printf '\033]777;todoai;command-start;%s\a' "$(printf '%s' "$1" | base64 | tr -d '\n')"
+  }
+  __tui_helper_emit_command_end() {
+    printf '\033]777;todoai;command-end\a'
+  }
+  __tui_helper_preexec() {
+    __tui_helper_emit_command_start "$1"
+  }
+  __tui_helper_precmd() {
+    __tui_helper_emit_command_end
+  }
+  add-zsh-hook preexec __tui_helper_preexec
+  add-zsh-hook precmd __tui_helper_precmd
+fi
 `
 }
 
