@@ -724,7 +724,7 @@ func TestZshIntegratedLaunchPreservesOriginalZDOTDIRAcrossNestedTodoAI(t *testin
 	if err != nil {
 		t.Fatalf("IntegratedShellLaunch() error = %v", err)
 	}
-	defer launch.Cleanup()
+	t.Cleanup(launch.Cleanup)
 
 	if got := envValue(launch.Env, "TUI_HELPER_ORIGINAL_ZDOTDIR"); got != home {
 		t.Fatalf("TUI_HELPER_ORIGINAL_ZDOTDIR = %q, want %q", got, home)
@@ -736,6 +736,12 @@ func TestZshIntegratedLaunchPreservesOriginalZDOTDIRAcrossNestedTodoAI(t *testin
 	if _, err := os.Stat(filepath.Join(wrapperDir, ".zshrc")); err != nil {
 		t.Fatalf("wrapper .zshrc is unavailable: %v", err)
 	}
+
+	launch.Cleanup()
+	if _, err := os.Stat(wrapperDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("wrapper directory still exists after cleanup: %v", err)
+	}
+	launch.Cleanup()
 }
 
 func TestZshIntegrationScopesZDOTDIRAndLoadsUserConfigOnce(t *testing.T) {
@@ -779,6 +785,86 @@ print -r -- "PRECMD_INDEX=${precmd_functions[(Ie)__tui_helper_precmd]}"
 			t.Fatalf("zsh output = %q, want %q", output, want)
 		}
 	}
+}
+
+func TestZshIntegrationSurvivesExecZsh(t *testing.T) {
+	shellPath := requireZsh(t)
+	originalZDOTDIR := t.TempDir()
+	if err := os.WriteFile(filepath.Join(originalZDOTDIR, ".zshrc"), nil, 0o600); err != nil {
+		t.Fatalf("write user .zshrc: %v", err)
+	}
+
+	_, output := runIntegratedZsh(t, shellPath, []string{
+		"HOME=" + originalZDOTDIR,
+		"ZDOTDIR=" + originalZDOTDIR,
+		"TUI_HELPER_TEST_ZSH=" + shellPath,
+	}, `
+exec "$TUI_HELPER_TEST_ZSH" -i -c '
+  print -r -- "EXEC_PREEXEC=${preexec_functions[(Ie)__tui_helper_preexec]}"
+  print -r -- "EXEC_PRECMD=${precmd_functions[(Ie)__tui_helper_precmd]}"
+'
+`)
+
+	for _, want := range []string{"EXEC_PREEXEC=1", "EXEC_PRECMD=1"} {
+		if !outputContainsLine(output, want) {
+			t.Fatalf("zsh output = %q, want %q", output, want)
+		}
+	}
+}
+
+func TestZshIntegrationRestoresWrapperAfterUserConfigError(t *testing.T) {
+	shellPath := requireZsh(t)
+	tests := []struct {
+		name       string
+		option     string
+		diagnostic string
+	}{
+		{name: "ERR_RETURN", option: "ERR_RETURN", diagnostic: "USER_ZSHRC_ERR_RETURN"},
+		{name: "ERR_EXIT", option: "ERR_EXIT", diagnostic: "USER_ZSHRC_ERR_EXIT"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			originalZDOTDIR := t.TempDir()
+			userConfig := "setopt " + test.option + "\n" +
+				"print -u2 -r -- " + test.diagnostic + "\n" +
+				"return 23\n"
+			if err := os.WriteFile(filepath.Join(originalZDOTDIR, ".zshrc"), []byte(userConfig), 0o600); err != nil {
+				t.Fatalf("write user .zshrc: %v", err)
+			}
+
+			launch, output := runIntegratedZsh(t, shellPath, []string{
+				"HOME=" + originalZDOTDIR,
+				"ZDOTDIR=" + originalZDOTDIR,
+			}, `
+print -r -- "FINAL_ZDOTDIR=$ZDOTDIR"
+print -r -- "PREEXEC=${preexec_functions[(Ie)__tui_helper_preexec]}"
+print -r -- "PRECMD=${precmd_functions[(Ie)__tui_helper_precmd]}"
+`)
+			if got := strings.Count(output, test.diagnostic); got != 1 {
+				t.Fatalf("diagnostic count = %d, want 1; output = %q", got, output)
+			}
+			for _, want := range []string{
+				"FINAL_ZDOTDIR=" + envValue(launch.Env, "ZDOTDIR"),
+				"PREEXEC=1",
+				"PRECMD=1",
+			} {
+				if !outputContainsLine(output, want) {
+					t.Fatalf("zsh output = %q, want %q", output, want)
+				}
+			}
+		})
+	}
+}
+
+func outputContainsLine(output string, want string) bool {
+	normalized := strings.ReplaceAll(output, "\r\n", "\n")
+	for _, line := range strings.Split(normalized, "\n") {
+		if line == want {
+			return true
+		}
+	}
+	return false
 }
 
 func requireZsh(t *testing.T) string {
