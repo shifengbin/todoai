@@ -482,11 +482,12 @@ button {
 
 .todo-tree-toolbar {
     display: flex;
+    flex: 0 0 auto;
     min-width: 0;
     min-height: 34px;
     justify-content: flex-end;
     gap: 4px;
-    margin: 0 0 8px;
+    margin: 0 10px 8px 0;
 }
 
 .todo-sort-toggle {
