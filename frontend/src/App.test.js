@@ -442,7 +442,7 @@ describe('App project terminal tree', () => {
     expect(xtermMock.sessions.get('terminal-a').terminal.focus).toHaveBeenCalledTimes(1)
   })
 
-  it('creates and selects workspace global terminals from the terminal surface', async () => {
+  it('creates and selects workspace global terminals from the TODO sidebar', async () => {
     appApiMock.ListProjects.mockResolvedValue(
       projectState({
         terminals: [terminal({ id: 'terminal-a' })],
@@ -460,21 +460,33 @@ describe('App project terminal tree', () => {
     )
     const wrapper = await mountReadyApp()
 
-    expect(wrapper.find('[data-testid="global-terminal-group"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="global-terminal-todo"]').exists()).toBe(false)
 
     await wrapper.find('[data-testid="create-global-terminal"]').trigger('click')
     await flushPromises()
 
     expect(CreateWorkspaceTerminal).toHaveBeenCalledWith(100, 32)
-    expect(wrapper.find('[data-testid="global-terminal-group"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="todo-view-in-progress"]').classes()).toContain('active')
+    expect(wrapper.find('[data-testid="global-terminal-group"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="global-terminal-todo"]').classes()).toContain('active')
     expect(wrapper.find('[data-testid="global-terminal-global-terminal"]').classes()).toContain('active')
     expect(wrapper.find('[data-testid="terminal-pane-global-terminal"]').classes()).toContain('active')
-    expect(wrapper.find('[data-testid="terminal-global-terminal"]').exists()).toBe(false)
+    expect(xtermMock.sessions.get('global-terminal').fitAddon.fit).toHaveBeenCalled()
+    expect(wrapper.findComponent(ProjectSidebar).props('workspaceTerminals')).toHaveLength(1)
 
     CreateWorkspaceTerminal.mockClear()
-    await wrapper.find('[data-testid="create-global-terminal-from-group"]').trigger('click')
+    await wrapper.find('[data-testid="create-global-terminal-from-sidebar"]').trigger('click')
     await flushPromises()
     expect(CreateWorkspaceTerminal).toHaveBeenCalledWith(100, 32)
+  })
+
+  it('removes the legacy main-surface global terminal tab styles', () => {
+    const styles = readFileSync('src/style.css', 'utf8')
+
+    expect(styles).not.toContain('.terminal-surface.has-global-terminals')
+    expect(styles).not.toContain('.global-terminal-group')
+    expect(styles).not.toContain('.global-terminal-tabs')
+    expect(styles).not.toContain('.global-terminal-tab')
   })
 
   it('uses terminal iconography for global terminal creation controls', async () => {
@@ -493,12 +505,13 @@ describe('App project terminal tree', () => {
     expect(headerCreateButton.find('.lucide-square-terminal').exists()).toBe(true)
     expect(headerCreateButton.find('.lucide-plus').exists()).toBe(false)
 
-    const groupCreateButton = wrapper.find('[data-testid="create-global-terminal-from-group"]')
-    expect(groupCreateButton.find('.lucide-square-terminal').exists()).toBe(true)
-    expect(groupCreateButton.find('.lucide-plus').exists()).toBe(false)
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+    const sidebarCreateButton = wrapper.find('[data-testid="create-global-terminal-from-sidebar"]')
+    expect(sidebarCreateButton.find('.lucide-square-terminal').exists()).toBe(true)
+    expect(sidebarCreateButton.find('.lucide-plus').exists()).toBe(false)
   })
 
-  it('shows global terminal group only while workspace terminals exist', async () => {
+  it('shows the global terminal virtual TODO only while workspace terminals exist', async () => {
     appApiMock.ListProjects.mockResolvedValue(
       projectState({
         terminals: [
@@ -516,14 +529,52 @@ describe('App project terminal tree', () => {
     )
     const wrapper = await mountReadyApp()
 
-    expect(wrapper.find('[data-testid="global-terminal-group"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="terminal-global-terminal"]').exists()).toBe(false)
+    await wrapper.find('[data-testid="todo-view-in-progress"]').trigger('click')
+    expect(wrapper.find('[data-testid="global-terminal-group"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="global-terminal-todo"]').exists()).toBe(true)
 
     await wrapper.find('[data-testid="delete-global-terminal-global-terminal"]').trigger('click')
     await flushPromises()
 
     expect(DeleteTerminal).toHaveBeenCalledWith('global-terminal')
-    expect(wrapper.find('[data-testid="global-terminal-group"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="global-terminal-todo"]').exists()).toBe(false)
+  })
+
+  it('keeps the current TODO view and context when workspace terminal creation fails', async () => {
+    appApiMock.ListProjects.mockResolvedValue(
+      projectState({
+        terminals: [terminal({ id: 'terminal-a' }), workspaceTerminal({ id: 'global-existing' })],
+        activeTerminalId: 'terminal-a'
+      })
+    )
+    appApiMock.CreateWorkspaceTerminal.mockRejectedValueOnce(new Error('workspace terminal failed'))
+    const wrapper = await mountReadyApp()
+
+    await wrapper.find('[data-testid="todo-view-completed"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="todo-view-completed"]').classes()).toContain('active')
+    GetProjectGitStatus.mockClear()
+    GetTodoGitStatus.mockClear()
+    GetTodoProjectGitStatus.mockClear()
+
+    await wrapper.find('[data-testid="create-global-terminal"]').trigger('click')
+    await flushPromises()
+
+    const sidebar = wrapper.findComponent(ProjectSidebar)
+    expect(wrapper.find('[data-testid="todo-view-completed"]').classes()).toContain('active')
+    expect(wrapper.find('[data-testid="global-terminal-todo"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="terminal-pane-terminal-a"]').classes()).toContain('active')
+    expect(sidebar.props()).toMatchObject({
+      activeProjectId: 'project-a',
+      activeTodoId: 'todo-a',
+      activeTodoProjectId: 'todo-project-a',
+      activeTerminalId: 'terminal-a'
+    })
+    expect(sidebar.props('workspaceTerminals').map((terminal) => terminal.id)).toEqual(['global-existing'])
+    expect(GetProjectGitStatus).not.toHaveBeenCalled()
+    expect(GetTodoGitStatus).not.toHaveBeenCalled()
+    expect(GetTodoProjectGitStatus).not.toHaveBeenCalled()
+    expect(wrapper.find('.status-error').text()).toContain('workspace terminal failed')
   })
 
   it('closes the context menu and restores terminal focus when pasting an empty clipboard', async () => {

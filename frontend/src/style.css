@@ -574,7 +574,8 @@ button {
     gap: 4px;
 }
 
-.todo-node {
+.todo-node,
+.global-terminal-todo-node {
     display: grid;
     min-width: 0;
     gap: 2px;
@@ -594,6 +595,15 @@ button {
 
 .todo-header-row.has-drag-handle {
     grid-template-columns: 24px 24px minmax(0, 1fr) auto;
+}
+
+.global-terminal-todo-header.active {
+    border-color: var(--accent);
+    background: var(--active-bg);
+}
+
+.global-terminal-todo-header > .add-terminal-button {
+    min-height: 36px;
 }
 
 .todo-header-row > .branch-toggle {
@@ -1145,6 +1155,11 @@ button {
 .todo-node.has-active-terminal .todo-project-list::before {
     background: var(--tree-guide-active);
 }
+
+.global-terminal-todo-node.active .todo-project-list::before {
+    background: var(--tree-guide-active);
+}
+
 
 .import-summary {
     display: flex;
@@ -1912,106 +1927,8 @@ button {
     display: block;
 }
 
-.terminal-surface.has-global-terminals .terminal-pane {
-    padding-top: 50px;
-}
-
 .terminal-pane .xterm {
     height: 100%;
-}
-
-.global-terminal-group {
-    position: absolute;
-    z-index: 5;
-    top: 10px;
-    right: 12px;
-    left: 12px;
-    display: flex;
-    min-width: 0;
-    align-items: center;
-    gap: 8px;
-    pointer-events: none;
-}
-
-.global-terminal-group-label {
-    flex: 0 0 auto;
-    color: var(--terminal-muted);
-    font-size: 11px;
-    font-weight: 800;
-    text-transform: uppercase;
-}
-
-.global-terminal-tabs {
-    display: flex;
-    min-width: 0;
-    align-items: center;
-    gap: 6px;
-    overflow: hidden;
-}
-
-.global-terminal-tab {
-    display: inline-flex;
-    min-width: 0;
-    max-width: 220px;
-    height: 30px;
-    align-items: center;
-    gap: 6px;
-    padding: 0 6px 0 10px;
-    border: 1px solid var(--terminal-border);
-    background: var(--terminal-menu-bg);
-    color: var(--terminal-fg);
-    cursor: pointer;
-    font-size: 12px;
-    font-weight: 700;
-    pointer-events: auto;
-}
-
-.global-terminal-tab > span {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.global-terminal-tab.active {
-    border-color: var(--accent);
-    color: var(--accent-strong);
-}
-
-.global-terminal-delete {
-    display: inline-flex;
-    flex: 0 0 auto;
-    width: 20px;
-    height: 20px;
-    align-items: center;
-    justify-content: center;
-    border: 0;
-    background: transparent;
-    color: inherit;
-    cursor: pointer;
-}
-
-.global-terminal-delete:hover {
-    color: var(--delete-text);
-}
-
-.global-terminal-create {
-    display: inline-flex;
-    flex: 0 0 auto;
-    width: 30px;
-    height: 30px;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid var(--terminal-border);
-    background: var(--terminal-menu-bg);
-    color: var(--terminal-fg);
-    cursor: pointer;
-    pointer-events: auto;
-}
-
-.global-terminal-create:hover {
-    border-color: var(--accent);
-    color: var(--accent-strong);
 }
 
 .terminal-context-menu {

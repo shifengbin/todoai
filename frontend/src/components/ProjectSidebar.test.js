@@ -1678,6 +1678,146 @@ describe('ProjectSidebar', () => {
     vi.useRealTimers()
   })
 
+  it('shows workspace global terminals as a fixed virtual TODO only in the in-progress view', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        todoView: 'in-progress',
+        todoSortMode: 'priority',
+        todos: [
+          { id: 'todo-low', title: '低优先级任务', priority: 'low', status: 'in-progress' },
+          { id: 'todo-high', title: '高优先级任务', priority: 'high', status: 'in-progress' }
+        ],
+        todoProjects: [],
+        terminals: [],
+        workspaceTerminals: [workspaceTerminal({ id: 'global-a' })],
+        activeTodoId: '',
+        activeTodoProjectId: '',
+        activeTerminalId: ''
+      }
+    })
+
+    const inProgressList = wrapper.find('[data-testid="in-progress-todos"]')
+    const virtualTodo = wrapper.find('[data-testid="global-terminal-todo"]')
+    expect(virtualTodo.exists()).toBe(true)
+    expect(inProgressList.element.firstElementChild).toBe(virtualTodo.element)
+    expect(virtualTodo.text()).toContain('Global 终端')
+    expect(virtualTodo.find('.todo-drag-handle').exists()).toBe(false)
+    expect(virtualTodo.find('[data-testid^="todo-menu-button-"]').exists()).toBe(false)
+    expect(virtualTodo.find('[data-testid^="complete-todo-"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="sort-active-todos-manual"]').trigger('click')
+    expect(wrapper.emitted('todo-sort-mode-change')[0][0].todoOrders.inProgress).toEqual(['todo-high', 'todo-low'])
+
+    await wrapper.setProps({ todoView: 'not-started' })
+    expect(wrapper.find('[data-testid="global-terminal-todo"]').exists()).toBe(false)
+    await wrapper.setProps({ todoView: 'completed' })
+    expect(wrapper.find('[data-testid="global-terminal-todo"]').exists()).toBe(false)
+    await wrapper.setProps({ todoView: 'in-progress', workspaceTerminals: [] })
+    expect(wrapper.find('[data-testid="global-terminal-todo"]').exists()).toBe(false)
+  })
+
+  it('collapses, aggregates, bulk toggles, and restores the workspace terminal virtual TODO during dragging', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        todoView: 'in-progress',
+        todoSortMode: 'manual',
+        todoOrdersInitialized: true,
+        todoOrders: { notStarted: [], inProgress: ['todo-a'] },
+        todos: [{ id: 'todo-a', title: '执行任务', status: 'in-progress' }],
+        todoProjects: [],
+        terminals: [],
+        workspaceTerminals: [
+          workspaceTerminal({ id: 'global-busy', activityState: 'busy' }),
+          workspaceTerminal({ id: 'global-ack', attentionState: 'needs-ack' }),
+          workspaceTerminal({ id: 'global-input', activityState: 'needs-input' })
+        ]
+      }
+    })
+    await nextTick()
+
+    const toggle = () => wrapper.find('[data-testid="toggle-global-terminal-todo"]')
+    expect(toggle().attributes('aria-expanded')).toBe('true')
+    expect(wrapper.find('[data-testid="global-terminal-global-input"]').exists()).toBe(true)
+
+    await toggle().trigger('click')
+    expect(toggle().attributes('aria-expanded')).toBe('false')
+    expect(wrapper.find('[data-testid="global-terminal-global-input"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="create-global-terminal-from-sidebar"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="global-terminal-todo"] .todo-header-row').classes()).toContain('todo-activity-needs-input')
+
+    await wrapper.find('[data-testid="expand-all-todos"]').trigger('click')
+    expect(toggle().attributes('aria-expanded')).toBe('true')
+    expect(wrapper.find('[data-testid="create-global-terminal-from-sidebar"]').exists()).toBe(true)
+    await wrapper.find('[data-testid="collapse-all-todos"]').trigger('click')
+    expect(toggle().attributes('aria-expanded')).toBe('false')
+    await wrapper.find('[data-testid="expand-all-todos"]').trigger('click')
+
+    const sortableOptions = todoSortableMock.create.mock.calls.at(-1)[1]
+    sortableOptions.onChoose()
+    sortableOptions.onStart()
+    await nextTick()
+    expect(toggle().attributes('aria-expanded')).toBe('false')
+    sortableOptions.onUnchoose()
+    await Promise.resolve()
+    await nextTick()
+    expect(toggle().attributes('aria-expanded')).toBe('true')
+
+    sortableOptions.onChoose()
+    sortableOptions.onStart()
+    await nextTick()
+    expect(toggle().attributes('aria-expanded')).toBe('false')
+    sortableOptions.onEnd({ oldDraggableIndex: 0, newDraggableIndex: 0 })
+    await nextTick()
+    expect(toggle().attributes('aria-expanded')).toBe('true')
+
+    await toggle().trigger('click')
+    await wrapper.setProps({
+      workspaceTerminals: [
+        workspaceTerminal({ id: 'global-busy', activityState: 'busy' }),
+        workspaceTerminal({ id: 'global-ack', attentionState: 'needs-ack' }),
+        workspaceTerminal({ id: 'global-input', activityState: 'needs-input' }),
+        workspaceTerminal({ id: 'global-new' })
+      ]
+    })
+    await nextTick()
+    expect(toggle().attributes('aria-expanded')).toBe('true')
+  })
+
+  it('emits accessible workspace terminal actions and derives virtual selection from the active terminal', async () => {
+    const wrapper = mountSidebar({
+      props: {
+        todoView: 'in-progress',
+        todos: [{ id: 'todo-a', title: '执行任务', status: 'in-progress' }],
+        todoProjects: [],
+        terminals: [],
+        workspaceTerminals: [workspaceTerminal({ id: 'global-a', currentCommand: 'codex --full-auto' })],
+        activeTodoId: 'todo-a',
+        activeTodoProjectId: '',
+        activeTerminalId: 'global-a'
+      }
+    })
+
+    const virtualTodo = wrapper.find('[data-testid="global-terminal-todo"]')
+    const terminalRow = wrapper.find('[data-testid="global-terminal-global-a"]')
+    const deleteButton = wrapper.find('[data-testid="delete-global-terminal-global-a"]')
+    expect(virtualTodo.classes()).toContain('active')
+    expect(terminalRow.classes()).toContain('active')
+    expect(terminalRow.attributes('role')).toBe('button')
+    expect(terminalRow.attributes('tabindex')).toBe('0')
+    expect(terminalRow.text()).toContain('codex --full-auto')
+    expect(deleteButton.attributes('aria-label')).toBe('Delete codex --full-auto')
+
+    await terminalRow.trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('select-terminal')[0]).toEqual(['global-a'])
+    await wrapper.find('[data-testid="create-global-terminal-from-sidebar"]').trigger('click')
+    expect(wrapper.emitted('create-workspace-terminal')[0]).toEqual([])
+    await deleteButton.trigger('click')
+    expect(wrapper.emitted('delete-terminal')[0]).toEqual(['global-a'])
+
+    await wrapper.setProps({ activeTerminalId: '' })
+    expect(wrapper.find('[data-testid="global-terminal-todo"]').classes()).not.toContain('active')
+  })
+
   it('orders active TODOs by priority from high to low', () => {
     const wrapper = mountSidebar({
       props: {
@@ -2031,6 +2171,15 @@ describe('ProjectSidebar', () => {
     expect(styles).toContain('.todo-sortable-ghost')
     expect(styles).toContain('.todo-sortable-chosen')
     expect(styles).toContain('.todo-sortable-drag')
+  })
+
+  it('styles the workspace terminal virtual TODO without making it sortable', () => {
+    const styles = readFileSync('src/style.css', 'utf8')
+
+    expect(styles).toMatch(/\.todo-node,\s*\.global-terminal-todo-node\s*\{/)
+    expect(styles).toContain('.global-terminal-todo-header.active')
+    expect(styles).toContain('.global-terminal-todo-header > .add-terminal-button')
+    expect(styles).toContain('.global-terminal-todo-node.active .todo-project-list::before')
   })
 
   it('uses a two-row TODO header layout at the minimum sidebar width', () => {
@@ -2755,6 +2904,20 @@ function multiTodoProps() {
     activeTodoId: 'todo-a',
     activeTodoProjectId: 'todo-project-a',
     activeTerminalId: 'terminal-a'
+  }
+}
+
+function workspaceTerminal(overrides = {}) {
+  return {
+    id: 'global-terminal',
+    projectId: '',
+    todoId: '',
+    todoProjectId: '',
+    workspaceTerminal: true,
+    shellName: 'zsh',
+    currentCommand: '',
+    state: 'running',
+    ...overrides
   }
 }
 

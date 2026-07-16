@@ -1361,6 +1361,7 @@ async function createWorkspaceTerminal() {
     const size = terminalManager.size() || { cols: 80, rows: 24 }
     const state = await CreateWorkspaceTerminal(size.cols || 80, size.rows || 24)
     applyState(state)
+    handleTodoViewChange('in-progress')
     await activateActiveTerminal()
   } catch (error) {
     showError(error)
@@ -3565,14 +3566,6 @@ function clearAllTitleActivityTimers() {
   }
 }
 
-function sanitizeCommandLabel(command) {
-  return (command || '').replace(/\s+/g, ' ').trim().slice(0, 120)
-}
-
-function globalTerminalLabel(terminal) {
-  return sanitizeCommandLabel(terminal.currentCommand) || terminal.runtimeTitle || terminal.shellName || 'Terminal'
-}
-
 function exitedAgentStatus() {
   return createAgentStatus({
     phase: AGENT_PHASE.EXITED,
@@ -3617,6 +3610,7 @@ function clearToastTimer() {
       :todo-projects="todoProjects"
       :todo-project-branches="todoProjectGitBranches"
       :terminals="sidebarTerminals"
+      :workspace-terminals="workspaceTerminals"
       :active-project-id="activeProjectId"
       :active-todo-id="activeTodoId"
       :active-todo-project-id="activeTodoProjectId"
@@ -3650,6 +3644,7 @@ function clearToastTimer() {
       @copy-todo-description="copyTodoDescription"
       @delete-todo="deleteTodo"
       @delete-completed-todos="deleteCompletedTodos"
+      @create-workspace-terminal="createWorkspaceTerminal"
       @create-task-terminal="createTaskTerminal"
       @create-terminal="createTerminal"
       @select-terminal="selectTerminal"
@@ -3869,54 +3864,7 @@ function clearToastTimer() {
         </div>
       </header>
 
-      <div
-        class="terminal-surface"
-        :class="{ 'has-global-terminals': workspaceTerminals.length > 0 }"
-        data-testid="terminal-surface"
-      >
-        <div
-          v-if="workspaceTerminals.length"
-          class="global-terminal-group"
-          data-testid="global-terminal-group"
-        >
-          <span class="global-terminal-group-label">Global</span>
-          <div class="global-terminal-tabs">
-            <div
-              v-for="terminal in workspaceTerminals"
-              :key="terminal.id"
-              class="global-terminal-tab"
-              :class="{ active: terminal.id === activeTerminalId }"
-              :data-testid="`global-terminal-${terminal.id}`"
-              :data-activity-state="terminal.attentionState || terminal.activityState || null"
-              role="button"
-              tabindex="0"
-              @click="selectTerminal(terminal.id)"
-              @keydown.enter.prevent="selectTerminal(terminal.id)"
-              @keydown.space.prevent="selectTerminal(terminal.id)"
-            >
-              <span>{{ globalTerminalLabel(terminal) }}</span>
-              <button
-                type="button"
-                class="global-terminal-delete"
-                :data-testid="`delete-global-terminal-${terminal.id}`"
-                :title="`Delete ${globalTerminalLabel(terminal)}`"
-                @click.stop="deleteTerminal(terminal.id)"
-              >
-                <X :size="12" />
-              </button>
-            </div>
-            <button
-              type="button"
-              class="global-terminal-create"
-              data-testid="create-global-terminal-from-group"
-              title="New global terminal"
-              @click="createWorkspaceTerminal"
-            >
-              <TerminalSquare :size="14" />
-            </button>
-          </div>
-        </div>
-
+      <div class="terminal-surface" data-testid="terminal-surface">
         <div
           v-for="terminal in terminals"
           :key="terminal.id"

@@ -45,6 +45,10 @@ const props = defineProps({
     type: Array,
     default: () => []
   },
+  workspaceTerminals: {
+    type: Array,
+    default: () => []
+  },
   activeProjectId: {
     type: String,
     default: ''
@@ -130,6 +134,7 @@ const emit = defineEmits([
   'copy-todo-description',
   'delete-todo',
   'delete-completed-todos',
+  'create-workspace-terminal',
   'create-task-terminal',
   'create-terminal',
   'select-terminal',
@@ -148,6 +153,7 @@ const todoListElement = ref(null)
 const todoWorkspaceScrollElement = ref(null)
 const isTodoReordering = ref(false)
 const collapsedTodoIds = ref(new Set())
+const workspaceTerminalTodoExpanded = ref(true)
 const knownTodoIds = ref(new Set(props.todos.map((todo) => todo.id)))
 const openLaunchTarget = ref({ kind: '', id: '' })
 const confirmRemoveTodoProjectId = ref('')
@@ -176,6 +182,7 @@ let lifecycleErrorTooltipHideTimer = null
 let lifecycleErrorTooltipTrigger = null
 let todoSortable = null
 let todoReorderPreviousOrder = []
+let workspaceTerminalExpandedBeforeReorder = null
 let todoReorderSession = 0
 const descriptionTooltipDelayMs = 600
 const descriptionTooltipOffset = 12
@@ -215,7 +222,11 @@ const currentOpenTodoListTestId = computed(() => `${todoView.value}-todos`)
 const isOpenTodoView = computed(() => ['not-started', 'in-progress'].includes(todoView.value))
 const activeTodos = computed(() => currentOpenTodos.value)
 const activeTodoIds = computed(() => currentOpenTodos.value.map((todo) => todo.id))
-const hasActiveTodos = computed(() => activeTodoIds.value.length > 0)
+const hasWorkspaceTerminalTodo = computed(() => todoView.value === 'in-progress' && props.workspaceTerminals.length > 0)
+const workspaceTerminalTodoActive = computed(() => (
+  props.workspaceTerminals.some((terminal) => terminal.id === props.activeTerminalId)
+))
+const hasActiveTodos = computed(() => activeTodoIds.value.length > 0 || hasWorkspaceTerminalTodo.value)
 const selectedProjectCount = computed(() => selectedProjectIds.value.size)
 const selectedProjectIdsList = computed(() => props.projects.filter((project) => selectedProjectIds.value.has(project.id)).map((project) => project.id))
 const selectedCompletedTodoCount = computed(() => selectedCompletedTodoIds.value.size)
@@ -573,6 +584,13 @@ function toggleTodoBranch(todoId) {
   collapsedTodoIds.value = nextCollapsedTodoIds
 }
 
+function toggleWorkspaceTerminalTodo() {
+  if (todoInteractionsLocked.value) {
+    return
+  }
+  workspaceTerminalTodoExpanded.value = !workspaceTerminalTodoExpanded.value
+}
+
 function collapseAllTodos() {
   if (!hasActiveTodos.value || todoInteractionsLocked.value) {
     return
@@ -583,6 +601,9 @@ function collapseAllTodos() {
     nextCollapsedTodoIds.add(todoId)
   }
   collapsedTodoIds.value = nextCollapsedTodoIds
+  if (hasWorkspaceTerminalTodo.value) {
+    workspaceTerminalTodoExpanded.value = false
+  }
 }
 
 function expandAllTodos() {
@@ -600,6 +621,9 @@ function expandAllTodos() {
   collapsedTodoIds.value = nextCollapsedTodoIds
   for (const todoId of expandedTodoIds) {
     emit('todo-expanded', todoId)
+  }
+  if (hasWorkspaceTerminalTodo.value) {
+    workspaceTerminalTodoExpanded.value = true
   }
 }
 
@@ -1273,15 +1297,10 @@ function terminalRowLabel(terminal) {
   return activityLabel === 'Idle' ? displayName : `${displayName} - ${activityLabel}`
 }
 
-function todoActivityState(todo) {
+function aggregateTerminalActivityState(terminals) {
   let hasAckTerminal = false
   let hasBusyTerminal = false
-  let hasTerminal = false
-  for (const terminal of props.terminals) {
-    if (terminal.todoId !== todo.id) {
-      continue
-    }
-    hasTerminal = true
+  for (const terminal of terminals) {
     const state = terminalActivityState(terminal)
     if (state === 'needs-input') {
       return 'needs-input'
@@ -1293,13 +1312,34 @@ function todoActivityState(todo) {
       hasBusyTerminal = true
     }
   }
-  if (!hasTerminal) {
+  if (terminals.length === 0) {
     return ''
   }
   if (hasAckTerminal) {
     return 'needs-ack'
   }
   return hasBusyTerminal ? 'busy' : 'idle'
+}
+
+function todoActivityState(todo) {
+  return aggregateTerminalActivityState(props.terminals.filter((terminal) => terminal.todoId === todo.id))
+}
+
+function workspaceTerminalTodoActivityState() {
+  return aggregateTerminalActivityState(props.workspaceTerminals)
+}
+
+function collapsedWorkspaceTerminalFeedbackState() {
+  if (workspaceTerminalTodoExpanded.value) {
+    return ''
+  }
+  const state = workspaceTerminalTodoActivityState()
+  return ['busy', 'needs-input', 'needs-ack'].includes(state) ? state : ''
+}
+
+function collapsedWorkspaceTerminalActivityClass() {
+  const state = collapsedWorkspaceTerminalFeedbackState()
+  return state ? `todo-activity-${state}` : ''
 }
 
 function collapsedTodoActivityState(todo) {
@@ -1444,6 +1484,10 @@ function beginTodoReordering() {
 
 function captureTodoReorderStart() {
   todoReorderPreviousOrder = currentOpenTodos.value.map((todo) => todo.id)
+  workspaceTerminalExpandedBeforeReorder = workspaceTerminalTodoExpanded.value
+  if (hasWorkspaceTerminalTodo.value) {
+    workspaceTerminalTodoExpanded.value = false
+  }
 }
 
 function finishTodoReordering(event = {}) {
@@ -1500,6 +1544,10 @@ function cleanupTodoReordering() {
   todoReorderSession += 1
   isTodoReordering.value = false
   todoReorderPreviousOrder = []
+  if (workspaceTerminalExpandedBeforeReorder !== null) {
+    workspaceTerminalTodoExpanded.value = workspaceTerminalExpandedBeforeReorder
+    workspaceTerminalExpandedBeforeReorder = null
+  }
 }
 
 function todoOrderFromDOM() {
@@ -1532,6 +1580,15 @@ onBeforeUnmount(() => {
 watch(
   [todoView, activeTodoSortMode, () => props.todoOrderSaving],
   () => void nextTick(syncTodoSortable)
+)
+
+watch(
+  () => props.workspaceTerminals.length,
+  (terminalCount, previousTerminalCount) => {
+    if (terminalCount > previousTerminalCount) {
+      workspaceTerminalTodoExpanded.value = true
+    }
+  }
 )
 
 watch(
@@ -1841,7 +1898,129 @@ watch(
             }"
             :data-testid="currentOpenTodoListTestId"
           >
-        <div v-if="currentOpenTodos.length === 0" class="sidebar-empty">
+        <div
+          v-if="hasWorkspaceTerminalTodo"
+          class="global-terminal-todo-node"
+          :class="{
+            active: workspaceTerminalTodoActive,
+            'is-collapsed': !workspaceTerminalTodoExpanded,
+            'is-expanded': workspaceTerminalTodoExpanded
+          }"
+          data-testid="global-terminal-todo"
+        >
+          <div
+            class="todo-header-row global-terminal-todo-header"
+            :class="[
+              { active: workspaceTerminalTodoActive },
+              collapsedWorkspaceTerminalActivityClass()
+            ]"
+            :data-activity-state="collapsedWorkspaceTerminalFeedbackState() || null"
+            @dblclick="toggleWorkspaceTerminalTodo"
+          >
+            <button
+              type="button"
+              class="branch-toggle"
+              aria-controls="workspace-global-terminal-list"
+              :aria-expanded="workspaceTerminalTodoExpanded"
+              :aria-label="`${workspaceTerminalTodoExpanded ? 'Collapse' : 'Expand'} Global 终端`"
+              data-testid="toggle-global-terminal-todo"
+              :title="workspaceTerminalTodoExpanded ? 'Collapse Global terminals' : 'Expand Global terminals'"
+              :disabled="todoInteractionsLocked"
+              @click.stop="toggleWorkspaceTerminalTodo"
+              @dblclick.stop
+            >
+              <ChevronDown v-if="workspaceTerminalTodoExpanded" :size="16" />
+              <ChevronRight v-else :size="16" />
+            </button>
+
+            <div class="todo-row" :class="{ active: workspaceTerminalTodoActive }">
+              <TerminalSquare class="project-icon" :size="17" />
+              <span class="project-copy">
+                <span class="todo-title-line">
+                  <span class="project-name">Global 终端</span>
+                </span>
+                <span class="project-path">
+                  {{ workspaceTerminals.length }} {{ workspaceTerminals.length === 1 ? 'terminal' : 'terminals' }}
+                </span>
+              </span>
+            </div>
+
+            <button
+              v-if="workspaceTerminalTodoExpanded"
+              type="button"
+              class="add-terminal-button"
+              data-testid="create-global-terminal-from-sidebar"
+              aria-label="New global terminal"
+              title="New global terminal"
+              :disabled="todoInteractionsLocked"
+              @click.stop="emit('create-workspace-terminal')"
+              @dblclick.stop
+            >
+              <TerminalSquare :size="14" />
+            </button>
+          </div>
+
+          <div
+            v-if="workspaceTerminalTodoExpanded"
+            id="workspace-global-terminal-list"
+            class="todo-project-list global-terminal-list"
+            data-testid="global-terminal-list"
+            role="group"
+            aria-label="Workspace global terminals"
+          >
+            <div
+              v-for="terminal in workspaceTerminals"
+              :key="terminal.id"
+              class="terminal-entry global-terminal-entry"
+            >
+              <button
+                type="button"
+                class="terminal-row global-terminal-row"
+                :class="{
+                  active: terminal.id === activeTerminalId,
+                  exited: terminal.state === 'exited',
+                  'activity-busy': terminalActivityState(terminal) === 'busy',
+                  'activity-needs-input': terminalActivityState(terminal) === 'needs-input',
+                  'activity-needs-ack': terminalActivityState(terminal) === 'needs-ack'
+                }"
+                role="button"
+                tabindex="0"
+                :aria-label="terminalRowLabel(terminal)"
+                :title="terminalRowLabel(terminal)"
+                :data-activity-state="terminalActivityState(terminal)"
+                :data-testid="`global-terminal-${terminal.id}`"
+                @click="emit('select-terminal', terminal.id)"
+                @keydown.enter.prevent="emit('select-terminal', terminal.id)"
+                @keydown.space.prevent="emit('select-terminal', terminal.id)"
+              >
+                <span
+                  class="terminal-activity"
+                  :class="terminalActivityState(terminal)"
+                  :aria-label="terminalActivityLabel(terminal)"
+                  role="img"
+                >
+                  <LoaderCircle v-if="terminalActivityState(terminal) === 'busy'" :size="13" aria-hidden="true" />
+                  <CircleAlert v-else-if="terminalActivityState(terminal) === 'needs-input'" :size="13" aria-hidden="true" />
+                  <TriangleAlert v-else-if="terminalActivityState(terminal) === 'needs-ack'" :size="13" aria-hidden="true" />
+                </span>
+                <TerminalSquare class="terminal-icon" :size="15" />
+                <span class="terminal-name">{{ terminalDisplayName(terminal) }}</span>
+              </button>
+              <button
+                type="button"
+                class="delete-terminal-button"
+                :data-testid="`delete-global-terminal-${terminal.id}`"
+                :aria-label="`Delete ${terminalDisplayName(terminal)}`"
+                :title="`Delete ${terminalDisplayName(terminal)}`"
+                @click.stop="emit('delete-terminal', terminal.id)"
+              >
+                <Trash2 :size="13" />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="currentOpenTodos.length === 0 && !hasWorkspaceTerminalTodo" class="sidebar-empty">
           {{ todoView === 'in-progress' ? 'No in-progress TODOs' : 'No not-started TODOs' }}
         </div>
 
