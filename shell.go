@@ -1232,7 +1232,10 @@ func zshIntegratedLaunch(launch ShellLaunch) (ShellLaunch, error) {
 	if err != nil {
 		return ShellLaunch{}, err
 	}
-	originalZDOTDIR := envValueFromList(launch.Env, "ZDOTDIR")
+	originalZDOTDIR := envValueFromList(launch.Env, "TUI_HELPER_ORIGINAL_ZDOTDIR")
+	if originalZDOTDIR == "" {
+		originalZDOTDIR = envValueFromList(launch.Env, "ZDOTDIR")
+	}
 	if originalZDOTDIR == "" {
 		originalZDOTDIR = envValueFromList(launch.Env, "HOME")
 	}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -708,6 +709,31 @@ func TestShellSessionManagerStartsSupportedShellsWithCommandLabelIntegration(t *
 	}
 	if envValue(request.Env, "ZDOTDIR") == "" {
 		t.Fatal("ZDOTDIR is empty, want zsh integration env")
+	}
+}
+
+func TestZshIntegratedLaunchPreservesOriginalZDOTDIRAcrossNestedTodoAI(t *testing.T) {
+	home := t.TempDir()
+	outerWrapper := t.TempDir()
+	launch, err := IntegratedShellLaunch("/bin/zsh", []string{
+		"HOME=" + home,
+		"ZDOTDIR=" + outerWrapper,
+		"TUI_HELPER_ORIGINAL_ZDOTDIR=" + home,
+	})
+	if err != nil {
+		t.Fatalf("IntegratedShellLaunch() error = %v", err)
+	}
+	defer launch.Cleanup()
+
+	if got := envValue(launch.Env, "TUI_HELPER_ORIGINAL_ZDOTDIR"); got != home {
+		t.Fatalf("TUI_HELPER_ORIGINAL_ZDOTDIR = %q, want %q", got, home)
+	}
+	wrapperDir := envValue(launch.Env, "ZDOTDIR")
+	if wrapperDir == "" || wrapperDir == outerWrapper {
+		t.Fatalf("ZDOTDIR = %q, want a new wrapper directory", wrapperDir)
+	}
+	if _, err := os.Stat(filepath.Join(wrapperDir, ".zshrc")); err != nil {
+		t.Fatalf("wrapper .zshrc is unavailable: %v", err)
 	}
 }
 
